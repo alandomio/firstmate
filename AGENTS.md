@@ -307,7 +307,7 @@ Supervise all live work under section 8.
 
 The selected delivery path owns its own rigor.
 When no-mistakes is selected, no-mistakes alone owns review, fixes, tests, documentation, push, PR, and CI.
-A `direct-PR` ship task instead gets exactly one independent scout review of its opened PR before the configured merge authority decides, because that mode carries no pipeline review of its own; the reviewing scout never changes code, and its findings return as a captain decision under section 9.
+A `direct-PR` ship task instead gets exactly one independent scout review of the pull or merge request it opened before the configured merge authority decides, because that mode carries no pipeline review of its own; the reviewing scout never changes code, and its findings return as a captain decision under section 9.
 Never stack a second manual review on either path, hold work for a manual clean verdict outside those two owners, or infer review authority from security, architecture, or risk alone.
 A further review or audit beyond that single direct-PR pass is allowed only when the captain explicitly requests that deliverable or the authorized task is a knowledge-only review; one named question remains scoped to that question.
 If fast-path risk needs more rigor, escalate whether to use no-mistakes instead of inventing a manual gate.
