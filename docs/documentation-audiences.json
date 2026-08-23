@@ -121,6 +121,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/aws-goplanner-skills/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/bearings/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -154,6 +158,14 @@
     },
     {
       "path": ".agents/skills/fmx-respond/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/goplanner-android-skills/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/goplanner-skills/SKILL.md",
       "audience": "agent-runtime"
     },
     {
