@@ -19,7 +19,7 @@ The default branch (`GOPLANNER-1204-gestione-timbrature`) has no `.claude/skills
 
 Two other remote branches, `origin/gestione-avvisi` and `origin/magazzino-fix`, each carry the same six skills under `.agents/skills/`:
 
-- `cloudwatch-log-investigator` - investigates GOPlanner incidents/regressions via AWS CloudWatch logs across web and mobile channels, tenant-aware (same skill as GOPlanner's `php8` copy; see `[[goplanner-skills]]`).
+- `cloudwatch-log-investigator` - investigates GOPlanner incidents/regressions via AWS CloudWatch logs across web and mobile channels, tenant-aware (same skill as GOPlanner's `php8` copy; see `goplanner-skills`).
 - `crash-investigation` - investigates Android ACRA crash reports in CloudWatch for a specific app version, verifies root cause against source, suggests fixes, persists findings to the LLM wiki/RAG store.
 - `goplanner-browser-mcp-tests` - validates GOPlanner's web UI with Chrome DevTools MCP: login, tenant switch, navigation, XHR/console checks, smoke tests.
 - `grill-with-docs` - adversarial "grilling" session that stress-tests an implementation plan against the domain model and updates docs as decisions settle.
