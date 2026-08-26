@@ -807,6 +807,10 @@ test_forge_detection_shapes_vocabulary() {
   brief="$home/data/brief-forge-glself/brief.md"
   assert_grep "Use glab for GitLab operations and chrome-devtools-axi for browser operations." "$brief" \
     "self-hosted GitLab clone (.gitlab-ci.yml, non-matching host): rule 3 must still resolve to glab"
+  assert_grep "the deliverable is a written report, not a merge request." "$brief" \
+    "GitLab scout: the Setup line must name the project's forge noun"
+  assert_no_grep "not a PR." "$brief" \
+    "GitLab scout: the Setup line must not mix GitHub vocabulary into a GitLab brief"
 
   write_project_clone "$home" unk-proj https://code.example.org/team/unk-proj.git
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-unk unk-proj --mode no-mistakes >/dev/null 2>&1

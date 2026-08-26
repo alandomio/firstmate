@@ -10,7 +10,7 @@
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
-#   data/<task-id>/report.md (no branch, no push, no PR) and the worktree is scratch.
+#   data/<task-id>/report.md (no branch, no push, no PR/MR) and the worktree is scratch.
 #   --secondmate writes a persistent secondmate charter. The project list
 #   is cloned into the secondmate home, while the natural-language scope
 #   tells the main firstmate when to route work there; routine churn stays in its own home;
@@ -77,8 +77,9 @@ esac
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 PAUSED_VERB=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
 
-# Resolve the repo argument to a clone directory, accepting the same spellings
-# bin/fm-spawn.sh's resolve_project_dir_arg does so all three name one clone.
+# Resolve the repo argument to a clone directory. The projects/<name> and
+# absolute-path arms match bin/fm-spawn.sh's resolve_project_dir_arg; a bare name
+# deliberately keeps fm-brief's own $PROJECTS/<name> convention instead.
 fm_brief_resolve_project_dir() {  # <repo-arg>
   local path=$1
   case "$path" in
@@ -373,7 +374,7 @@ $HERDR_SECTION
 
 # Setup
 You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
-This is a SCOUT task: the deliverable is a written report, not a PR.
+This is a SCOUT task: the deliverable is a written report, not a $FORGE_NOUN.
 The worktree is your laboratory - install, run, edit, and make scratch commits freely; all of it is discarded at teardown.
 The report is the only thing that survives, so anything worth keeping must be in it.
 
