@@ -189,16 +189,22 @@ write_registry() {
 EOF
 }
 
-# Give a project name a local clone with the given origin, so
+# Build a local clone at an explicit path with the given origin, so
 # fm_brief_detect_forge (bin/fm-brief.sh) has something to read. An empty
-# origin leaves the clone remote-less, and a fourth "ci-marker" argument drops
+# origin leaves the clone remote-less, and a third "ci-marker" argument drops
 # a .gitlab-ci.yml so self-hosted-host detection can be exercised.
+write_clone_at() {
+  local dir=$1 origin=$2 ci_marker=${3:-}
+  mkdir -p "$dir"
+  git -C "$dir" init -q
+  [ -z "$origin" ] || git -C "$dir" remote add origin "$origin"
+  [ -z "$ci_marker" ] || printf 'stages: []\n' > "$dir/.gitlab-ci.yml"
+}
+
+# The same, for a project name under a home's default projects/ directory.
 write_project_clone() {
   local home=$1 name=$2 origin=$3 ci_marker=${4:-}
-  mkdir -p "$home/projects/$name"
-  git -C "$home/projects/$name" init -q
-  [ -z "$origin" ] || git -C "$home/projects/$name" remote add origin "$origin"
-  [ -z "$ci_marker" ] || printf 'stages: []\n' > "$home/projects/$name/.gitlab-ci.yml"
+  write_clone_at "$home/projects/$name" "$origin" "$ci_marker"
 }
 
 # fm-brief.sh must exit 0 and produce a brief with no unreplaced shell
@@ -849,6 +855,29 @@ test_forge_detection_ignores_enclosing_repo() {
   pass "fm-brief.sh: a project dir that is not its own clone root resolves unknown"
 }
 
+# Forge detection must resolve the clone through the same projects-dir override
+# every other resolver honors. A home invoked with FM_PROJECTS_OVERRIDE has no
+# $FM_HOME/projects, so hardcoding that path made every brief in such a home
+# fall back to the unresolved marker even for a known GitLab project.
+test_forge_detection_honors_projects_override() {
+  local home projects brief
+  home="$TMP_ROOT/forge-override-home"
+  projects="$TMP_ROOT/forge-override-projects"
+  mkdir -p "$home/data"
+  write_clone_at "$projects/gl-proj" https://gitlab.com/peterpark/gl-proj.git
+
+  FM_HOME="$home" FM_PROJECTS_OVERRIDE="$projects" \
+    "$ROOT/bin/fm-brief.sh" brief-forge-override gl-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-forge-override/brief.md"
+  assert_grep "Use glab for GitLab operations and chrome-devtools-axi for browser operations." "$brief" \
+    "FM_PROJECTS_OVERRIDE home: rule 3 must resolve the overridden clone's forge"
+  assert_grep "append \`done: MR {url} checks green\`" "$brief" \
+    "FM_PROJECTS_OVERRIDE home: done line must use the overridden clone's forge"
+  assert_no_grep "This project's forge could not be determined from its git remote" "$brief" \
+    "FM_PROJECTS_OVERRIDE home: a resolvable clone must not render the unresolved marker"
+  pass "fm-brief.sh: forge detection honors FM_PROJECTS_OVERRIDE"
+}
+
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
@@ -872,3 +901,4 @@ test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
 test_forge_detection_shapes_vocabulary
 test_forge_detection_ignores_enclosing_repo
+test_forge_detection_honors_projects_override
