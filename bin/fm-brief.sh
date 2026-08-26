@@ -133,6 +133,7 @@ if [ -n "${FM_STATE_OVERRIDE:-}" ]; then
 else
   STATE="$FM_HOME/state"
 fi
+PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
@@ -298,7 +299,7 @@ fi
 
 REPO=${POS[1]}
 
-FORGE=$(fm_brief_detect_forge "$FM_HOME/projects/$REPO")
+FORGE=$(fm_brief_detect_forge "$PROJECTS/$REPO")
 case "$FORGE" in
   github)
     FORGE_NOUN='pull request'
