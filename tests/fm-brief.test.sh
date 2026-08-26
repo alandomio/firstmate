@@ -857,9 +857,11 @@ test_forge_detection_rejects_bare_github_dir() {
   pass "fm-brief.sh: a bare .github directory alone never declares GitHub"
 }
 
-# The repo argument accepts the same spellings bin/fm-spawn.sh does - a bare
-# project name, a projects/<name> path, and an absolute clone path - so the
-# same clone must yield identical forge vocabulary through all three.
+# The repo argument accepts three spellings that must all name one clone: a
+# projects/<name> path and an absolute path, both shared with bin/fm-spawn.sh's
+# resolve_project_dir_arg, plus a bare name that deliberately diverges from
+# fm-spawn's cwd-relative handling to keep fm-brief's own $PROJECTS/<name>
+# convention. The same clone must yield identical forge vocabulary through all.
 test_forge_detection_accepts_repo_arg_spellings() {
   local home brief spelling id n
   home="$TMP_ROOT/forge-spelling-home"
