@@ -832,6 +832,54 @@ test_forge_detection_shapes_vocabulary() {
   pass "fm-brief.sh: brief vocabulary matches the project's actual forge"
 }
 
+# A leftover `.github` directory is not evidence of the forge a project ships
+# to: a repo migrated to a self-hosted GitLab whose host carries no gitlab
+# token keeps its old `.github/workflows`. Detection must stay unresolved.
+test_forge_detection_rejects_bare_github_dir() {
+  local home brief
+  home="$TMP_ROOT/forge-ghdir-home"
+  mkdir -p "$home/data"
+  write_project_clone "$home" ghdir-proj https://code.example.org/team/ghdir-proj.git
+  mkdir -p "$home/projects/ghdir-proj/.github/workflows"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-ghdir ghdir-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-forge-ghdir/brief.md"
+  assert_grep "This project's forge could not be determined from its git remote" "$brief" \
+    "unrecognized host with a .github directory: brief must stay unresolved"
+  assert_no_grep "Use gh-axi for GitHub operations" "$brief" \
+    "unrecognized host with a .github directory: brief must not declare GitHub"
+  assert_grep "append \`done: PR/MR {url} checks green\`" "$brief" \
+    "unrecognized host with a .github directory: done line must not default to PR"
+  pass "fm-brief.sh: a bare .github directory alone never declares GitHub"
+}
+
+# The repo argument accepts the same spellings bin/fm-spawn.sh does - a bare
+# project name, a projects/<name> path, and an absolute clone path - so the
+# same clone must yield identical forge vocabulary through all three.
+test_forge_detection_accepts_repo_arg_spellings() {
+  local home brief spelling id n
+  home="$TMP_ROOT/forge-spelling-home"
+  mkdir -p "$home/data"
+  write_project_clone "$home" spell-proj https://gitlab.com/peterpark/spell-proj.git
+
+  n=0
+  for spelling in spell-proj projects/spell-proj "$home/projects/spell-proj"; do
+    n=$((n + 1))
+    id="brief-forge-spelling-$n"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$spelling" --mode no-mistakes >/dev/null 2>&1
+    brief="$home/data/$id/brief.md"
+    assert_grep "Use glab for GitLab operations and chrome-devtools-axi for browser operations." "$brief" \
+      "repo spelling '$spelling': rule 3 must name glab and GitLab"
+    assert_grep "Never merge a merge request." "$brief" \
+      "repo spelling '$spelling': rule 1 must say merge request"
+    assert_grep "append \`done: MR {url} checks green\`" "$brief" \
+      "repo spelling '$spelling': done line must use MR"
+    assert_no_grep "This project's forge could not be determined from its git remote" "$brief" \
+      "repo spelling '$spelling': a resolvable clone must not render the unresolved marker"
+  done
+  pass "fm-brief.sh: all three repo-argument spellings resolve the same clone's forge"
+}
+
 # A firstmate home is itself a git checkout with projects/ gitignored inside it,
 # so a projects/<repo> directory that is not its own clone root - a worktree
 # container, a placeholder, a half-finished clone - makes git discovery walk UP
@@ -900,5 +948,7 @@ test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
 test_forge_detection_shapes_vocabulary
+test_forge_detection_rejects_bare_github_dir
+test_forge_detection_accepts_repo_arg_spellings
 test_forge_detection_ignores_enclosing_repo
 test_forge_detection_honors_projects_override
