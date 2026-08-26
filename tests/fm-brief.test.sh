@@ -812,12 +812,41 @@ test_forge_detection_shapes_vocabulary() {
   assert_grep "append \`done: PR/MR {url} checks green\`" "$brief" \
     "unresolvable forge: done-line convention must not silently default to PR"
 
+  write_project_clone "$home" no-origin-proj ""
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-noorigin no-origin-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-forge-noorigin/brief.md"
+  assert_grep "This project's forge could not be determined from its git remote" "$brief" \
+    "clone with no origin remote: brief must carry the same unresolved marker"
+
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-noclone never-cloned --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/brief-forge-noclone/brief.md"
   assert_grep "This project's forge could not be determined from its git remote" "$brief" \
     "project with no local clone: brief must carry the same unresolved marker"
 
   pass "fm-brief.sh: brief vocabulary matches the project's actual forge"
+}
+
+# A firstmate home is itself a git checkout with projects/ gitignored inside it,
+# so a projects/<repo> directory that is not its own clone root - a worktree
+# container, a placeholder, a half-finished clone - makes git discovery walk UP
+# to the enclosing firstmate repo (a GitHub remote). The brief must report the
+# forge as unresolved rather than confidently emitting GitHub vocabulary for a
+# project whose real forge is something else.
+test_forge_detection_ignores_enclosing_repo() {
+  local home brief
+  home="$TMP_ROOT/forge-nested-home"
+  mkdir -p "$home/data"
+  git -C "$home" init -q
+  git -C "$home" remote add origin https://github.com/alandomio/firstmate.git
+  mkdir -p "$home/projects/nested-proj"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-nested nested-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-forge-nested/brief.md"
+  assert_grep "This project's forge could not be determined from its git remote" "$brief" \
+    "non-root project dir: brief must not inherit the enclosing firstmate repo's forge"
+  assert_no_grep "Use gh-axi for GitHub operations" "$brief" \
+    "non-root project dir: brief must not claim GitHub from the enclosing repo's remote"
+  pass "fm-brief.sh: a project dir that is not its own clone root resolves unknown"
 }
 
 test_script_parses
@@ -842,3 +871,4 @@ test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
 test_forge_detection_shapes_vocabulary
+test_forge_detection_ignores_enclosing_repo
