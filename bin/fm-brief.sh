@@ -77,12 +77,15 @@ esac
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 PAUSED_VERB=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
 
-# Classify a project's forge from its local clone's origin remote (falling
-# back to .gitlab-ci.yml/.github on an unrecognized host) so the generated
-# brief names the real forge instead of assuming GitHub.
+# Classify a project's forge from its local clone's origin remote (falling back
+# to .gitlab-ci.yml/.github on an unrecognized host) so the brief names the real
+# forge; git discovery walks up, so a non-root dir is unknown, not its encloser.
 fm_brief_detect_forge() {  # <clone-dir>
-  local dir=$1 url host
+  local dir=$1 url host top abs
   git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo unknown; return; }
+  top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || { echo unknown; return; }
+  abs=$(CDPATH='' cd -- "$dir" 2>/dev/null && pwd -P) || { echo unknown; return; }
+  [ -n "$top" ] && [ "$top" = "$abs" ] || { echo unknown; return; }
   url=$(git -C "$dir" remote get-url origin 2>/dev/null) || { echo unknown; return; }
   case "$url" in
     https://*|http://*|ssh://*|git://*)
