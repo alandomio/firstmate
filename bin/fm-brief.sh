@@ -36,6 +36,9 @@
 #                the configured merge authority approves, firstmate merges to local main
 # no-mistakes-prod-only is a registry policy, not a task mode; resolve it to one of
 # the three concrete modes at intake before calling this script.
+# The brief's forge vocabulary - pull vs merge request, gh-axi vs glab, "done: PR" vs "done: MR" -
+# follows the origin remote, then a .gitlab-ci.yml fallback, of the clone the repo argument names under projects/ (or of an absolute path given instead).
+# When nothing identifies the forge, the brief says so and tells the worker to run `git remote -v` rather than guessing.
 # The generated ship brief records the chosen mode as a fixed machine-readable
 # "Delivery contract: mode=<mode>" line. bin/fm-spawn.sh reads that line and refuses
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
