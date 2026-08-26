@@ -77,15 +77,25 @@ esac
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 PAUSED_VERB=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
 
+# Resolve the repo argument to a clone directory, accepting the same spellings
+# bin/fm-spawn.sh's resolve_project_dir_arg does so all three name one clone.
+fm_brief_resolve_project_dir() {  # <repo-arg>
+  local path=$1
+  case "$path" in
+    projects/*) printf '%s/%s\n' "$PROJECTS" "${path#projects/}" ;;
+    /*) printf '%s\n' "$path" ;;
+    *) printf '%s/%s\n' "$PROJECTS" "$path" ;;
+  esac
+}
+
 # Classify a project's forge from its local clone's origin remote (falling back
-# to .gitlab-ci.yml/.github on an unrecognized host) so the brief names the real
-# forge; git discovery walks up, so a non-root dir is unknown, not its encloser.
+# to .gitlab-ci.yml on an unrecognized host) so the brief names the real forge;
+# git discovery walks up, so a non-root dir is unknown, not its encloser.
 fm_brief_detect_forge() {  # <clone-dir>
   local dir=$1 url host top abs
-  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo unknown; return; }
   top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || { echo unknown; return; }
   abs=$(CDPATH='' cd -- "$dir" 2>/dev/null && pwd -P) || { echo unknown; return; }
-  [ -n "$top" ] && [ "$top" = "$abs" ] || { echo unknown; return; }
+  [ "$top" = "$abs" ] || { echo unknown; return; }
   url=$(git -C "$dir" remote get-url origin 2>/dev/null) || { echo unknown; return; }
   case "$url" in
     https://*|http://*|ssh://*|git://*)
@@ -105,7 +115,6 @@ fm_brief_detect_forge() {  # <clone-dir>
   case "$host" in
     *gitlab*) echo gitlab; return ;;
   esac
-  if [ -d "$dir/.github" ]; then echo github; return; fi
   echo unknown
 }
 
@@ -299,7 +308,7 @@ fi
 
 REPO=${POS[1]}
 
-FORGE=$(fm_brief_detect_forge "$PROJECTS/$REPO")
+FORGE=$(fm_brief_detect_forge "$(fm_brief_resolve_project_dir "$REPO")")
 case "$FORGE" in
   github)
     FORGE_NOUN='pull request'
