@@ -1,0 +1,23 @@
+Closing the loop: the GitLab brief now instructs the crewmate to report
+
+  done: MR {url} checks green
+
+so firstmate's deterministic crew reader (bin/fm-crew-state.sh) must accept the
+MR noun as the same CI-ready signal it already accepted for PR. Fixture: a crew
+on branch fm/ev-gitlab-nm whose status log carries that exact line while the
+no-mistakes run is still on its `ci` step monitoring for merge.
+
+status log the crewmate wrote, following its GitLab brief:
+  working: implementing
+  done: MR https://gitlab.com/peter-park/developer-experience/ai-monorepo/-/merge_requests/4212 checks green
+
+$ bin/fm-crew-state.sh ev-gitlab-nm
+
+BEFORE (base b6d99cd6):
+state: working · source: run-step · validating (running)
+
+AFTER  (ce8c20c):
+state: done · source: status-log · MR https://gitlab.com/peter-park/developer-experience/ai-monorepo/-/merge_requests/4212 checks green · run still monitoring PR
+
+Before the fix a finished GitLab crewmate read as still working, and firstmate
+would have kept it parked on a monitoring run instead of reaping it.

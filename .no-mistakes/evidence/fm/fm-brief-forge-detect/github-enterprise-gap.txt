@@ -1,0 +1,21 @@
+Intent clause NOT implemented (surfaced during testing, not a test failure).
+
+The stated intent says forge detection "falls back further to an existing
+.github directory as GitHub (covering GitHub Enterprise)". The shipped
+fm_brief_detect_forge (bin/fm-brief.sh) has no such arm - review commit
+ae24a76 removed it, and tests/fm-brief.test.sh:test_forge_detection_rejects_bare_github_dir
+now asserts a .github directory must NOT declare GitHub.
+
+Observed, GitHub Enterprise clone: origin https://github.acme-corp.example/team/ghe-proj.git
+plus a real .github/workflows/ci.yml
+
+  3. This project's forge could not be determined from its git remote; run `git remote -v`
+     to check, then use gh-axi for GitHub or glab for GitLab. ...
+  ... append `done: PR/MR {url} checks green` and stop.
+
+Expected per the intent clause: gh-axi / "pull request" / `done: PR {url} checks green`.
+
+The shipped behavior is the SAFE side of the disagreement (an explicit
+unresolved marker, never a confident wrong forge), so this is a scope question
+for the author, not a defect: either the intent clause is stale, or GitHub
+Enterprise homes still need a signal that resolves them.

@@ -1,0 +1,37 @@
+Same GitLab project (~/pp/ai-monorepo, origin git@gitlab.com:...), same command:
+  bin/fm-brief.sh <id> ~/pp/ai-monorepo --mode no-mistakes
+
+BEFORE = base b6d99cd6   AFTER = ce8c20c
+
+--- BEFORE (b6d99cd6)
++++ AFTER  (ce8c20c)
+@@ -19,11 +19,11 @@
+ 2. Run `no-mistakes doctor`; if it reports the repo is not initialized here, run `no-mistakes init`.
+ 
+ # Rules
+-1. Never push to the default branch. Never merge a PR.
++1. Never push to the default branch. Never merge a merge request.
+ 2. Stay inside this worktree; modify nothing outside it.
+-3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
++3. Use glab for GitLab operations and chrome-devtools-axi for browser operations.
+ 4. Report status by appending one line:
+-   `echo "{state}: {one short line}" >> '/tmp/fm-evidence-base.1H6O5t/state/ev-gitlab-nm.status'`
++   `echo "{state}: {one short line}" >> '/tmp/fm-evidence-home.WUJUyM/state/ev-gitlab-nm.status'`
+    States: working, needs-decision, blocked, paused, done, failed.
+    Each append wakes firstmate, so report sparingly: only phase changes a supervisor
+    would act on (setup done, bug reproduced, fix implemented, validation passed) and the
+@@ -55,7 +55,7 @@
+ Delivery contract: mode=no-mistakes
+ The task is complete only when committed on your branch.
+ When you believe it is complete, append `done: {summary}` to the status file and stop.
+-Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
++Firstmate will then instruct you to run /no-mistakes to validate and ship a merge request.
+ 
+ You drive no-mistakes by responding to its gates, not by implementing fixes.
+ Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and `no-mistakes axi run --help` plus the `help` lines in each `axi` response are authoritative and version-matched to the installed binary.
+@@ -68,4 +68,4 @@
+   When the decision comes back, feed it to the gate with `no-mistakes axi respond` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
+ - Avoid `--yes`: it would silently bypass firstmate's authority check and any required captain escalation.
+ 
+-After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append `done: PR {url} checks green` and stop. You are finished.
++After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append `done: MR {url} checks green` and stop. You are finished.
