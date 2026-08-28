@@ -1,0 +1,21 @@
+End-to-end evidence: generated `fm-brief.sh` briefs for all four ship modes,
+confirming the mr-description skill requirement is present only where a
+PR/MR is actually opened.
+
+== direct-PR brief.md (line 58) ==
+Write the PR description, and any later revision to it, with the `mr-description` skill.
+
+== no-mistakes brief.md (line 70, in the firstmate-specific-rules list) ==
+- Write the PR description, and any later revision to it (including a review-fix revision), with the `mr-description` skill.
+
+== local-only brief.md ==
+grep -c mr-description -> 0 occurrences (correctly absent; this mode never opens a PR)
+
+== scout brief.md ==
+grep -c mr-description -> 0 occurrences (correctly absent; scout only produces a report)
+
+Regression check: running tests/fm-brief.test.sh's new
+test_mr_description_skill_required_for_pr_modes against the base commit's
+bin/fm-brief.sh (b6d99cd) fails with "direct-PR brief did not require the
+mr-description skill"; against the target commit (70794fb) it passes,
+confirming this is a real behavior change, not a pre-existing pass.
