@@ -190,6 +190,16 @@ This does not relax protection for any other untracked file.
 An existing linked-worktree home that predates this rule advances through its marker-only state during its next bootstrap or spawn local sync, after which Git ignores the marker normally.
 A standalone-clone home cannot receive a primary-local commit through that no-fetch sync, so it receives the rule through `/updatefirstmate`'s origin refresh instead.
 
+## Remote secondmate skill sync (config/skill-sync-exclude)
+
+At every remote secondmate launch, `bin/fm-remote-skill-sync.sh` rsyncs the engineer's local `~/.claude/skills/` into `.claude/skills/` under that route's remote login home, so the secondmate always launches against the captain's current skill set; a running secondmate does not see a mid-session sync because skills load only at session start.
+This is a plain rsync step at the same launch convergence point as [inherited local-material propagation](../.agents/skills/secondmate-provisioning/SKILL.md#charter-and-seed), not an extension of it: `FM_INHERITABLE_CONFIG` (`bin/fm-config-inherit-lib.sh`) stays the single owner of single small files inside `FM_HOME`, while skills are a directory tree outside it.
+It is remote-route only, never passes `--delete` (a host may legitimately hold skills the local machine does not, `no-mistakes` installed there by its own installer being the standing example), and a failure warns on `SECONDMATE_SYNC:` without blocking the launch, matching every other inherited-material propagation failure.
+`config/skill-sync-exclude` (local, gitignored) lists rsync `--exclude` patterns, one per non-empty, non-comment line, and fully replaces the built-in default set when present.
+An absent file uses this default: `notebooklm/`, `notebooklm-to-skill/`, `notebooklm-to-skill-workspace/`, and `skill-creator/` (authoring/local-cache tools a worker host does not need), `no-mistakes/` (installed on a remote host by its own installer; overwriting it would break a working install), and the build-residue patterns `__pycache__`, `.venv`, `node_modules`.
+See [`docs/examples/skill-sync-exclude`](examples/skill-sync-exclude) for a copyable starting point.
+The script's own header owns exact rsync flags, the destination-path resolution, and how it tells a confirmed no-op transfer apart from a transfer that never ran.
+
 ## FM_HOME
 
 `FM_HOME` selects the operational home for one firstmate instance.

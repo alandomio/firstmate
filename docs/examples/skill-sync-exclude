@@ -1,0 +1,19 @@
+# config/skill-sync-exclude - rsync --exclude patterns for the remote
+# secondmate skill sync (bin/fm-remote-skill-sync.sh). Copy this into a local,
+# gitignored config/skill-sync-exclude and edit. One pattern per non-empty,
+# non-comment line. Presence fully replaces the script's built-in default set
+# below, it does not merge with it.
+#
+# no-mistakes is excluded because a remote host installs it itself; overwriting
+# it with the local copy could break a working install. notebooklm is a large
+# local data cache. skill-creator, notebooklm-to-skill, and
+# notebooklm-to-skill-workspace are authoring tools a worker host does not run.
+# The rest is ordinary build residue.
+notebooklm/
+notebooklm-to-skill/
+notebooklm-to-skill-workspace/
+skill-creator/
+no-mistakes/
+__pycache__
+.venv
+node_modules

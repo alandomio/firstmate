@@ -399,7 +399,7 @@ fi
 spawn_remote_secondmate() {
   local id=$1 remote host root home harness positional model effort backend out rc meta tmp
   local remote_backend remote_target remote_harness remote_herdr_session registry_lock remote_lock remote_generation
-  local remote_traceparent remote_recorded_traceparent
+  local remote_traceparent remote_recorded_traceparent skill_sync_out
   local -a launch_args
   id=${POS[0]:-}
   fm_task_id_creation_valid "$id" || { echo "error: invalid task id" >&2; return 2; }
@@ -543,6 +543,14 @@ spawn_remote_secondmate() {
       echo "error: remote secondmate $id inheritance failed; launch refused" >&2
     fi
     return "$rc"
+  fi
+  # Adjacent to the inheritance push above, not part of its contract: a
+  # skill-tree rsync outside FM_HOME, best-effort. A failure here warns and
+  # the launch continues, matching the propagation-failure contract for every
+  # other piece of inherited local material.
+  skill_sync_out=
+  if ! skill_sync_out=$("$SCRIPT_DIR/fm-remote-skill-sync.sh" "$id" 2>&1); then
+    echo "SECONDMATE_SYNC: secondmate $id: skipped: skill sync failed on $host: $(printf '%s\n' "$skill_sync_out" | tail -1)" >&2
   fi
   # This parent home owns the remote secondmate's task identity because it holds
   # the task metadata an observer reads, exactly as for a local spawn: the
