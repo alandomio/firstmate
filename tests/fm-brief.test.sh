@@ -319,6 +319,47 @@ test_faster_paths_use_configured_authority_without_stacked_review() {
   pass "fm-brief.sh: faster paths use configured authority without stacked review"
 }
 
+# The captain's standing instruction (2026-08-28) requires every generated MR/PR
+# description, including a review-fix revision, to go through the mr-description
+# skill. That only applies to the two modes that actually open one.
+test_mr_description_skill_required_for_pr_modes() {
+  local home id brief
+  home="$TMP_ROOT/mrdesc-skill-home"
+  mkdir -p "$home/data"
+
+  id="brief-mr-desc-directpr"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep '`mr-description` skill' "$brief" \
+    "direct-PR brief did not require the mr-description skill"
+  assert_grep 'any later revision to it' "$brief" \
+    "direct-PR brief did not cover revising an existing PR description"
+
+  id="brief-mr-desc-nomistakes"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep '`mr-description` skill' "$brief" \
+    "no-mistakes brief did not require the mr-description skill"
+  assert_grep 'any later revision to it (including a review-fix revision)' "$brief" \
+    "no-mistakes brief did not cover a review-fix revision to the PR description"
+
+  id="brief-mr-desc-localonly"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_no_grep 'mr-description' "$brief" \
+    "local-only brief must not require the mr-description skill (it never opens a PR)"
+
+  id="brief-mr-desc-scout"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_no_grep 'mr-description' "$brief" \
+    "scout brief must not require the mr-description skill (it never opens a PR)"
+
+  pass "fm-brief.sh: direct-PR and no-mistakes briefs require the mr-description skill; local-only and scout do not"
+}
+
 # Pin the specific line the bug lived on: the no-mistakes DOD's no-mistakes
 # reference must render as plain prose with no dangling apostrophe artifact.
 test_no_mistakes_dod_wording() {
@@ -720,6 +761,7 @@ test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
+test_mr_description_skill_required_for_pr_modes
 test_no_mistakes_dod_wording
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete

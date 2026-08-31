@@ -106,6 +106,15 @@ tasks_in() {  # <home> <tasks-axi args...>
   (cd "$home" && tasks-axi "$@")
 }
 
+# future_iso <seconds-from-now>: a portable (BSD/GNU) ISO-8601 timestamp that
+# stays in the future no matter when the suite runs, so seeded commitments
+# never trip the real "followup_expires_at is in the past" refusal on their own.
+future_iso() {
+  local epoch=$(( $(date -u +%s) + $1 ))
+  date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ
+}
+
 # seed_commitment <home> <obligation> <request> <platform> <work-home> <work-id>
 # Simulates the intake half that already works today: the relay mention arrives,
 # the typed obligation is created with its opaque thread binding, the work is
@@ -154,13 +163,15 @@ seed_commitment() {
 # The pi-rearm shape: a report-ready promised-final bound to a secondmate.
 seed_repro_commitment() {   # <home> <obligation> <request> <work-home> <work-id>
   local home=$1 obligation=$2 request=$3 work_home=$4 work_id=$5
-  jq -n --arg r "$request" \
+  local expires
+  expires=$(future_iso 604800)
+  jq -n --arg r "$request" --arg exp "$expires" \
     '{request_id:$r, platform:"discord",
       context_binding:{version:"ctx1", value:("ctx1_" + $r)},
       public_safe_summary:"reproduce a Pi recovery notification loop",
       received_at:"2026-08-21T01:12:00Z",
-      followup_expires_at:"2026-08-28T01:12:00Z",
-      reservation_expires_at:"2026-08-28T01:12:00Z"}' > "$home/request.json"
+      followup_expires_at:$exp,
+      reservation_expires_at:$exp}' > "$home/request.json"
   jq -n '{type:"report-ready", project:"firstmate",
           required_deliverables:["report_path"], completion_policy:"all-required"}' \
     > "$home/expected.json"
@@ -2008,10 +2019,13 @@ test_retention_creates_no_false_teardown_refusal() {
 
 test_expiry_escalation_uses_now_override() {
   local home out exp now_closing now_expired registry tmp
+  local expires_iso
   home=$(make_home expiry-window)
   seed_repro_commitment "$home" pf-exp req-exp main work-exp
-  exp=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' '2026-08-28T01:12:00Z' +%s 2>/dev/null) \
-    || exp=$(date -u -d '2026-08-28T01:12:00Z' +%s)
+  expires_iso=$(sed -n 's/^followup_expires_at=//p' \
+    "$home/state/public-followup/registry/pf-exp")
+  exp=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$expires_iso" +%s 2>/dev/null) \
+    || exp=$(date -u -d "$expires_iso" +%s)
   now_closing=$((exp - 3600))
   now_expired=$((exp + 60))
   out=$(FMX_NOW_OVERRIDE="$now_expired" run_pf "$home" pending)
