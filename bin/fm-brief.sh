@@ -39,6 +39,9 @@
 # The brief's forge vocabulary - pull vs merge request, gh-axi vs glab, "done: PR" vs "done: MR" -
 # follows the origin remote, then a .gitlab-ci.yml fallback, of the clone the repo argument names under projects/ (or of an absolute path given instead).
 # When nothing identifies the forge, the brief says so and tells the worker to run `git remote -v` rather than guessing.
+# Any new DOD or rule prose that names "PR"/"MR" or "pull/merge request" literally must route through
+# $FORGE_ABBR/$FORGE_NOUN/$FORGE_TOOL instead: a hardcoded noun reintroduces the wrong-forge-vocabulary bug
+# this file exists to prevent, and it has done so in more than one place in this same file at once.
 # The generated ship brief records the chosen mode as a fixed machine-readable
 # "Delivery contract: mode=<mode>" line. bin/fm-spawn.sh reads that line and refuses
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
