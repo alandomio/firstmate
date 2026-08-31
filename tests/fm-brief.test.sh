@@ -365,6 +365,46 @@ test_mr_description_skill_required_for_pr_modes() {
   assert_grep 'any later revision to it (including a review-fix revision)' "$brief" \
     "no-mistakes brief did not cover a review-fix revision to the PR description"
 
+  # The requirement's wording must follow the project's actual forge, never a
+  # hardcoded "PR description": a GitLab project says "MR description" (the
+  # captain's standing GitLab vocabulary rule), a GitHub project says "PR
+  # description". The skill name itself (`mr-description`) stays fixed either
+  # way - only the surrounding prose is forge-aware.
+  write_project_clone "$home" gh-mrdesc-proj https://github.com/acme/gh-mrdesc-proj.git
+  write_project_clone "$home" gl-mrdesc-proj https://gitlab.com/peterpark/gl-mrdesc-proj.git
+
+  id="brief-mr-desc-directpr-gh"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" gh-mrdesc-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'Write the PR description, and any later revision to it, with the `mr-description` skill.' "$brief" \
+    "direct-PR brief for a GitHub project did not require the PR-worded mr-description skill"
+
+  id="brief-mr-desc-directpr-gl"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" gl-mrdesc-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'Write the MR description, and any later revision to it, with the `mr-description` skill.' "$brief" \
+    "direct-PR brief for a GitLab project did not require the MR-worded mr-description skill"
+  assert_no_grep 'Write the PR description' "$brief" \
+    "direct-PR brief for a GitLab project hardcoded PR description wording"
+
+  id="brief-mr-desc-nomistakes-gh"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" gh-mrdesc-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'Write the PR description, and any later revision to it (including a review-fix revision), with the `mr-description` skill.' "$brief" \
+    "no-mistakes brief for a GitHub project did not require the PR-worded mr-description skill"
+
+  id="brief-mr-desc-nomistakes-gl"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" gl-mrdesc-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'Write the MR description, and any later revision to it (including a review-fix revision), with the `mr-description` skill.' "$brief" \
+    "no-mistakes brief for a GitLab project did not require the MR-worded mr-description skill"
+  assert_no_grep 'Write the PR description' "$brief" \
+    "no-mistakes brief for a GitLab project hardcoded PR description wording"
+
   id="brief-mr-desc-localonly"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
