@@ -791,6 +791,49 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
+# The captain's instruction (2026-09-01) requires workers to ground themselves
+# in PP Brain and the local memory store before acting, not just when a skill
+# they happen to invoke requires it. This section belongs in ship and scout
+# briefs, whose worker performs the task's first substantive action directly;
+# a secondmate charter routes work to its own crewmates, who each get their
+# own generated ship/scout brief carrying this same contract, so the charter
+# itself does not need a duplicate copy.
+test_grounding_section_requires_search_and_reporting() {
+  local home id brief
+  home="$TMP_ROOT/grounding-home"
+  mkdir -p "$home/data"
+
+  id="brief-grounding-ship"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_grep "# Grounding" "$brief" "ship brief missing the Grounding section"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'both `query` and `prompt` populated' "$brief" \
+    "ship brief Grounding section did not require both PP Brain retrieval fields"
+  assert_grep "the local memory store" "$brief" \
+    "ship brief Grounding section did not mention the local memory store"
+  assert_grep "Report what you found and what it changed" "$brief" \
+    "ship brief Grounding section did not require reporting outcome, not just the search"
+  assert_grep "starting point rather than a substitute" "$brief" \
+    "ship brief Grounding section did not frame the Task section as a starting point"
+
+  id="brief-grounding-scout"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_grep "# Grounding" "$brief" "scout brief missing the Grounding section"
+  assert_grep "Report what you found and what it changed" "$brief" \
+    "scout brief Grounding section did not require reporting outcome, not just the search"
+
+  id="brief-grounding-secondmate"
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='sample domain' \
+    "$ROOT/bin/fm-brief.sh" "$id" --secondmate --no-projects >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_no_grep "# Grounding" "$brief" \
+    "secondmate charter should not duplicate the Grounding section its own crewmates already carry"
+
+  pass "fm-brief.sh: ship and scout briefs require Brain/memory grounding with reported outcome; secondmate charter does not duplicate it"
+}
+
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
   local brief
@@ -992,6 +1035,7 @@ test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
+test_grounding_section_requires_search_and_reporting
 test_scout_and_secondmate_scaffold
 test_forge_detection_shapes_vocabulary
 test_forge_detection_rejects_bare_github_dir
