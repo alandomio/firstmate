@@ -179,8 +179,13 @@ exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"
 SH
 chmod +x "$FAKEBIN/fake-ssh"
 
+# Points fm-remote-skill-sync.sh at a source that does not exist, so the launch
+# convergence point's skill sync no-ops instead of attempting a real rsync;
+# tests/fm-remote-skill-sync.test.sh and
+# tests/fm-remote-secondmate-skill-sync.test.sh own that step's own behavior.
 remote_env() {
   FM_HOME="$PARENT" \
+  FM_SKILLS_SOURCE_OVERRIDE="$TMP_ROOT/no-skills-source" \
   FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
   FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
   FM_SSH_BIN="$FAKEBIN/fake-ssh" \

@@ -277,6 +277,10 @@
       "audience": "operator-example"
     },
     {
+      "path": "docs/examples/skill-sync-exclude",
+      "audience": "operator-example"
+    },
+    {
       "path": "docs/examples/watched-tools.json",
       "audience": "operator-example"
     },
