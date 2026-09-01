@@ -54,6 +54,10 @@
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
 # over copied detail) and has the crewmate add the fm-ensure-agents-md.sh
 # self-governance section when a touched project AGENTS.md lacks it.
+# Ship and scout briefs include a Grounding section requiring PP Brain and
+# local-memory-store search before the first substantive action and a reported
+# outcome; a secondmate charter omits it because its own crewmates each get
+# their own generated brief carrying the same contract.
 # Refuses to overwrite an existing brief.
 set -eu
 
@@ -305,6 +309,11 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 # Task
 {TASK}
 
+# Grounding
+Before your first substantive action, search PP Brain (\`search_knowledge\` with both \`query\` and \`prompt\` populated - one alone kills two of six retrieval paths) and the local memory store for prior decisions, refuted approaches, and known traps on this subject.
+Treat the \`# Task\` section above as firstmate's assembly of that context, a starting point rather than a substitute.
+Report what you found and what it changed in your next status line, or state plainly that both were silent.
+
 $HERDR_SECTION
 
 # Setup
@@ -417,6 +426,11 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 
 # Task
 {TASK}
+
+# Grounding
+Before your first substantive action, search PP Brain (\`search_knowledge\` with both \`query\` and \`prompt\` populated - one alone kills two of six retrieval paths) and the local memory store for prior decisions, refuted approaches, and known traps on this subject.
+Treat the \`# Task\` section above as firstmate's assembly of that context, a starting point rather than a substitute.
+Report what you found and what it changed in your next status line, or state plainly that both were silent.
 
 $HERDR_SECTION
 
