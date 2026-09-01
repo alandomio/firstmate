@@ -457,6 +457,26 @@ test_ci_ready_done_log_beats_monitoring_run() {
   pass "ci-ready status log beats monitoring run"
 }
 
+# A GitLab project's brief instructs the crewmate to report "done: MR <url>
+# checks green", so the MR noun must be recognized as the same CI-ready signal
+# as PR. Otherwise a finished GitLab crew reads as still working while the run
+# keeps monitoring for merge - the PR #252 failure class on the forge that
+# carries almost all of this fleet's work.
+test_ci_ready_done_log_accepts_merge_request_noun() {
+  reset_fakes
+  local d; d=$(new_case ci-ready-mr)
+  make_repo_on_branch "$d/wt" fm/feat-mr
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-mr.meta" "window=fm:fm-feat-mr" "worktree=$d/wt" "kind=ship"
+  printf 'done: MR https://gitlab.com/g/p/-/merge_requests/12 checks green\n' > "$d/state/feat-mr.status"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-mr)"
+  local out; out=$(run_crew_state "$d" feat-mr)
+  assert_contains "$out" "state: done" "MR ci-ready status log -> done"
+  assert_contains "$out" "source: status-log" "MR ci-ready state comes from the status log"
+  assert_not_contains "$out" "state: working" "MR ci-ready is not hidden by monitoring run"
+  pass "ci-ready status log recognizes the MR noun"
+}
+
 # Regression for the PR #252 incident: the crew's own status log never got a
 # "done: ... checks green" line (log_reports_ci_ready above does not apply),
 # but the ci step's log tail shows CI is actually green and only waiting on
@@ -1415,6 +1435,7 @@ test_genuine_parked_not_superseded
 test_scalar_gate_parked_not_superseded
 test_gate_block_parked_not_superseded
 test_ci_ready_done_log_beats_monitoring_run
+test_ci_ready_done_log_accepts_merge_request_noun
 test_ci_monitoring_checks_green_surfaces_done
 test_top_level_ci_checks_green_surfaces_done
 test_ci_monitoring_no_checks_terminal_surfaces_done

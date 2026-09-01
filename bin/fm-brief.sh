@@ -10,7 +10,7 @@
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
-#   data/<task-id>/report.md (no branch, no push, no PR) and the worktree is scratch.
+#   data/<task-id>/report.md (no branch, no push, no PR/MR) and the worktree is scratch.
 #   --secondmate writes a persistent secondmate charter. The project list
 #   is cloned into the secondmate home, while the natural-language scope
 #   tells the main firstmate when to route work there; routine churn stays in its own home;
@@ -30,12 +30,18 @@
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Firstmate
 # resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never reads it:
-#   no-mistakes  implement -> /no-mistakes pipeline -> PR -> configured merge authority
-#   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> configured merge authority
-#   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
+#   no-mistakes  implement -> /no-mistakes pipeline -> PR/MR -> configured merge authority
+#   direct-PR    implement -> push + open PR/MR via the tool matching this project's forge (no pipeline) -> configured merge authority
+#   local-only   implement on branch, stop and report "ready in branch" (no push/PR or MR);
 #                the configured merge authority approves, firstmate merges to local main
 # no-mistakes-prod-only is a registry policy, not a task mode; resolve it to one of
 # the three concrete modes at intake before calling this script.
+# The brief's forge vocabulary - pull vs merge request, gh-axi vs glab, "done: PR" vs "done: MR" -
+# follows the origin remote, then a .gitlab-ci.yml fallback, of the clone the repo argument names under projects/ (or of an absolute path given instead).
+# When nothing identifies the forge, the brief says so and tells the worker to run `git remote -v` rather than guessing.
+# Any new DOD or rule prose that names "PR"/"MR" or "pull/merge request" literally must route through
+# $FORGE_ABBR/$FORGE_NOUN/$FORGE_TOOL instead: a hardcoded noun reintroduces the wrong-forge-vocabulary bug
+# this file exists to prevent, and it has done so in more than one place in this same file at once.
 # The generated ship brief records the chosen mode as a fixed machine-readable
 # "Delivery contract: mode=<mode>" line. bin/fm-spawn.sh reads that line and refuses
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
@@ -77,6 +83,48 @@ esac
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 PAUSED_VERB=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
 
+# Resolve the repo argument to a clone directory. The projects/<name> and
+# absolute-path arms match bin/fm-spawn.sh's resolve_project_dir_arg; a bare name
+# deliberately keeps fm-brief's own $PROJECTS/<name> convention instead.
+fm_brief_resolve_project_dir() {  # <repo-arg>
+  local path=$1
+  case "$path" in
+    projects/*) printf '%s/%s\n' "$PROJECTS" "${path#projects/}" ;;
+    /*) printf '%s\n' "$path" ;;
+    *) printf '%s/%s\n' "$PROJECTS" "$path" ;;
+  esac
+}
+
+# Classify a project's forge from its local clone's origin remote (falling back
+# to .gitlab-ci.yml on an unrecognized host) so the brief names the real forge;
+# git discovery walks up, so a non-root dir is unknown, not its encloser.
+fm_brief_detect_forge() {  # <clone-dir>
+  local dir=$1 url host top abs
+  top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || { echo unknown; return; }
+  abs=$(CDPATH='' cd -- "$dir" 2>/dev/null && pwd -P) || { echo unknown; return; }
+  [ "$top" = "$abs" ] || { echo unknown; return; }
+  url=$(git -C "$dir" remote get-url origin 2>/dev/null) || { echo unknown; return; }
+  case "$url" in
+    https://*|http://*|ssh://*|git://*)
+      host=${url#*://}; host=${host%%/*}; host=${host##*@}; host=${host%%:*} ;;
+    *@*:*)
+      host=${url##*@}; host=${host%%:*} ;;
+    *:*)
+      host=${url%%:*} ;;
+    *)
+      echo unknown; return ;;
+  esac
+  host=$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')
+  case "$host" in
+    github.com) echo github; return ;;
+  esac
+  if [ -f "$dir/.gitlab-ci.yml" ]; then echo gitlab; return; fi
+  case "$host" in
+    *gitlab*) echo gitlab; return ;;
+  esac
+  echo unknown
+}
+
 resolve_directory_input() {
   local name=$1 path=$2 resolved
   case "$path" in
@@ -101,6 +149,7 @@ if [ -n "${FM_STATE_OVERRIDE:-}" ]; then
 else
   STATE="$FM_HOME/state"
 fi
+PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
@@ -266,6 +315,28 @@ fi
 
 REPO=${POS[1]}
 
+FORGE=$(fm_brief_detect_forge "$(fm_brief_resolve_project_dir "$REPO")")
+case "$FORGE" in
+  github)
+    FORGE_NOUN='pull request'
+    FORGE_ABBR=PR
+    FORGE_TOOL=gh-axi
+    FORGE_TOOLS_LINE='Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.'
+    ;;
+  gitlab)
+    FORGE_NOUN='merge request'
+    FORGE_ABBR=MR
+    FORGE_TOOL=glab
+    FORGE_TOOLS_LINE='Use glab for GitLab operations and chrome-devtools-axi for browser operations.'
+    ;;
+  *)
+    FORGE_NOUN='pull/merge request'
+    FORGE_ABBR='PR/MR'
+    FORGE_TOOL="gh-axi (GitHub) or glab (GitLab) - confirm this project's forge with \`git remote -v\` before choosing"
+    FORGE_TOOLS_LINE="This project's forge could not be determined from its git remote; run \`git remote -v\` to check, then use gh-axi for GitHub or glab for GitLab. chrome-devtools-axi remains available for browser operations."
+    ;;
+esac
+
 if [ "$HERDR_LAB" -eq 1 ]; then
 HERDR_LAB_HELPER=$(shell_quote "$FM_ROOT/bin/fm-herdr-lab.sh")
 # shellcheck disable=SC2016  # single quotes are deliberate: these lines are literal brief text whose backtick-wrapped $(...) and "$HERDR_LAB_SESSION" snippets must reach the reading agent verbatim, not expand at scaffold time; only the '"$VAR"' break-outs interpolate.
@@ -309,14 +380,14 @@ $HERDR_SECTION
 
 # Setup
 You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
-This is a SCOUT task: the deliverable is a written report, not a PR.
+This is a SCOUT task: the deliverable is a written report, not a $FORGE_NOUN.
 The worktree is your laboratory - install, run, edit, and make scratch commits freely; all of it is discarded at teardown.
 The report is the only thing that survives, so anything worth keeping must be in it.
 
 # Rules
-1. Never push to any remote and never open a PR.
+1. Never push to any remote and never open a $FORGE_NOUN.
 2. Stay inside this worktree; the only files you may write outside it are the report and the status file below.
-3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+3. $FORGE_TOOLS_LINE
 4. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
@@ -355,25 +426,25 @@ fi
 case "$MODE" in
   direct-PR)
     SETUP2=""
-    RULE1='1. Never push to the default branch (push only your `fm/'"$ID"'` branch). Never merge a PR.'
+    RULE1='1. Never push to the default branch (push only your `fm/'"$ID"'` branch). Never merge a '"$FORGE_NOUN"'.'
     IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
 Delivery contract: mode=direct-PR
-This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
+This task ships **direct-PR**: you raise the $FORGE_NOUN yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
-When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
-Write the PR description, and any later revision to it, with the \`mr-description\` skill.
-Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
+When it is implemented and committed, push your branch and open a $FORGE_NOUN with $FORGE_TOOL, then append \`done: $FORGE_ABBR {url}\` to the status file and stop.
+Write the $FORGE_ABBR description, and any later revision to it, with the \`mr-description\` skill.
+Do NOT run /no-mistakes. The configured merge authority decides whether to merge the $FORGE_NOUN; firstmate relays the outcome.
 EOF
     ;;
   local-only)
     SETUP2=""
-    RULE1="1. Never push to any remote and never open a PR. Work only on your \`fm/$ID\` branch; firstmate handles the merge into local \`main\`."
+    RULE1="1. Never push to any remote and never open a $FORGE_NOUN. Work only on your \`fm/$ID\` branch; firstmate handles the merge into local \`main\`."
     IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
 Delivery contract: mode=local-only
-This task ships **local-only**: no remote, no PR, no pipeline.
-The task is complete only when committed on your branch \`fm/$ID\`. Do NOT push, do NOT open a PR, do NOT merge.
+This task ships **local-only**: no remote, no $FORGE_NOUN, no pipeline.
+The task is complete only when committed on your branch \`fm/$ID\`. Do NOT push, do NOT open a $FORGE_NOUN, do NOT merge.
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
 When it is implemented and committed, append \`done: ready in branch fm/$ID\` to the status file and stop.
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
@@ -382,13 +453,13 @@ EOF
   *)  # no-mistakes
     SETUP2="
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
-    RULE1='1. Never push to the default branch. Never merge a PR.'
+    RULE1='1. Never push to the default branch. Never merge a '"$FORGE_NOUN"'.'
     IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
 Delivery contract: mode=no-mistakes
 The task is complete only when committed on your branch.
 When you believe it is complete, append \`done: {summary}\` to the status file and stop.
-Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
+Firstmate will then instruct you to run /no-mistakes to validate and ship a $FORGE_NOUN.
 
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
@@ -400,9 +471,9 @@ Three firstmate-specific rules layer on top of that guidance:
   Firstmate applies \`ask-user-authority\` and obtains any required captain decision.
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - Avoid \`--yes\`: it would silently bypass firstmate's authority check and any required captain escalation.
-- Write the PR description, and any later revision to it (including a review-fix revision), with the \`mr-description\` skill.
+- Write the $FORGE_ABBR description, and any later revision to it (including a review-fix revision), with the \`mr-description\` skill.
 
-After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
+After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: $FORGE_ABBR {url} checks green\` and stop. You are finished.
 EOF
     ;;
 esac
@@ -432,7 +503,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 # Rules
 $RULE1
 2. Stay inside this worktree; modify nothing outside it.
-3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+3. $FORGE_TOOLS_LINE
 4. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.

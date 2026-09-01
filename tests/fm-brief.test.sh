@@ -189,6 +189,24 @@ write_registry() {
 EOF
 }
 
+# Build a local clone at an explicit path with the given origin, so
+# fm_brief_detect_forge (bin/fm-brief.sh) has something to read. An empty
+# origin leaves the clone remote-less, and a third "ci-marker" argument drops
+# a .gitlab-ci.yml so self-hosted-host detection can be exercised.
+write_clone_at() {
+  local dir=$1 origin=$2 ci_marker=${3:-}
+  mkdir -p "$dir"
+  git -C "$dir" init -q
+  [ -z "$origin" ] || git -C "$dir" remote add origin "$origin"
+  [ -z "$ci_marker" ] || printf 'stages: []\n' > "$dir/.gitlab-ci.yml"
+}
+
+# The same, for a project name under a home's default projects/ directory.
+write_project_clone() {
+  local home=$1 name=$2 origin=$3 ci_marker=${4:-}
+  write_clone_at "$home/projects/$name" "$origin" "$ci_marker"
+}
+
 # fm-brief.sh must exit 0 and produce a brief with no unreplaced shell
 # metacharacter corruption for every ship delivery mode. This also guards
 # against any *new* unescaped apostrophe or unbalanced quote later added to
@@ -294,12 +312,14 @@ test_faster_paths_use_configured_authority_without_stacked_review() {
   local home id brief
   home="$TMP_ROOT/configured-authority-home"
   write_registry "$home"
+  write_project_clone "$home" direct-proj https://github.com/acme/direct-proj.git
+  write_project_clone "$home" local-proj https://github.com/acme/local-proj.git
   id="brief-direct-authority-a4"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" direct-proj --mode direct-PR >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
-  assert_grep "The configured merge authority decides whether to merge the PR; firstmate relays the outcome." "$brief" \
+  assert_grep "The configured merge authority decides whether to merge the pull request; firstmate relays the outcome." "$brief" \
     "direct-PR brief lost configured merge authority"
-  assert_no_grep "The captain reviews and merges the PR" "$brief" \
+  assert_no_grep "The captain reviews and merges the pull request" "$brief" \
     "direct-PR brief hard-coded captain-only authority"
   id="brief-local-authority-a4"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" local-proj --mode local-only >/dev/null 2>&1
@@ -344,6 +364,46 @@ test_mr_description_skill_required_for_pr_modes() {
     "no-mistakes brief did not require the mr-description skill"
   assert_grep 'any later revision to it (including a review-fix revision)' "$brief" \
     "no-mistakes brief did not cover a review-fix revision to the PR description"
+
+  # The requirement's wording must follow the project's actual forge, never a
+  # hardcoded "PR description": a GitLab project says "MR description" (the
+  # captain's standing GitLab vocabulary rule), a GitHub project says "PR
+  # description". The skill name itself (`mr-description`) stays fixed either
+  # way - only the surrounding prose is forge-aware.
+  write_project_clone "$home" gh-mrdesc-proj https://github.com/acme/gh-mrdesc-proj.git
+  write_project_clone "$home" gl-mrdesc-proj https://gitlab.com/peterpark/gl-mrdesc-proj.git
+
+  id="brief-mr-desc-directpr-gh"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" gh-mrdesc-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'Write the PR description, and any later revision to it, with the `mr-description` skill.' "$brief" \
+    "direct-PR brief for a GitHub project did not require the PR-worded mr-description skill"
+
+  id="brief-mr-desc-directpr-gl"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" gl-mrdesc-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'Write the MR description, and any later revision to it, with the `mr-description` skill.' "$brief" \
+    "direct-PR brief for a GitLab project did not require the MR-worded mr-description skill"
+  assert_no_grep 'Write the PR description' "$brief" \
+    "direct-PR brief for a GitLab project hardcoded PR description wording"
+
+  id="brief-mr-desc-nomistakes-gh"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" gh-mrdesc-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'Write the PR description, and any later revision to it (including a review-fix revision), with the `mr-description` skill.' "$brief" \
+    "no-mistakes brief for a GitHub project did not require the PR-worded mr-description skill"
+
+  id="brief-mr-desc-nomistakes-gl"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" gl-mrdesc-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'Write the MR description, and any later revision to it (including a review-fix revision), with the `mr-description` skill.' "$brief" \
+    "no-mistakes brief for a GitLab project did not require the MR-worded mr-description skill"
+  assert_no_grep 'Write the PR description' "$brief" \
+    "no-mistakes brief for a GitLab project hardcoded PR description wording"
 
   id="brief-mr-desc-localonly"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only >/dev/null 2>&1
@@ -753,6 +813,165 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
+# The generated brief must name the forge the project actually uses (derived
+# from its local clone's origin remote) instead of assuming GitHub: GitHub
+# gets gh-axi/"pull request"/PR, GitLab gets glab/"merge request"/MR (both a
+# gitlab.com host and a self-hosted host carrying .gitlab-ci.yml), and a
+# project with no resolvable forge gets an explicit unresolved marker rather
+# than a confident wrong answer.
+test_forge_detection_shapes_vocabulary() {
+  local home brief
+  home="$TMP_ROOT/forge-home"
+  mkdir -p "$home/data"
+
+  write_project_clone "$home" gh-proj https://github.com/acme/gh-proj.git
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-gh gh-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-forge-gh/brief.md"
+  assert_grep "Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations." "$brief" \
+    "github clone: rule 3 must name gh-axi and GitHub"
+  assert_grep "Never merge a pull request." "$brief" "github clone: rule 1 must say pull request"
+  assert_grep "append \`done: PR {url} checks green\`" "$brief" "github clone: done line must use PR"
+  assert_no_grep "glab" "$brief" "github clone: brief must not mention glab"
+
+  write_project_clone "$home" gl-proj https://gitlab.com/peterpark/gl-proj.git
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-gl gl-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/brief-forge-gl/brief.md"
+  assert_grep "Use glab for GitLab operations and chrome-devtools-axi for browser operations." "$brief" \
+    "gitlab.com clone: rule 3 must name glab and GitLab"
+  assert_grep "open a merge request with glab, then append \`done: MR {url}\`" "$brief" \
+    "gitlab.com clone: DOD must use merge request/glab/MR"
+  assert_no_grep "gh-axi" "$brief" "gitlab.com clone: brief must not mention gh-axi"
+
+  write_project_clone "$home" gl-self self.example.internal:group/gl-self.git gitlab-ci
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-glself gl-self --scout >/dev/null 2>&1
+  brief="$home/data/brief-forge-glself/brief.md"
+  assert_grep "Use glab for GitLab operations and chrome-devtools-axi for browser operations." "$brief" \
+    "self-hosted GitLab clone (.gitlab-ci.yml, non-matching host): rule 3 must still resolve to glab"
+  assert_grep "the deliverable is a written report, not a merge request." "$brief" \
+    "GitLab scout: the Setup line must name the project's forge noun"
+  assert_no_grep "not a PR." "$brief" \
+    "GitLab scout: the Setup line must not mix GitHub vocabulary into a GitLab brief"
+
+  write_project_clone "$home" unk-proj https://code.example.org/team/unk-proj.git
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-unk unk-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-forge-unk/brief.md"
+  assert_grep "This project's forge could not be determined from its git remote" "$brief" \
+    "unresolvable forge: brief must carry a loud unresolved marker, not a confident guess"
+  assert_grep "run \`git remote -v\` to check, then use gh-axi for GitHub or glab for GitLab" "$brief" \
+    "unresolvable forge: brief must tell the worker how to check"
+  assert_grep "append \`done: PR/MR {url} checks green\`" "$brief" \
+    "unresolvable forge: done-line convention must not silently default to PR"
+
+  write_project_clone "$home" no-origin-proj ""
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-noorigin no-origin-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-forge-noorigin/brief.md"
+  assert_grep "This project's forge could not be determined from its git remote" "$brief" \
+    "clone with no origin remote: brief must carry the same unresolved marker"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-noclone never-cloned --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-forge-noclone/brief.md"
+  assert_grep "This project's forge could not be determined from its git remote" "$brief" \
+    "project with no local clone: brief must carry the same unresolved marker"
+
+  pass "fm-brief.sh: brief vocabulary matches the project's actual forge"
+}
+
+# A leftover `.github` directory is not evidence of the forge a project ships
+# to: a repo migrated to a self-hosted GitLab whose host carries no gitlab
+# token keeps its old `.github/workflows`. Detection must stay unresolved.
+test_forge_detection_rejects_bare_github_dir() {
+  local home brief
+  home="$TMP_ROOT/forge-ghdir-home"
+  mkdir -p "$home/data"
+  write_project_clone "$home" ghdir-proj https://code.example.org/team/ghdir-proj.git
+  mkdir -p "$home/projects/ghdir-proj/.github/workflows"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-ghdir ghdir-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-forge-ghdir/brief.md"
+  assert_grep "This project's forge could not be determined from its git remote" "$brief" \
+    "unrecognized host with a .github directory: brief must stay unresolved"
+  assert_no_grep "Use gh-axi for GitHub operations" "$brief" \
+    "unrecognized host with a .github directory: brief must not declare GitHub"
+  assert_grep "append \`done: PR/MR {url} checks green\`" "$brief" \
+    "unrecognized host with a .github directory: done line must not default to PR"
+  pass "fm-brief.sh: a bare .github directory alone never declares GitHub"
+}
+
+# The repo argument accepts three spellings that must all name one clone: a
+# projects/<name> path and an absolute path, both shared with bin/fm-spawn.sh's
+# resolve_project_dir_arg, plus a bare name that deliberately diverges from
+# fm-spawn's cwd-relative handling to keep fm-brief's own $PROJECTS/<name>
+# convention. The same clone must yield identical forge vocabulary through all.
+test_forge_detection_accepts_repo_arg_spellings() {
+  local home brief spelling id n
+  home="$TMP_ROOT/forge-spelling-home"
+  mkdir -p "$home/data"
+  write_project_clone "$home" spell-proj https://gitlab.com/peterpark/spell-proj.git
+
+  n=0
+  for spelling in spell-proj projects/spell-proj "$home/projects/spell-proj"; do
+    n=$((n + 1))
+    id="brief-forge-spelling-$n"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$spelling" --mode no-mistakes >/dev/null 2>&1
+    brief="$home/data/$id/brief.md"
+    assert_grep "Use glab for GitLab operations and chrome-devtools-axi for browser operations." "$brief" \
+      "repo spelling '$spelling': rule 3 must name glab and GitLab"
+    assert_grep "Never merge a merge request." "$brief" \
+      "repo spelling '$spelling': rule 1 must say merge request"
+    assert_grep "append \`done: MR {url} checks green\`" "$brief" \
+      "repo spelling '$spelling': done line must use MR"
+    assert_no_grep "This project's forge could not be determined from its git remote" "$brief" \
+      "repo spelling '$spelling': a resolvable clone must not render the unresolved marker"
+  done
+  pass "fm-brief.sh: all three repo-argument spellings resolve the same clone's forge"
+}
+
+# A firstmate home is itself a git checkout with projects/ gitignored inside it,
+# so a projects/<repo> directory that is not its own clone root - a worktree
+# container, a placeholder, a half-finished clone - makes git discovery walk UP
+# to the enclosing firstmate repo (a GitHub remote). The brief must report the
+# forge as unresolved rather than confidently emitting GitHub vocabulary for a
+# project whose real forge is something else.
+test_forge_detection_ignores_enclosing_repo() {
+  local home brief
+  home="$TMP_ROOT/forge-nested-home"
+  mkdir -p "$home/data"
+  git -C "$home" init -q
+  git -C "$home" remote add origin https://github.com/alandomio/firstmate.git
+  mkdir -p "$home/projects/nested-proj"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-forge-nested nested-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-forge-nested/brief.md"
+  assert_grep "This project's forge could not be determined from its git remote" "$brief" \
+    "non-root project dir: brief must not inherit the enclosing firstmate repo's forge"
+  assert_no_grep "Use gh-axi for GitHub operations" "$brief" \
+    "non-root project dir: brief must not claim GitHub from the enclosing repo's remote"
+  pass "fm-brief.sh: a project dir that is not its own clone root resolves unknown"
+}
+
+# Forge detection must resolve the clone through the same projects-dir override
+# every other resolver honors. A home invoked with FM_PROJECTS_OVERRIDE has no
+# $FM_HOME/projects, so hardcoding that path made every brief in such a home
+# fall back to the unresolved marker even for a known GitLab project.
+test_forge_detection_honors_projects_override() {
+  local home projects brief
+  home="$TMP_ROOT/forge-override-home"
+  projects="$TMP_ROOT/forge-override-projects"
+  mkdir -p "$home/data"
+  write_clone_at "$projects/gl-proj" https://gitlab.com/peterpark/gl-proj.git
+
+  FM_HOME="$home" FM_PROJECTS_OVERRIDE="$projects" \
+    "$ROOT/bin/fm-brief.sh" brief-forge-override gl-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-forge-override/brief.md"
+  assert_grep "Use glab for GitLab operations and chrome-devtools-axi for browser operations." "$brief" \
+    "FM_PROJECTS_OVERRIDE home: rule 3 must resolve the overridden clone's forge"
+  assert_grep "append \`done: MR {url} checks green\`" "$brief" \
+    "FM_PROJECTS_OVERRIDE home: done line must use the overridden clone's forge"
+  assert_no_grep "This project's forge could not be determined from its git remote" "$brief" \
+    "FM_PROJECTS_OVERRIDE home: a resolvable clone must not render the unresolved marker"
+  pass "fm-brief.sh: forge detection honors FM_PROJECTS_OVERRIDE"
+}
+
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
@@ -774,3 +993,8 @@ test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
+test_forge_detection_shapes_vocabulary
+test_forge_detection_rejects_bare_github_dir
+test_forge_detection_accepts_repo_arg_spellings
+test_forge_detection_ignores_enclosing_repo
+test_forge_detection_honors_projects_override
