@@ -877,13 +877,17 @@ test_ship_worker_operating_contracts() {
     "ship brief did not route durable findings through the note: unread-surface channel"
   assert_grep "States: working, note, needs-decision, blocked, paused, done, failed." "$brief" \
     "ship brief instructs a note: line but omits note from its own states enumeration"
-  # Delivery of a note: line does not depend on its wording, so the brief
-  # states the guarantee rather than coaching the worker around word choices.
+  # Delivery of a note: line does not depend on its wording, but the wedge
+  # guards do not yet cover note:, so the brief discloses that gap honestly
+  # instead of coaching the worker around word choices.
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'Wording does not change whether the finding reaches firstmate: every `note:` line is' "$brief" \
+  assert_grep 'Every `note:` line reaches firstmate: the next status drain presents it whatever its wording.' "$brief" \
     "ship brief did not state that a note: line reaches firstmate regardless of its wording"
-  assert_grep 'signal may surface it sooner as well - a difference in timing, not in whether it is seen.' "$brief" \
-    "ship brief did not frame escalation-shaped prose as a timing difference rather than a lost finding"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'But `note:` is not yet covered by the supervision wedge guards that protect `working:`,' "$brief" \
+    "ship brief did not disclose that note: lacks the wedge-guard coverage working:/resolved:/captain-held: have"
+  assert_grep 'suppressed. That gap lives in those guards, not in note wording, and is tracked separately.' "$brief" \
+    "ship brief did not place the wedge-guard gap outside the worker's note wording"
   # Word-substitution coaching cannot be complete, so it must not return.
   assert_no_grep 'Say it another way' "$brief" \
     "ship brief again coaches the worker to swap specific words, which no list can make complete"

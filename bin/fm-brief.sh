@@ -443,10 +443,10 @@ fi
 # delivery mode, validated above. The generated DOD opens with the fixed
 # "Delivery contract: mode=<mode>" line that bin/fm-spawn.sh checks against its own
 # explicit --mode before launching.
+PAUSE_NOTE=" If a declared wait concerns an open $FORGE_ABBR under review, describe it as awaiting a colleague's approval, never the captain's merge decision - the captain cannot approve their own $FORGE_NOUN."
 case "$MODE" in
   direct-PR)
     SETUP2=""
-    PAUSE_NOTE=" If a declared wait concerns an open $FORGE_ABBR under review, describe it as awaiting a colleague's approval, never the captain's merge decision - the captain cannot approve their own $FORGE_NOUN."
     RULE1='1. Never push to the default branch (push only your `fm/'"$ID"'` branch). Never merge a '"$FORGE_NOUN"'.'
     IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
@@ -475,7 +475,6 @@ EOF
   *)  # no-mistakes
     SETUP2="
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
-    PAUSE_NOTE=" If a declared wait concerns an open $FORGE_ABBR under review, describe it as awaiting a colleague's approval, never the captain's merge decision - the captain cannot approve their own $FORGE_NOUN."
     RULE1='1. Never push to the default branch. Never merge a '"$FORGE_NOUN"'.'
     IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
@@ -553,9 +552,11 @@ $RULE1
    \`note: CANDIDATE - {finding}\` rather than acting on it yourself: you record candidates, only
    firstmate promotes them, and you must never write to PP Brain or any shared memory system
    beyond this workstation directly.
-   Wording does not change whether the finding reaches firstmate: every \`note:\` line is
-   presented in the next status drain. Prose that happens to read like a completion or merge
-   signal may surface it sooner as well - a difference in timing, not in whether it is seen.
+   Every \`note:\` line reaches firstmate: the next status drain presents it whatever its wording.
+   But \`note:\` is not yet covered by the supervision wedge guards that protect \`working:\`,
+   \`resolved:\` and \`captain-held:\`, so while a note whose prose happens to match a legacy
+   captain-relevant free-text pattern is your last line, wedge detection for your pane can be
+   suppressed. That gap lives in those guards, not in note wording, and is tracked separately.
    Before the FIRST \`done:\` or \`failed:\` line you write, send at least one \`working:\` status
    that carries real substance (a finding, a decision, a completed stage) - never end a task on
    a single \`done:\` line with nothing reported before it.
