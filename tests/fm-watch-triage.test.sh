@@ -294,10 +294,9 @@ EOF
   pass "classifier primitives: keyed decisions and activity phases, captain relevance, window-to-task, and overrides"
 }
 
-# The nonterminal-progress-verb set (working, resolved, captain-held, note, and
-# the configured paused verb) is a single shared predicate that
-# status_is_captain_relevant and both fm-supervise-daemon.sh wedge guards call,
-# so a verb added to one can never again be missing from another.
+# status_is_captain_relevant and both fm-supervise-daemon.sh wedge guards call
+# this one shared predicate for the nonterminal-progress-verb set, so a verb
+# added to one enumeration can never again be missing from another.
 test_status_is_nonterminal_progress_verb_unifies_call_sites() {
   status_is_nonterminal_progress_verb "note: merged" \
     || fail "note: not classified as a nonterminal progress verb"

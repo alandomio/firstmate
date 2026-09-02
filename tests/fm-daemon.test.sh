@@ -1145,10 +1145,9 @@ test_stale_note_transient_self_handles() {
   pass "note: verb is never treated as terminal by classify_stale, even with free-text merged"
 }
 
-# The paused verb appeared in fm-classify-lib.sh's old enumeration but not in
-# either daemon site's: both daemon sites already exclude paused earlier via
-# status_is_paused_or_captain_held, so merging paused into the shared predicate
-# must not change classify_stale/handle_wake's paused handling at all.
+# Both daemon sites already exclude paused earlier via
+# status_is_paused_or_captain_held, so merging paused into the shared
+# nonterminal-progress-verb predicate must not change their paused handling.
 test_paused_unaffected_by_shared_nonterminal_progress_verb() {
   local dir state out key pause_reason
   dir=$(make_supercase paused-shared-predicate)
@@ -1167,11 +1166,9 @@ test_paused_unaffected_by_shared_nonterminal_progress_verb() {
   pass "paused: reaches the pause action before either daemon site's nonterminal-verb case, so merging it into the shared predicate changes nothing observable"
 }
 
-# Root-cause regression for the supervision-note-verb-wedge-guard defect: a note:
-# line whose prose contains a legacy free-text token ("merged") was classified
-# captain-relevant and the wedge guards treated that as terminal, permanently
-# clearing the worker's possible-wedge marker on every later stale wake of the
-# same unchanged line. Mirrors test_afk_nonterminal_working_merged_keeps_wedge_aging.
+# note: carries a leading verb, so it must never fall through to free-text
+# matching - otherwise the wedge guards below treat a nonterminal note as
+# terminal and permanently clear the worker's possible-wedge marker.
 test_afk_nonterminal_note_merged_keeps_wedge_aging() {
   local dir state key out win pane incident fakebin
   dir=$(make_supercase afk-note-merged-wedge)
