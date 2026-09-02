@@ -112,21 +112,29 @@ status_is_terminal_verb() {
   esac
 }
 
-# 0 if the given (last) status line matches a captain-relevant verb.
-# Verb-aware by default: terminal verbs always match; nonterminal progress verbs
-# (working, resolved, captain-held) and paused never match from free-text prose;
-# only lines without those leading verbs may still match free-text tokens for
-# legacy bare lines such as "merged" or "PR ready".
+# 0 if the status line's leading verb is a known nonterminal progress verb:
+# working, resolved, captain-held, note, or the configured paused verb. The
+# single shared predicate so no enumeration site can drift from another.
+status_is_nonterminal_progress_verb() {  # <status-line>
+  local line=$1 verb
+  [ -n "$line" ] || return 1
+  verb=$(status_line_verb "$line")
+  case "$verb" in
+    working|resolved|captain-held|note|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}")
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# 0 if the given (last) status line matches a captain-relevant verb. Terminal
+# verbs always match; status_is_nonterminal_progress_verb's verbs never match
+# free text; other lines (legacy bare "merged"/"PR ready") still match free text.
 status_is_captain_relevant() {
   local line=$1 verb
   [ -n "$line" ] || return 1
-  status_is_paused "$line" && return 1
+  status_is_nonterminal_progress_verb "$line" && return 1
   verb=$(status_line_verb "$line")
-  case "$verb" in
-    working|resolved|captain-held|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}")
-      return 1
-      ;;
-  esac
   if [ -z "${FM_CAPTAIN_RE+x}" ]; then
     case "$verb" in
       done|needs-decision|blocked|failed) return 0 ;;
