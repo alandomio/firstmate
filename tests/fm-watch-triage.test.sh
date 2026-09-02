@@ -220,6 +220,8 @@ test_classifier_primitives() {
   [ "$(last_status_line "$state/x.status")" = "done: b" ] || fail "last_status_line did not return the last non-blank line"
   status_is_captain_relevant "done: b" || fail "done: not recognized as captain-relevant"
   status_is_captain_relevant "needs-decision [key=q1]: b" || fail "keyed needs-decision not recognized as captain-relevant"
+  status_is_captain_relevant "blocked: no perms" || fail "blocked: not recognized as captain-relevant"
+  status_is_captain_relevant "failed: boom" || fail "failed: not recognized as captain-relevant"
   status_is_captain_relevant "working: b" && fail "working: wrongly recognized as captain-relevant"
   # Incident regression: free-text "merged" inside a nonterminal working: line must
   # not become captain-relevant (AFK false-terminal path).
