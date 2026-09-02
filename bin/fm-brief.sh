@@ -525,7 +525,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 
 # Rules
 $RULE1
-2. Stay inside this worktree; modify nothing outside it.
+2. Stay inside this worktree; the only files you may write outside it are the retrospective report described below and the status file below.
 3. $FORGE_TOOLS_LINE
 4. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
@@ -542,14 +542,15 @@ $RULE1
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.$PAUSE_NOTE
    When you discover a durable finding (knowledge-store drift, a ticket whose real state differs
    from this brief, verified behavior of a tool, a trap the next worker would hit), append it as
-   \`working: CANDIDATE - {finding}\` rather than acting on it yourself: you record candidates, only
-   firstmate promotes them, and you must never write to PP Brain or any other memory store
-   shared beyond this workstation directly. This does not cover agentmemory or the
-   retrospective report - both are local to this workstation, even though agentmemory
-   persists across sessions here.
-   Before your final \`done:\` or \`failed:\` line, send at least one \`working:\` status that carries
-   real substance (a finding, a decision, a completed stage) - never end a task on a single
-   \`done:\` line with nothing reported before it.
+   \`note: CANDIDATE - {finding}\` rather than acting on it yourself: you record candidates, only
+   firstmate promotes them, and you must never write to PP Brain or any shared memory system
+   beyond this workstation directly. The Retrospective section below is a narrow exception: it
+   may perform agentmemory lesson and observation saves, write its own report, and create
+   project/reference memory entries - nothing else, and never anything reaching beyond this
+   workstation (for example memory_team_share, memory_mesh_sync, or memory_obsidian_export).
+   Before the FIRST \`done:\` or \`failed:\` line you write, send at least one \`working:\` status
+   that carries real substance (a finding, a decision, a completed stage) - never end a task on
+   a single \`done:\` line with nothing reported before it.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
@@ -568,6 +569,7 @@ Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced 
 
 # Retrospective
 Before your final \`done:\` or \`failed:\` line, run the \`retrospective\` skill in its no-human-reachable mode - the one where gated writes become drafted pending items instead of being skipped or assumed.$RETRO_FINAL_NOTE
+Write the report to \`$DATA/$ID/retrospective-report.md\`, not the skill's default path inside this worktree: this worktree is disposable and is torn down once the task lands, discarding anything left in it.
 This is MANDATORY if you hit a gotcha, a trap, or anything that cost you time; use your judgment otherwise.
 This gate applies to routing your own session learnings; it does not affect the Project memory step above, which is ordinary task deliverable work, not a retrospective-routed learning.
 

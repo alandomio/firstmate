@@ -869,20 +869,26 @@ test_ship_worker_operating_contracts() {
   # Durable findings travel as supervisor-promoted candidates on the existing
   # status channel, never as worker writes into a shared store.
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep '`working: CANDIDATE - {finding}` rather than acting on it yourself' "$brief" \
-    "ship brief did not route durable findings through the CANDIDATE status channel"
+  assert_grep '`note: CANDIDATE - {finding}` rather than acting on it yourself' "$brief" \
+    "ship brief did not route durable findings through the note: unread-surface channel"
   assert_grep 'you record candidates, only' "$brief" \
     "ship brief did not reserve promotion of candidates to firstmate"
-  assert_grep 'never write to PP Brain or any other memory store' "$brief" \
-    "ship brief did not forbid direct writes to a memory store shared beyond this workstation"
-  assert_grep 'shared beyond this workstation directly. This does not cover agentmemory or the' "$brief" \
-    "ship brief did not exempt agentmemory and the retrospective report from that prohibition"
-  assert_grep 'both are local to this workstation, even though agentmemory' "$brief" \
-    "ship brief did not justify the exemption by locality rather than by session scope"
+  assert_grep 'never write to PP Brain or any shared memory system' "$brief" \
+    "ship brief did not forbid direct writes to a memory system shared beyond this workstation"
+  assert_grep 'The Retrospective section below is a narrow exception: it' "$brief" \
+    "ship brief did not scope the exception to the Retrospective section"
+  assert_grep 'may perform agentmemory lesson and observation saves, write its own report, and create' "$brief" \
+    "ship brief did not allowlist the operations the retrospective actually performs"
+  assert_grep 'workstation (for example memory_team_share, memory_mesh_sync, or memory_obsidian_export).' "$brief" \
+    "ship brief did not name the agentmemory operations that reach beyond this workstation"
 
-  # A terminal line with nothing before it tells the supervisor nothing.
-  assert_grep 'real substance (a finding, a decision, a completed stage) - never end a task on a single' "$brief" \
-    "ship brief did not require one substantive working: line before the terminal line"
+  # A terminal line with nothing before it tells the supervisor nothing, and
+  # in no-mistakes mode the handoff done: line is the one firstmate acts on.
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'Before the FIRST `done:` or `failed:` line you write, send at least one `working:` status' "$brief" \
+    "ship brief did not bind the substantive working: requirement to the first terminal line"
+  assert_grep 'that carries real substance (a finding, a decision, a completed stage) - never end a task on' "$brief" \
+    "ship brief did not require that working: line to carry real substance"
 
   # The wait on an open PR/MR is a colleague's approval; the captain cannot
   # approve their own, so the reminder must use the project's forge vocabulary.
@@ -904,6 +910,12 @@ test_ship_worker_operating_contracts() {
     "ship brief did not name which terminal line the retrospective precedes in no-mistakes mode"
   assert_grep "it does not affect the Project memory step above" "$brief" \
     "ship brief did not exempt the Project memory step from the retrospective write gate"
+  # The worktree is torn down after the task lands, so the report must be
+  # written to the supervisor-kept task directory that holds this brief.
+  assert_grep "Write the report to \`$home/data/brief-contracts-gh/retrospective-report.md\`" "$brief" \
+    "ship brief did not redirect the retrospective report out of the disposable worktree"
+  assert_grep "the only files you may write outside it are the retrospective report described below" "$brief" \
+    "ship Rule 2 did not carve out the retrospective report it now requires outside the worktree"
 
   # Every supervisor consumer classifies a task from the LAST status line, so
   # the Definition of done must end on its terminal done: line: a trailing
@@ -922,6 +934,9 @@ test_ship_worker_operating_contracts() {
     "direct-PR brief lost the colleague-approval pause reminder, which its own mode can reach"
   assert_no_grep "In no-mistakes mode this means" "$brief" \
     "direct-PR brief carries the no-mistakes-only retrospective clarification"
+  assert_grep "# Retrospective" "$brief" "direct-PR brief lost the Retrospective section"
+  assert_grep "This is MANDATORY if you hit a gotcha, a trap, or anything that cost you time" "$brief" \
+    "direct-PR brief lost the mandatory-retrospective trigger"
   sed -n '/^# Definition of done$/,$p' "$brief" > "$dod"
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
   assert_grep 'then append `done: PR {url}` to the status file and stop.' "$dod" \
@@ -936,6 +951,9 @@ test_ship_worker_operating_contracts() {
     "local-only brief carries a pause reminder about a PR its Rule 1 forbids it from opening"
   assert_no_grep "In no-mistakes mode this means" "$brief" \
     "local-only brief carries the no-mistakes-only retrospective clarification"
+  assert_grep "# Retrospective" "$brief" "local-only brief lost the Retrospective section"
+  assert_grep "This is MANDATORY if you hit a gotcha, a trap, or anything that cost you time" "$brief" \
+    "local-only brief lost the mandatory-retrospective trigger"
 
   write_project_clone "$home" gl-proj https://gitlab.com/acme/gl-proj.git
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gl gl-proj --mode direct-PR >/dev/null 2>&1
@@ -956,7 +974,7 @@ test_ship_worker_operating_contracts() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-scout gh-proj --scout >/dev/null 2>&1
   brief="$home/data/brief-contracts-scout/brief.md"
   assert_present "$brief" "scout brief was not scaffolded"
-  assert_no_grep "working: CANDIDATE" "$brief" \
+  assert_no_grep "note: CANDIDATE" "$brief" \
     "scout brief duplicated the ship-only CANDIDATE findings contract"
   assert_no_grep "# Retrospective" "$brief" \
     "scout brief duplicated the ship-only Retrospective section"
@@ -969,7 +987,7 @@ test_ship_worker_operating_contracts() {
     "$ROOT/bin/fm-brief.sh" brief-contracts-sm --secondmate --no-projects >/dev/null 2>&1
   brief="$home/data/brief-contracts-sm/brief.md"
   assert_present "$brief" "secondmate charter was not scaffolded"
-  assert_no_grep "working: CANDIDATE" "$brief" \
+  assert_no_grep "note: CANDIDATE" "$brief" \
     "secondmate charter duplicated the ship-only CANDIDATE findings contract"
   assert_no_grep "# Retrospective" "$brief" \
     "secondmate charter duplicated the ship-only Retrospective section"
