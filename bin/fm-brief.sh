@@ -565,7 +565,9 @@ Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced 
 
 # Retrospective
 Before your final \`done:\` or \`failed:\` line, run the \`retrospective\` skill in its no-human-reachable mode - the one where gated writes become drafted pending items instead of being skipped or assumed.
+In no-mistakes mode the final line is \`done: $FORGE_ABBR {url} checks green\` after CI reports green, not the earlier \`done: {summary}\` handoff line before validation starts - running it there would miss the phase where most gotchas occur.
 This is MANDATORY if you hit a gotcha, a trap, or anything that cost you time; use your judgment otherwise.
+This gate applies to routing your own session learnings; it does not affect the Project memory step above, which is ordinary task deliverable work, not a retrospective-routed learning.
 
 $DOD
 EOF

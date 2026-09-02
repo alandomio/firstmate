@@ -897,6 +897,11 @@ test_ship_worker_operating_contracts() {
     "ship brief did not require the retrospective skill's no-human-reachable mode"
   assert_grep "This is MANDATORY if you hit a gotcha, a trap, or anything that cost you time" "$brief" \
     "ship brief did not make the retrospective mandatory after a gotcha"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'In no-mistakes mode the final line is `done: PR {url} checks green` after CI reports green' "$brief" \
+    "ship brief did not name which terminal line the retrospective precedes in no-mistakes mode"
+  assert_grep "it does not affect the Project memory step above" "$brief" \
+    "ship brief did not exempt the Project memory step from the retrospective write gate"
 
   # Every supervisor consumer classifies a task from the LAST status line, so
   # the Definition of done must end on its terminal done: line: a trailing
@@ -935,6 +940,7 @@ test_ship_worker_operating_contracts() {
 
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-scout gh-proj --scout >/dev/null 2>&1
   brief="$home/data/brief-contracts-scout/brief.md"
+  assert_present "$brief" "scout brief was not scaffolded"
   assert_no_grep "working: CANDIDATE" "$brief" \
     "scout brief duplicated the ship-only CANDIDATE findings contract"
   assert_no_grep "# Retrospective" "$brief" \
@@ -947,6 +953,7 @@ test_ship_worker_operating_contracts() {
   FM_HOME="$home" FM_SECONDMATE_CHARTER='sample domain' \
     "$ROOT/bin/fm-brief.sh" brief-contracts-sm --secondmate --no-projects >/dev/null 2>&1
   brief="$home/data/brief-contracts-sm/brief.md"
+  assert_present "$brief" "secondmate charter was not scaffolded"
   assert_no_grep "working: CANDIDATE" "$brief" \
     "secondmate charter duplicated the ship-only CANDIDATE findings contract"
   assert_no_grep "# Retrospective" "$brief" \
