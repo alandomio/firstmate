@@ -525,11 +525,11 @@ If the top-level path is the primary checkout or not the worktree you were launc
 
 # Rules
 $RULE1
-2. Stay inside this worktree; the only files you may write outside it are the retrospective report described below and the status file below.
+2. Stay inside this worktree; the only files you may write outside it are the retrospective report described below, any file the retrospective skill's own contract requires you to write outside this worktree (such as its kill-criterion ledger), and the status file below.
 3. $FORGE_TOOLS_LINE
 4. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
-   States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
+   States: working, note, needs-decision, blocked, $PAUSED_VERB, done, failed.
    Each append wakes firstmate, so report sparingly: only phase changes a supervisor
    would act on (setup done, bug reproduced, fix implemented, validation passed) and the
    needs-decision/blocked/paused/done/failed states. No step-by-step FYI progress lines;
@@ -548,6 +548,9 @@ $RULE1
    may perform agentmemory lesson and observation saves, write its own report, and create
    project/reference memory entries - nothing else, and never anything reaching beyond this
    workstation (for example memory_team_share, memory_mesh_sync, or memory_obsidian_export).
+   Keep the finding text plain prose: an escalation token inside it (\`done:\`, \`needs-decision:\`,
+   \`blocked:\`, \`failed:\`, "PR ready", "checks green", "ready in branch", "merged") makes firstmate
+   read the note as a real escalation, so say it another way - "landed" rather than "merged".
    Before the FIRST \`done:\` or \`failed:\` line you write, send at least one \`working:\` status
    that carries real substance (a finding, a decision, a completed stage) - never end a task on
    a single \`done:\` line with nothing reported before it.

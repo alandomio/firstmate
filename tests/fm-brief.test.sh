@@ -735,7 +735,7 @@ test_herdr_lab_contract_applies_to_scouts_but_not_secondmates() {
 }
 
 test_pause_verb_override_renders_all_brief_scaffolds() {
-  local home kind id brief
+  local home kind id brief states
   home="$TMP_ROOT/pause-verb-home"
   mkdir -p "$home/data"
 
@@ -756,7 +756,11 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
         ;;
     esac
     brief="$home/data/$id/brief.md"
-    assert_grep "States: working, needs-decision, blocked, awaiting, done, failed." "$brief" \
+    case "$kind" in
+      ship) states="States: working, note, needs-decision, blocked, awaiting, done, failed." ;;
+      *)    states="States: working, needs-decision, blocked, awaiting, done, failed." ;;
+    esac
+    assert_grep "$states" "$brief" \
       "$kind brief did not render the configured pause verb in its states list"
     # shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
     assert_grep 'Use `awaiting: {why}`' "$brief" \
@@ -871,6 +875,14 @@ test_ship_worker_operating_contracts() {
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
   assert_grep '`note: CANDIDATE - {finding}` rather than acting on it yourself' "$brief" \
     "ship brief did not route durable findings through the note: unread-surface channel"
+  assert_grep "States: working, note, needs-decision, blocked, paused, done, failed." "$brief" \
+    "ship brief instructs a note: line but omits note from its own states enumeration"
+  # A captain-regex token inside the finding prose escalates the note as if
+  # it were a real terminal line, so the brief must warn against writing one.
+  assert_grep 'Keep the finding text plain prose: an escalation token inside it' "$brief" \
+    "ship brief did not warn that an escalation token in the finding text escalates the note"
+  assert_grep 'read the note as a real escalation, so say it another way' "$brief" \
+    "ship brief did not tell the worker to phrase the finding around those tokens"
   assert_grep 'you record candidates, only' "$brief" \
     "ship brief did not reserve promotion of candidates to firstmate"
   assert_grep 'never write to PP Brain or any shared memory system' "$brief" \
@@ -916,6 +928,8 @@ test_ship_worker_operating_contracts() {
     "ship brief did not redirect the retrospective report out of the disposable worktree"
   assert_grep "the only files you may write outside it are the retrospective report described below" "$brief" \
     "ship Rule 2 did not carve out the retrospective report it now requires outside the worktree"
+  assert_grep "any file the retrospective skill's own contract requires you to write outside this worktree" "$brief" \
+    "ship Rule 2 did not carve out the retrospective skill's other mandated out-of-worktree writes"
 
   # Every supervisor consumer classifies a task from the LAST status line, so
   # the Definition of done must end on its terminal done: line: a trailing
