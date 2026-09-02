@@ -64,6 +64,17 @@
 # local-memory-store search before the first substantive action and a reported
 # outcome; a secondmate charter omits it because its own crewmates each get
 # their own generated brief carrying the same contract.
+# A ship brief additionally treats a session-start "pp-brain: auth_missing" banner as a known
+# false positive: the worker makes ONE real search_knowledge call before acting on it, and only
+# a genuinely failing live call becomes the fixed
+# "blocked: <server> unreachable (confirmed by a live call, not the startup banner)" line,
+# reusing an existing classifier verb rather than inventing one.
+# Ship briefs route a durable finding through a "note: CANDIDATE - {finding}" line the worker
+# records and only firstmate promotes, never a direct write to PP Brain or any shared memory
+# system beyond this workstation; "note:" is nonterminal like "working:".
+# A ship brief describes a wait on an open PR/MR as a colleague's approval, never the captain's
+# merge decision (the captain cannot approve their own), and requires at least one substantive
+# "working:" line before the first "done:"/"failed:" line the worker writes.
 # Refuses to overwrite an existing brief.
 set -eu
 
@@ -435,7 +446,6 @@ fi
 case "$MODE" in
   direct-PR)
     SETUP2=""
-    RETRO_FINAL_NOTE=""
     PAUSE_NOTE=" If a declared wait concerns an open $FORGE_ABBR under review, describe it as awaiting a colleague's approval, never the captain's merge decision - the captain cannot approve their own $FORGE_NOUN."
     RULE1='1. Never push to the default branch (push only your `fm/'"$ID"'` branch). Never merge a '"$FORGE_NOUN"'.'
     IFS= read -r -d '' DOD <<EOF || true
@@ -450,7 +460,6 @@ EOF
     ;;
   local-only)
     SETUP2=""
-    RETRO_FINAL_NOTE=""
     PAUSE_NOTE=""
     RULE1="1. Never push to any remote and never open a $FORGE_NOUN. Work only on your \`fm/$ID\` branch; firstmate handles the merge into local \`main\`."
     IFS= read -r -d '' DOD <<EOF || true
@@ -466,7 +475,6 @@ EOF
   *)  # no-mistakes
     SETUP2="
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
-    RETRO_FINAL_NOTE=" In no-mistakes mode this means the \`done: $FORGE_ABBR {url} checks green\` line after CI reports green, not the earlier \`done: {summary}\` handoff before validation starts."
     PAUSE_NOTE=" If a declared wait concerns an open $FORGE_ABBR under review, describe it as awaiting a colleague's approval, never the captain's merge decision - the captain cannot approve their own $FORGE_NOUN."
     RULE1='1. Never push to the default branch. Never merge a '"$FORGE_NOUN"'.'
     IFS= read -r -d '' DOD <<EOF || true
@@ -525,7 +533,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 
 # Rules
 $RULE1
-2. Stay inside this worktree; the only files you may write outside it are the retrospective report described below, any file the retrospective skill's own contract requires you to write outside this worktree (such as its kill-criterion ledger), and the status file below.
+2. Stay inside this worktree; modify nothing outside it.
 3. $FORGE_TOOLS_LINE
 4. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
@@ -534,7 +542,7 @@ $RULE1
    would act on (setup done, bug reproduced, fix implemented, validation passed) and the
    needs-decision/blocked/paused/done/failed states. No step-by-step FYI progress lines;
    firstmate reads your pane for that.
-   A mid-task \`working:\` line (including setup complete) is nonterminal: do not end the
+   A mid-task \`working:\` or \`note:\` line (including setup complete) is nonterminal: do not end the
    turn after it; continue the same stage until a defined \`done:\` gate under Definition of done.
    Use \`$PAUSED_VERB: {why}\` - distinct from \`blocked:\` - ONLY when you are deliberately idling on a
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset,
@@ -544,13 +552,11 @@ $RULE1
    from this brief, verified behavior of a tool, a trap the next worker would hit), append it as
    \`note: CANDIDATE - {finding}\` rather than acting on it yourself: you record candidates, only
    firstmate promotes them, and you must never write to PP Brain or any shared memory system
-   beyond this workstation directly. The Retrospective section below is a narrow exception: it
-   may perform agentmemory lesson and observation saves, write its own report, and create
-   project/reference memory entries - nothing else, and never anything reaching beyond this
-   workstation (for example memory_team_share, memory_mesh_sync, or memory_obsidian_export).
-   Keep the finding text plain prose: an escalation token inside it (\`done:\`, \`needs-decision:\`,
-   \`blocked:\`, \`failed:\`, "PR ready", "checks green", "ready in branch", "merged") makes firstmate
-   read the note as a real escalation, so say it another way - "landed" rather than "merged".
+   beyond this workstation directly.
+   Keep the finding text plain prose: firstmate scans a note for completion and merge signals,
+   so wording that reads like one - a status verb with its colon, a CI-green or ready-to-merge
+   claim - makes it read the note as a real escalation. Say it another way ("landed" rather
+   than "merged").
    Before the FIRST \`done:\` or \`failed:\` line you write, send at least one \`working:\` status
    that carries real substance (a finding, a decision, a completed stage) - never end a task on
    a single \`done:\` line with nothing reported before it.
@@ -569,12 +575,6 @@ Record only project knowledge useful to almost every future session.
 For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
 If you touch a project \`AGENTS.md\` that lacks \`## Maintaining this file\`, add that short self-governance section from \`$FM_ROOT/bin/fm-ensure-agents-md.sh\` in the same pass.
 Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced no durable project knowledge.
-
-# Retrospective
-Before your final \`done:\` or \`failed:\` line, run the \`retrospective\` skill in its no-human-reachable mode - the one where gated writes become drafted pending items instead of being skipped or assumed.$RETRO_FINAL_NOTE
-Write the report to \`$DATA/$ID/retrospective-report.md\`, not the skill's default path inside this worktree: this worktree is disposable and is torn down once the task lands, discarding anything left in it.
-This is MANDATORY if you hit a gotcha, a trap, or anything that cost you time; use your judgment otherwise.
-This gate applies to routing your own session learnings; it does not affect the Project memory step above, which is ordinary task deliverable work, not a retrospective-routed learning.
 
 $DOD
 EOF

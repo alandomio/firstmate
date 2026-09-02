@@ -228,8 +228,8 @@ test_ship_modes_generate_clean_briefs() {
     grep -qx "Delivery contract: mode=$mode" "$brief" \
       || fail "$id: brief did not record its machine-readable delivery contract line"
     assert_grep "{TASK}" "$brief" "$id: brief missing the {TASK} placeholder"
-    assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
-      "$id: brief missing nonterminal working:/setup-complete gate protection"
+    assert_grep "mid-task \`working:\` or \`note:\` line (including setup complete) is nonterminal" "$brief" \
+      "$id: brief missing nonterminal working:/note:/setup-complete gate protection"
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
   done
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
@@ -877,22 +877,25 @@ test_ship_worker_operating_contracts() {
     "ship brief did not route durable findings through the note: unread-surface channel"
   assert_grep "States: working, note, needs-decision, blocked, paused, done, failed." "$brief" \
     "ship brief instructs a note: line but omits note from its own states enumeration"
-  # A captain-regex token inside the finding prose escalates the note as if
-  # it were a real terminal line, so the brief must warn against writing one.
-  assert_grep 'Keep the finding text plain prose: an escalation token inside it' "$brief" \
-    "ship brief did not warn that an escalation token in the finding text escalates the note"
-  assert_grep 'read the note as a real escalation, so say it another way' "$brief" \
-    "ship brief did not tell the worker to phrase the finding around those tokens"
+  # Finding prose that reads like a completion signal escalates the note as if
+  # it were a real terminal line, so the brief must warn against that shape.
+  assert_grep 'Keep the finding text plain prose: firstmate scans a note for completion and merge signals,' "$brief" \
+    "ship brief did not warn that completion-shaped finding prose escalates the note"
+  assert_grep 'makes it read the note as a real escalation. Say it another way' "$brief" \
+    "ship brief did not tell the worker to phrase the finding around that shape"
+  # The default captain regex is overridable per home via FM_CAPTAIN_RE, so
+  # the guidance must not enumerate that default's literal tokens.
+  assert_no_grep 'ready in branch' "$brief" \
+    "ship brief hardcodes the default captain regex tokens, which a custom FM_CAPTAIN_RE replaces"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'A mid-task `working:` or `note:` line (including setup complete) is nonterminal' "$brief" \
+    "ship brief did not declare a note: line nonterminal, so a worker may stop on one and look wedged"
   assert_grep 'you record candidates, only' "$brief" \
     "ship brief did not reserve promotion of candidates to firstmate"
   assert_grep 'never write to PP Brain or any shared memory system' "$brief" \
     "ship brief did not forbid direct writes to a memory system shared beyond this workstation"
-  assert_grep 'The Retrospective section below is a narrow exception: it' "$brief" \
-    "ship brief did not scope the exception to the Retrospective section"
-  assert_grep 'may perform agentmemory lesson and observation saves, write its own report, and create' "$brief" \
-    "ship brief did not allowlist the operations the retrospective actually performs"
-  assert_grep 'workstation (for example memory_team_share, memory_mesh_sync, or memory_obsidian_export).' "$brief" \
-    "ship brief did not name the agentmemory operations that reach beyond this workstation"
+  assert_no_grep 'narrow exception' "$brief" \
+    "ship brief still carves an exception out of the shared-memory ban"
 
   # A terminal line with nothing before it tells the supervisor nothing, and
   # in no-mistakes mode the handoff done: line is the one firstmate acts on.
@@ -911,25 +914,14 @@ test_ship_worker_operating_contracts() {
   assert_no_grep "awaiting the captain's merge decision" "$brief" \
     "ship brief still describes the wait as the captain's merge decision"
 
-  assert_grep "# Retrospective" "$brief" "ship brief missing the Retrospective section"
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'run the `retrospective` skill in its no-human-reachable mode' "$brief" \
-    "ship brief did not require the retrospective skill's no-human-reachable mode"
-  assert_grep "This is MANDATORY if you hit a gotcha, a trap, or anything that cost you time" "$brief" \
-    "ship brief did not make the retrospective mandatory after a gotcha"
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'In no-mistakes mode this means the `done: PR {url} checks green` line after CI reports green' "$brief" \
-    "ship brief did not name which terminal line the retrospective precedes in no-mistakes mode"
-  assert_grep "it does not affect the Project memory step above" "$brief" \
-    "ship brief did not exempt the Project memory step from the retrospective write gate"
-  # The worktree is torn down after the task lands, so the report must be
-  # written to the supervisor-kept task directory that holds this brief.
-  assert_grep "Write the report to \`$home/data/brief-contracts-gh/retrospective-report.md\`" "$brief" \
-    "ship brief did not redirect the retrospective report out of the disposable worktree"
-  assert_grep "the only files you may write outside it are the retrospective report described below" "$brief" \
-    "ship Rule 2 did not carve out the retrospective report it now requires outside the worktree"
-  assert_grep "any file the retrospective skill's own contract requires you to write outside this worktree" "$brief" \
-    "ship Rule 2 did not carve out the retrospective skill's other mandated out-of-worktree writes"
+  # Nothing in the ship brief mandates a write outside the disposable
+  # worktree, so Rule 2's isolation guarantee carries no carve-out.
+  assert_grep "2. Stay inside this worktree; modify nothing outside it." "$brief" \
+    "ship Rule 2 lost its unqualified worktree-isolation guarantee"
+  assert_no_grep "# Retrospective" "$brief" \
+    "ship brief still mandates a retrospective whose writes escape the disposable worktree"
+  assert_no_grep "retrospective" "$brief" \
+    "ship brief still references the retrospective skill"
 
   # Every supervisor consumer classifies a task from the LAST status line, so
   # the Definition of done must end on its terminal done: line: a trailing
@@ -946,11 +938,10 @@ test_ship_worker_operating_contracts() {
   assert_present "$brief" "direct-PR ship brief was not scaffolded"
   assert_grep 'If a declared wait concerns an open PR under review, describe it as awaiting a' "$brief" \
     "direct-PR brief lost the colleague-approval pause reminder, which its own mode can reach"
-  assert_no_grep "In no-mistakes mode this means" "$brief" \
-    "direct-PR brief carries the no-mistakes-only retrospective clarification"
-  assert_grep "# Retrospective" "$brief" "direct-PR brief lost the Retrospective section"
-  assert_grep "This is MANDATORY if you hit a gotcha, a trap, or anything that cost you time" "$brief" \
-    "direct-PR brief lost the mandatory-retrospective trigger"
+  assert_grep "2. Stay inside this worktree; modify nothing outside it." "$brief" \
+    "direct-PR Rule 2 lost its unqualified worktree-isolation guarantee"
+  assert_no_grep "retrospective" "$brief" \
+    "direct-PR brief still references the retrospective skill"
   sed -n '/^# Definition of done$/,$p' "$brief" > "$dod"
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
   assert_grep 'then append `done: PR {url}` to the status file and stop.' "$dod" \
@@ -963,11 +954,10 @@ test_ship_worker_operating_contracts() {
   assert_present "$brief" "local-only ship brief was not scaffolded"
   assert_no_grep "If a declared wait concerns an open" "$brief" \
     "local-only brief carries a pause reminder about a PR its Rule 1 forbids it from opening"
-  assert_no_grep "In no-mistakes mode this means" "$brief" \
-    "local-only brief carries the no-mistakes-only retrospective clarification"
-  assert_grep "# Retrospective" "$brief" "local-only brief lost the Retrospective section"
-  assert_grep "This is MANDATORY if you hit a gotcha, a trap, or anything that cost you time" "$brief" \
-    "local-only brief lost the mandatory-retrospective trigger"
+  assert_grep "2. Stay inside this worktree; modify nothing outside it." "$brief" \
+    "local-only Rule 2 lost its unqualified worktree-isolation guarantee"
+  assert_no_grep "retrospective" "$brief" \
+    "local-only brief still references the retrospective skill"
 
   write_project_clone "$home" gl-proj https://gitlab.com/acme/gl-proj.git
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gl gl-proj --mode direct-PR >/dev/null 2>&1
@@ -990,8 +980,6 @@ test_ship_worker_operating_contracts() {
   assert_present "$brief" "scout brief was not scaffolded"
   assert_no_grep "note: CANDIDATE" "$brief" \
     "scout brief duplicated the ship-only CANDIDATE findings contract"
-  assert_no_grep "# Retrospective" "$brief" \
-    "scout brief duplicated the ship-only Retrospective section"
   assert_no_grep "unreachable (confirmed by a live call" "$brief" \
     "scout brief duplicated the ship-only degraded-mode template"
   assert_no_grep "colleague's approval" "$brief" \
@@ -1003,8 +991,6 @@ test_ship_worker_operating_contracts() {
   assert_present "$brief" "secondmate charter was not scaffolded"
   assert_no_grep "note: CANDIDATE" "$brief" \
     "secondmate charter duplicated the ship-only CANDIDATE findings contract"
-  assert_no_grep "# Retrospective" "$brief" \
-    "secondmate charter duplicated the ship-only Retrospective section"
   assert_no_grep "unreachable (confirmed by a live call" "$brief" \
     "secondmate charter duplicated the ship-only degraded-mode template"
 
