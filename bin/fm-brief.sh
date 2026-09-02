@@ -441,7 +441,7 @@ case "$MODE" in
 Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the $FORGE_NOUN yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
-When it is implemented and committed, push your branch and open a $FORGE_NOUN with $FORGE_TOOL, then append \`done: $FORGE_ABBR {url}\` to the status file and stop.
+When it is implemented and committed, push your branch and open a $FORGE_NOUN with $FORGE_TOOL, then append \`done: $FORGE_ABBR {url}\` immediately followed by \`$PAUSED_VERB: awaiting a colleague's approval on the open $FORGE_ABBR\` (you cannot approve your own $FORGE_NOUN) to the status file, in that order, and stop.
 Write the $FORGE_ABBR description, and any later revision to it, with the \`mr-description\` skill.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the $FORGE_NOUN; firstmate relays the outcome.
 EOF
@@ -482,7 +482,7 @@ Three firstmate-specific rules layer on top of that guidance:
 - Avoid \`--yes\`: it would silently bypass firstmate's authority check and any required captain escalation.
 - Write the $FORGE_ABBR description, and any later revision to it (including a review-fix revision), with the \`mr-description\` skill.
 
-After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: $FORGE_ABBR {url} checks green\` and stop. You are finished.
+After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: $FORGE_ABBR {url} checks green\` immediately followed by \`$PAUSED_VERB: awaiting a colleague's approval on the open $FORGE_ABBR\` (you cannot approve your own $FORGE_NOUN), in that order. You are finished.
 EOF
     ;;
 esac
@@ -502,6 +502,9 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 Before your first substantive action, search PP Brain (\`search_knowledge\` with both \`query\` and \`prompt\` populated - one alone kills two of six retrieval paths) and the local memory store for prior decisions, refuted approaches, and known traps on this subject.
 Treat the \`# Task\` section above as firstmate's assembly of that context, a starting point rather than a substitute.
 Report what you found and what it changed in your next status line, or state plainly that both were silent.
+If the session-start banner reports \`pp-brain: auth_missing\`, or anything else suggests PP Brain is unauthenticated, treat that alone as a known false positive: make ONE real \`search_knowledge\` call before acting on it.
+Only a failing live call is evidence - never stop, and never proceed without org context, on the banner alone.
+If that live call genuinely fails, append \`blocked: <server> unreachable (confirmed by a live call, not the startup banner)\` to the status file and stop; firstmate will help.
 
 $HERDR_SECTION
 
@@ -531,6 +534,14 @@ $RULE1
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset,
    a scheduled window): firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
+   When you discover a durable finding (knowledge-store drift, a ticket whose real state differs
+   from this brief, verified behavior of a tool, a trap the next worker would hit), append it as
+   \`working: CANDIDATE - {finding}\` rather than acting on it yourself: you record candidates, only
+   firstmate promotes them, and you must never write to PP Brain or any other shared memory store
+   directly.
+   Before your final \`done:\` or \`failed:\` line, send at least one \`working:\` status that carries
+   real substance (a finding, a decision, a completed stage) - never end a task on a single
+   \`done:\` line with nothing reported before it.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
@@ -546,6 +557,10 @@ Record only project knowledge useful to almost every future session.
 For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
 If you touch a project \`AGENTS.md\` that lacks \`## Maintaining this file\`, add that short self-governance section from \`$FM_ROOT/bin/fm-ensure-agents-md.sh\` in the same pass.
 Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced no durable project knowledge.
+
+# Retrospective
+Before your final \`done:\` or \`failed:\` line, run the \`retrospective\` skill in its no-human-reachable mode - the one where gated writes become drafted pending items instead of being skipped or assumed.
+This is MANDATORY if you hit a gotcha, a trap, or anything that cost you time; use your judgment otherwise.
 
 $DOD
 EOF
