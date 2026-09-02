@@ -70,8 +70,9 @@
 # "blocked: <server> unreachable (confirmed by a live call, not the startup banner)" line,
 # reusing an existing classifier verb rather than inventing one.
 # Ship briefs route a durable finding through a "note: CANDIDATE - {finding}" line the worker
-# records and only firstmate promotes, never a direct write to PP Brain or any shared memory
-# system beyond this workstation; "note:" is nonterminal like "working:".
+# records and only firstmate promotes, never a direct write to PP Brain or any shared memory.
+# The brief treats "note:" as nonterminal like "working:", and discloses that the supervisor's
+# wedge guards do not yet do the same.
 # A ship brief describes a wait on an open PR/MR as a colleague's approval, never the captain's
 # merge decision (the captain cannot approve their own), and requires at least one substantive
 # "working:" line before the first "done:"/"failed:" line the worker writes.
@@ -505,6 +506,9 @@ esac
 # briefs stay byte-identical to the historical Bash 5 output.
 DOD=${DOD%$'\n'}
 
+# The Rule 4 wedge-guard disclosure below is removable once `note` joins the
+# working|resolved|captain-held enumerations in fm-supervise-daemon.sh (classify_stale
+# and handle_wake's _clear_wedge) and the watcher's stale_is_terminal path.
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
@@ -550,8 +554,7 @@ $RULE1
    When you discover a durable finding (knowledge-store drift, a ticket whose real state differs
    from this brief, verified behavior of a tool, a trap the next worker would hit), append it as
    \`note: CANDIDATE - {finding}\` rather than acting on it yourself: you record candidates, only
-   firstmate promotes them, and you must never write to PP Brain or any shared memory system
-   beyond this workstation directly.
+   firstmate promotes them, and you must never write to PP Brain or any shared memory directly.
    Every \`note:\` line reaches firstmate: the next status drain presents it whatever its wording.
    But \`note:\` is not yet covered by the supervision wedge guards that protect \`working:\`,
    \`resolved:\` and \`captain-held:\`, so while a note whose prose happens to match a legacy

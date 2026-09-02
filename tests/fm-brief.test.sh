@@ -896,8 +896,10 @@ test_ship_worker_operating_contracts() {
     "ship brief did not declare a note: line nonterminal, so a worker may stop on one and look wedged"
   assert_grep 'you record candidates, only' "$brief" \
     "ship brief did not reserve promotion of candidates to firstmate"
-  assert_grep 'never write to PP Brain or any shared memory system' "$brief" \
-    "ship brief did not forbid direct writes to a memory system shared beyond this workstation"
+  assert_grep 'never write to PP Brain or any shared memory directly.' "$brief" \
+    "ship brief did not forbid direct writes to PP Brain or any shared memory"
+  assert_no_grep 'beyond this workstation' "$brief" \
+    "ship brief still qualifies the shared-memory ban, licensing workstation-local memory writes"
   assert_no_grep 'narrow exception' "$brief" \
     "ship brief still carves an exception out of the shared-memory ban"
 
