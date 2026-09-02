@@ -1,0 +1,54 @@
+# End-to-end: a crewmate obeys the generated ship brief; the real firstmate drain + classifier consume it
+# (bin/fm-wake-drain.sh and bin/fm-classify-lib.sh are the production consumers, unmodified)
+
+brief:  /tmp/fm-brief-evidence/home/data/ev-ship-nomistakes/brief.md
+status: /tmp/fm-brief-evidence/home/state/ev-ship-nomistakes.status
+
+brief-prescribed degraded-mode line : blocked: <server> unreachable (confirmed by a live call, not the startup banner)
+brief-prescribed candidate template : note: CANDIDATE - {finding}
+brief-declared state vocabulary     : working, note, needs-decision, blocked, paused, done, failed.
+
+== 1+2. degraded mode: does the real classifier recognize the brief's fixed blocked: template? ==
+status_is_terminal_verb            blocked template               -> yes   (want yes) PASS
+status_is_captain_relevant         blocked template               -> yes   (want yes) PASS
+status_is_paused                   blocked template               -> no    (want no) PASS
+   verb parsed by supervisor: 'blocked'
+
+== 2b. every verb the brief enumerates is one the classifier already knows (none invented) ==
+   working         known-to-classifier=yes  terminal=no  unread-surface=no
+   note            known-to-classifier=yes  terminal=no  unread-surface=yes
+   needs-decision  known-to-classifier=yes  terminal=yes  unread-surface=no
+   blocked         known-to-classifier=yes  terminal=yes  unread-surface=no
+   paused          known-to-classifier=yes  terminal=no  unread-surface=no
+   done            known-to-classifier=yes  terminal=yes  unread-surface=no
+   failed          known-to-classifier=yes  terminal=yes  unread-surface=no
+
+== 3. candidate findings: the note: channel, exercised through the real drain ==
+--- crewmate's status file ---
+note: bootstrap cursor line
+working: reproduced the fault in the kiosk poller; Brain and local memory were silent
+note: CANDIDATE - PP Brain runbook says restart the daemon; verified restarting it kills other lanes
+--- firstmate's next drain ---
+   UNREAD STATUS (new since last drain, not re-printed after this presentation):
+   ev-ship-nomistakes note: CANDIDATE - PP Brain runbook says restart the daemon; verified restarting it kills other lanes
+
+status_line_is_unread_surface      note: CANDIDATE line           -> yes   (want yes) PASS
+status_is_terminal_verb            note: CANDIDATE line           -> no    (want no) PASS
+
+== 4+6. the terminal line the DOD prescribes, and what precedes it ==
+   DOD terminal line: done: PR {url} checks green
+status_is_terminal_verb            done: PR {url}                 -> yes   (want yes) PASS
+   last line the supervisor classifies from: done: PR https://github.com/acme/gh-proj/pull/42 checks green
+   a substantive working: line precedes the first terminal line: yes
+
+OVERALL: all brief-prescribed lines behave as the brief promises
+
+== 3b. is the brief's wedge-guard disclosure truthful? (real classifier + daemon enumerations) ==
+   status_is_captain_relevant=no   note: CANDIDATE - plain prose finding
+   status_is_captain_relevant=yes  note: CANDIDATE - PR ready for review
+   status_is_captain_relevant=no   working: PR ready for review
+   daemon wedge-guard enumerations (note absent, as the brief discloses):
+     bin/fm-supervise-daemon.sh:396:        working|resolved|captain-held)
+     bin/fm-supervise-daemon.sh:1279:              working|resolved|captain-held) _clear_wedge=0 ;;
+   -> the disclosure is accurate: a note: line matching a legacy free-text pattern is
+      still captain-relevant, and note is not in the guards' nonterminal enumerations.

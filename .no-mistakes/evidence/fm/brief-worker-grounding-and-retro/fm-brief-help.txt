@@ -1,0 +1,78 @@
+Scaffold a crewmate brief or persistent secondmate charter at
+data/<task-id>/brief.md under the active firstmate home.
+For ordinary tasks, the standard Setup/Rules/Definition-of-done contract is
+filled in. Firstmate then replaces the {TASK} placeholder with the task
+description, acceptance criteria, and context, and may adjust other sections
+when the task genuinely deviates (e.g. working an existing external PR instead
+of shipping a new one).
+Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
+       fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
+       fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
+  --scout writes the scout contract instead: the deliverable is a report at
+  data/<task-id>/report.md (no branch, no push, no PR/MR) and the worktree is scratch.
+  --secondmate writes a persistent secondmate charter. The project list
+  is cloned into the secondmate home, while the natural-language scope
+  tells the main firstmate when to route work there; routine churn stays in its own home;
+  captain-relevant escalations and marked from-firstmate replies append to this
+  home's status file.
+  --no-projects writes a project-less charter for a domain whose subject is the
+  firstmate repo itself (its home is a firstmate worktree, its crews take pooled
+  worktrees of the same repo). It is mutually exclusive with a project list, and
+  omitting both still fails loudly so an accidental omission is never silent.
+  Set FM_SECONDMATE_CHARTER='<charter>' to fill the charter text.
+  Set FM_SECONDMATE_SCOPE='<scope>' to write a routing scope distinct from the charter text.
+  --herdr-lab is mandatory when the task will issue Herdr lifecycle commands.
+  It adds the hard isolation contract backed by bin/fm-herdr-lab.sh.
+  The flag must be explicit because {TASK} is filled after scaffolding and the
+  caller-supplied repo string cannot reliably identify this repo. Briefs made
+  without it carry a loud declaration so an omitted contract cannot be silent.
+For ship tasks, --mode is REQUIRED and shapes the definition of done. Firstmate
+resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
+captain's standing posture as context, and this script never reads it:
+  no-mistakes  implement -> /no-mistakes pipeline -> PR/MR -> configured merge authority
+  direct-PR    implement -> push + open PR/MR via the tool matching this project's forge (no pipeline) -> configured merge authority
+  local-only   implement on branch, stop and report "ready in branch" (no push/PR or MR);
+               the configured merge authority approves, firstmate merges to local main
+no-mistakes-prod-only is a registry policy, not a task mode; resolve it to one of
+the three concrete modes at intake before calling this script.
+The brief's forge vocabulary - pull vs merge request, gh-axi vs glab, "done: PR" vs "done: MR" -
+follows the origin remote, then a .gitlab-ci.yml fallback, of the clone the repo argument names under projects/ (or of an absolute path given instead).
+When nothing identifies the forge, the brief says so and tells the worker to run `git remote -v` rather than guessing.
+Any new DOD or rule prose that names "PR"/"MR" or "pull/merge request" literally must route through
+$FORGE_ABBR/$FORGE_NOUN/$FORGE_TOOL instead: a hardcoded noun reintroduces the wrong-forge-vocabulary bug
+this file exists to prevent, and it has done so in more than one place in this same file at once.
+The generated ship brief records the chosen mode as a fixed machine-readable
+"Delivery contract: mode=<mode>" line. bin/fm-spawn.sh reads that line and refuses
+to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
+recorded task metadata cannot drift apart.
+Ship briefs begin with a worktree-isolation assertion before the branch step.
+--mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
+report rather than a merge, and a charter is not a delivery contract.
+There is no --yolo flag here. The worker never owns merge decisions, so yolo is
+a spawn-time and firstmate-side input only (AGENTS.md section 7).
+Every scaffold's status protocol distinguishes the configured
+declared-external-wait verb (FM_CLASSIFY_PAUSED_VERB, default "paused") from
+"blocked:": pause for a known external wait expected to clear on its own,
+blocked when firstmate must act.
+Ship tasks include a project-memory section so durable project-intrinsic
+learnings can be committed to AGENTS.md through the project's delivery path;
+it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
+over copied detail) and has the crewmate add the fm-ensure-agents-md.sh
+self-governance section when a touched project AGENTS.md lacks it.
+Ship and scout briefs include a Grounding section requiring PP Brain and
+local-memory-store search before the first substantive action and a reported
+outcome; a secondmate charter omits it because its own crewmates each get
+their own generated brief carrying the same contract.
+A ship brief additionally treats a session-start "pp-brain: auth_missing" banner as a known
+false positive: the worker makes ONE real search_knowledge call before acting on it, and only
+a genuinely failing live call becomes the fixed
+"blocked: <server> unreachable (confirmed by a live call, not the startup banner)" line,
+reusing an existing classifier verb rather than inventing one.
+Ship briefs route a durable finding through a "note: CANDIDATE - {finding}" line the worker
+records and only firstmate promotes, never a direct write to PP Brain or any shared memory.
+The brief treats "note:" as nonterminal like "working:", and discloses that the supervisor's
+wedge guards do not yet do the same.
+A ship brief describes a wait on an open PR/MR as a colleague's approval, never the captain's
+merge decision (the captain cannot approve their own), and requires at least one substantive
+"working:" line before the first "done:"/"failed:" line the worker writes.
+Refuses to overwrite an existing brief.

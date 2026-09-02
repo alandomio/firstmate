@@ -1,0 +1,33 @@
+contract                    ship/no-mistakes(gh)  ship/direct-PR(gh)    ship/local-only(gh)   ship/direct-PR(gl)    scout                 secondmate            
+--------                    ----------------      ----------------      ----------------      ----------------      ----------------      ----------------      
+1 verify-brain-banner       present               present               present               present               -                     -                     
+2 blocked: template         present               present               present               present               -                     -                     
+3 note: CANDIDATE           present               present               present               present               -                     -                     
+3 never write shared mem    present               present               present               present               -                     -                     
+3 note in states list       present               present               present               present               -                     -                     
+5 colleague approval        present               present               -                     present               -                     -                     
+6 substantive working:      present               present               present               present               -                     -                     
+
+forge vocabulary in the pause reminder (criterion 4/5, both forges):
+  ev-ship-nomistakes   If a declared wait concerns an open PR under review, describe it as awaiting a colleague's approval, never the captain's merge decision - the captain cannot approve their own pull request.
+  ev-ship-directpr     If a declared wait concerns an open PR under review, describe it as awaiting a colleague's approval, never the captain's merge decision - the captain cannot approve their own pull request.
+  ev-ship-gitlab       If a declared wait concerns an open MR under review, describe it as awaiting a colleague's approval, never the captain's merge decision - the captain cannot approve their own merge request.
+  ev-ship-localonly    0 occurrences (mode never opens a PR/MR)
+
+wrong wording anywhere in any generated brief (must be 0):
+  ev-ship-nomistakes   0
+  ev-ship-directpr     0
+  ev-ship-localonly    0
+  ev-ship-gitlab       0
+  ev-scout             0
+  ev-secondmate        0
+
+criterion 4: the LAST status-line instruction in each PR/MR-opening DOD
+(every supervisor consumer classifies from the last status line, so a trailing
+ paused: would supersede the completion - owner-ratified deviation from intent):
+  ev-ship-nomistakes   last status verb instructed: append `done: PR {url} checks green
+                       paused: instructions in this DOD: 0
+  ev-ship-directpr     last status verb instructed: append `done: PR {url}
+                       paused: instructions in this DOD: 0
+  ev-ship-gitlab       last status verb instructed: append `done: MR {url}
+                       paused: instructions in this DOD: 0

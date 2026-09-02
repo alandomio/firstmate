@@ -1,0 +1,47 @@
+$ bash tests/fm-brief.test.sh
+ok - fm-brief.sh: bash -n succeeds
+/var/folders/tc/hhm5872n2ql638k7y8nh5nd40000gn/T//fm-brief.rbhVm3/heredoc-in-substitution.sh:2
+ok - fm-brief.sh: no heredoc is nested inside a command substitution (Bash 3.2 parse-safe)
+ok - fm-brief.sh: --help renders the complete header
+ok - fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly
+ok - fm-brief.sh: ship --mode is required and closed-set validated
+ok - fm-brief.sh: the explicit ship mode wins over the registered posture
+ok - fm-brief.sh: --yolo and scout/secondmate --mode are refused, never silently dropped
+ok - fm-brief.sh: faster paths use configured authority without stacked review
+ok - fm-brief.sh: direct-PR and no-mistakes briefs require the mr-description skill; local-only and scout do not
+ok - fm-brief.sh: no-mistakes DOD keeps its apostrophe prose, now parse-safe
+ok - fm-brief.sh: ship project-memory wording carries the AGENTS.md authoring bar
+ok - fm-brief.sh: --herdr-lab emits the complete hard safety contract
+ok - fm-brief.sh: --herdr-lab uses its quoted Firstmate-owned helper path
+ok - fm-brief.sh: ship and scout scaffolds make omitted Herdr intent fail-visible
+ok - fm-brief.sh: Herdr lab contract covers scouts and rejects secondmate misuse
+ok - fm-brief.sh: --no-projects scaffolds a project-less charter and guards misuse
+ok - fm-brief.sh: marked requests avoid generic acknowledgements and preserve material reporting
+ok - fm-brief.sh: relative directory inputs ignore CDPATH, render stable absolute charter paths, or fail loudly
+ok - fm-brief.sh: custom pause verb renders in every scaffold
+ok - fm-brief.sh: investigation and visual-review completions load the shared decision policy
+ok - fm-brief.sh: ship and scout briefs require Brain/memory grounding with reported outcome; secondmate charter does not duplicate it
+ok - fm-brief.sh: ship briefs carry the worker-operating contracts and keep a terminal done: line; scout/secondmate do not duplicate them
+ok - fm-brief: scout and secondmate code paths still scaffold well-formed briefs
+ok - fm-brief.sh: brief vocabulary matches the project's actual forge
+ok - fm-brief.sh: a bare .github directory alone never declares GitHub
+ok - fm-brief.sh: all three repo-argument spellings resolve the same clone's forge
+ok - fm-brief.sh: a project dir that is not its own clone root resolves unknown
+ok - fm-brief.sh: forge detection honors FM_PROJECTS_OVERRIDE
+
+$ bash tests/fm-wake-drain-unread-status.test.sh   # consumer of the note: channel the brief promises
+ok - a note: answer buried under a later routine note: is surfaced with both lines
+ok - already-presented note: lines are not re-surfaced on the next drain
+ok - a brand-new note: after presentation is surfaced without replaying handled lines
+ok - a queued status signal annotates every unread note, not only the newest
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 85031.1788360749.1pCY3c
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 85031.1788360749.1pCY3c
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 85031.1788360749.1pCY3c
+ok - a pending-reply resolution buried under a later note surfaces once and closes OPEN DECISIONS
+ok - unread status over the former byte cap preserves every line
+ok - presentation cursor advances only through its captured endpoint
+ok - a reused task id starts its replacement status log unread at byte zero
+ok - OPEN DECISIONS still folds needs-decision/blocked independently of unread notes
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 92260.1788360760.Q9gPtq
+ok - an empty-queue drain preserves routine status for a later signal annotation
+ok - routine working/done lines still print nothing on an empty-queue drain
