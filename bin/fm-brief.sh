@@ -441,7 +441,7 @@ case "$MODE" in
 Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the $FORGE_NOUN yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
-When it is implemented and committed, push your branch and open a $FORGE_NOUN with $FORGE_TOOL, then append \`done: $FORGE_ABBR {url}\` immediately followed by \`$PAUSED_VERB: awaiting a colleague's approval on the open $FORGE_ABBR\` (you cannot approve your own $FORGE_NOUN) to the status file, in that order, and stop.
+When it is implemented and committed, push your branch and open a $FORGE_NOUN with $FORGE_TOOL, then append \`done: $FORGE_ABBR {url}\` to the status file and stop.
 Write the $FORGE_ABBR description, and any later revision to it, with the \`mr-description\` skill.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the $FORGE_NOUN; firstmate relays the outcome.
 EOF
@@ -482,7 +482,7 @@ Three firstmate-specific rules layer on top of that guidance:
 - Avoid \`--yes\`: it would silently bypass firstmate's authority check and any required captain escalation.
 - Write the $FORGE_ABBR description, and any later revision to it (including a review-fix revision), with the \`mr-description\` skill.
 
-After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: $FORGE_ABBR {url} checks green\` immediately followed by \`$PAUSED_VERB: awaiting a colleague's approval on the open $FORGE_ABBR\` (you cannot approve your own $FORGE_NOUN), in that order. You are finished.
+After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: $FORGE_ABBR {url} checks green\` and stop. You are finished.
 EOF
     ;;
 esac
@@ -534,11 +534,16 @@ $RULE1
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset,
    a scheduled window): firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
+   If a declared wait concerns an open $FORGE_ABBR under review, describe it as awaiting a
+   colleague's approval, never the captain's merge decision - the captain cannot approve their
+   own $FORGE_NOUN.
    When you discover a durable finding (knowledge-store drift, a ticket whose real state differs
    from this brief, verified behavior of a tool, a trap the next worker would hit), append it as
    \`working: CANDIDATE - {finding}\` rather than acting on it yourself: you record candidates, only
-   firstmate promotes them, and you must never write to PP Brain or any other shared memory store
-   directly.
+   firstmate promotes them, and you must never write to PP Brain or any other shared,
+   cross-session memory store directly. This does not cover agentmemory or the retrospective
+   report the Retrospective section below asks you to produce - those are workstation-local,
+   not shared.
    Before your final \`done:\` or \`failed:\` line, send at least one \`working:\` status that carries
    real substance (a finding, a decision, a completed stage) - never end a task on a single
    \`done:\` line with nothing reported before it.

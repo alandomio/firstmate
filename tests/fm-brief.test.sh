@@ -834,6 +834,129 @@ test_grounding_section_requires_search_and_reporting() {
   pass "fm-brief.sh: ship and scout briefs require Brain/memory grounding with reported outcome; secondmate charter does not duplicate it"
 }
 
+# The worker-operating contracts added on 2026-09-02 are ship-only: they govern
+# the crewmate that performs the task itself. A scout produces a written report
+# and a secondmate charter routes work to its own crewmates, whose generated
+# ship briefs already carry these contracts, so neither may duplicate them.
+test_ship_worker_operating_contracts() {
+  local home brief dod
+  home="$TMP_ROOT/worker-contracts-home"
+  mkdir -p "$home/data"
+  dod="$TMP_ROOT/worker-contracts-dod.txt"
+
+  write_project_clone "$home" gh-proj https://github.com/acme/gh-proj.git
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gh gh-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-contracts-gh/brief.md"
+  assert_present "$brief" "ship no-mistakes brief was not scaffolded"
+
+  # A pp-brain auth warning in the session-start banner is a known false
+  # positive, so only one real live call counts as evidence either way.
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'If the session-start banner reports `pp-brain: auth_missing`' "$brief" \
+    "ship brief did not name the pp-brain auth banner as the warning to verify"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'known false positive: make ONE real `search_knowledge` call before acting on it' "$brief" \
+    "ship brief did not require one live search_knowledge call before believing the banner"
+  assert_grep 'Only a failing live call is evidence - never stop, and never proceed without org context, on the banner alone.' "$brief" \
+    "ship brief did not forbid both stopping and proceeding on the banner alone"
+
+  # Degraded mode reuses an existing classifier verb with a fixed template, so
+  # the supervisor classifies the outage instead of parsing invented prose.
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'append `blocked: <server> unreachable (confirmed by a live call, not the startup banner)` to the status file and stop' "$brief" \
+    "ship brief did not carry the typed degraded-mode blocked: template"
+
+  # Durable findings travel as supervisor-promoted candidates on the existing
+  # status channel, never as worker writes into a shared store.
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep '`working: CANDIDATE - {finding}` rather than acting on it yourself' "$brief" \
+    "ship brief did not route durable findings through the CANDIDATE status channel"
+  assert_grep 'you record candidates, only' "$brief" \
+    "ship brief did not reserve promotion of candidates to firstmate"
+  assert_grep 'never write to PP Brain or any other shared,' "$brief" \
+    "ship brief did not forbid direct writes to a shared, cross-session memory store"
+  assert_grep 'This does not cover agentmemory or the retrospective' "$brief" \
+    "ship brief did not exempt the workstation-local agentmemory/retrospective writes from that prohibition"
+
+  # A terminal line with nothing before it tells the supervisor nothing.
+  assert_grep 'real substance (a finding, a decision, a completed stage) - never end a task on a single' "$brief" \
+    "ship brief did not require one substantive working: line before the terminal line"
+
+  # The wait on an open PR/MR is a colleague's approval; the captain cannot
+  # approve their own, so the reminder must use the project's forge vocabulary.
+  assert_grep 'If a declared wait concerns an open PR under review, describe it as awaiting a' "$brief" \
+    "github ship brief did not carry the colleague-approval pause reminder in PR vocabulary"
+  assert_grep "colleague's approval, never the captain's merge decision - the captain cannot approve their" "$brief" \
+    "ship brief did not name the captain's merge decision as the wrong way to describe the wait"
+  assert_no_grep "awaiting the captain's merge decision" "$brief" \
+    "ship brief still describes the wait as the captain's merge decision"
+
+  assert_grep "# Retrospective" "$brief" "ship brief missing the Retrospective section"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'run the `retrospective` skill in its no-human-reachable mode' "$brief" \
+    "ship brief did not require the retrospective skill's no-human-reachable mode"
+  assert_grep "This is MANDATORY if you hit a gotcha, a trap, or anything that cost you time" "$brief" \
+    "ship brief did not make the retrospective mandatory after a gotcha"
+
+  # Every supervisor consumer classifies a task from the LAST status line, so
+  # the Definition of done must end on its terminal done: line: a trailing
+  # pause would supersede the completion and hide the PR/MR url.
+  sed -n '/^# Definition of done$/,$p' "$brief" > "$dod"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'append `done: PR {url} checks green` and stop. You are finished.' "$dod" \
+    "no-mistakes DOD lost its terminal done: line"
+  assert_no_grep "paused:" "$dod" \
+    "no-mistakes DOD appends a pause after the terminal done: line, which supersedes the completion"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gh-direct gh-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/brief-contracts-gh-direct/brief.md"
+  sed -n '/^# Definition of done$/,$p' "$brief" > "$dod"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'then append `done: PR {url}` to the status file and stop.' "$dod" \
+    "direct-PR DOD lost its terminal done: line"
+  assert_no_grep "paused:" "$dod" \
+    "direct-PR DOD appends a pause after the terminal done: line, which supersedes the completion"
+
+  write_project_clone "$home" gl-proj https://gitlab.com/acme/gl-proj.git
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gl gl-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/brief-contracts-gl/brief.md"
+  assert_grep 'If a declared wait concerns an open MR under review, describe it as awaiting a' "$brief" \
+    "gitlab ship brief did not carry the colleague-approval pause reminder in MR vocabulary"
+  assert_grep "own merge request." "$brief" \
+    "gitlab ship brief did not use the GitLab forge noun in the self-approval reminder"
+  assert_no_grep "own pull request." "$brief" \
+    "gitlab ship brief mixed GitHub vocabulary into the self-approval reminder"
+  sed -n '/^# Definition of done$/,$p' "$brief" > "$dod"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'then append `done: MR {url}` to the status file and stop.' "$dod" \
+    "gitlab direct-PR DOD lost its terminal done: line"
+  assert_no_grep "paused:" "$dod" \
+    "gitlab direct-PR DOD appends a pause after the terminal done: line"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-scout gh-proj --scout >/dev/null 2>&1
+  brief="$home/data/brief-contracts-scout/brief.md"
+  assert_no_grep "working: CANDIDATE" "$brief" \
+    "scout brief duplicated the ship-only CANDIDATE findings contract"
+  assert_no_grep "# Retrospective" "$brief" \
+    "scout brief duplicated the ship-only Retrospective section"
+  assert_no_grep "unreachable (confirmed by a live call" "$brief" \
+    "scout brief duplicated the ship-only degraded-mode template"
+  assert_no_grep "colleague's approval" "$brief" \
+    "scout brief duplicated the ship-only colleague-approval pause reminder"
+
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='sample domain' \
+    "$ROOT/bin/fm-brief.sh" brief-contracts-sm --secondmate --no-projects >/dev/null 2>&1
+  brief="$home/data/brief-contracts-sm/brief.md"
+  assert_no_grep "working: CANDIDATE" "$brief" \
+    "secondmate charter duplicated the ship-only CANDIDATE findings contract"
+  assert_no_grep "# Retrospective" "$brief" \
+    "secondmate charter duplicated the ship-only Retrospective section"
+  assert_no_grep "unreachable (confirmed by a live call" "$brief" \
+    "secondmate charter duplicated the ship-only degraded-mode template"
+
+  pass "fm-brief.sh: ship briefs carry the worker-operating contracts and keep a terminal done: line; scout/secondmate do not duplicate them"
+}
+
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
   local brief
@@ -1036,6 +1159,7 @@ test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_grounding_section_requires_search_and_reporting
+test_ship_worker_operating_contracts
 test_scout_and_secondmate_scaffold
 test_forge_detection_shapes_vocabulary
 test_forge_detection_rejects_bare_github_dir
