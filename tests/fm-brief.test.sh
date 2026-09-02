@@ -873,10 +873,12 @@ test_ship_worker_operating_contracts() {
     "ship brief did not route durable findings through the CANDIDATE status channel"
   assert_grep 'you record candidates, only' "$brief" \
     "ship brief did not reserve promotion of candidates to firstmate"
-  assert_grep 'never write to PP Brain or any other shared,' "$brief" \
-    "ship brief did not forbid direct writes to a shared, cross-session memory store"
-  assert_grep 'This does not cover agentmemory or the retrospective' "$brief" \
-    "ship brief did not exempt the workstation-local agentmemory/retrospective writes from that prohibition"
+  assert_grep 'never write to PP Brain or any other memory store' "$brief" \
+    "ship brief did not forbid direct writes to a memory store shared beyond this workstation"
+  assert_grep 'shared beyond this workstation directly. This does not cover agentmemory or the' "$brief" \
+    "ship brief did not exempt agentmemory and the retrospective report from that prohibition"
+  assert_grep 'both are local to this workstation, even though agentmemory' "$brief" \
+    "ship brief did not justify the exemption by locality rather than by session scope"
 
   # A terminal line with nothing before it tells the supervisor nothing.
   assert_grep 'real substance (a finding, a decision, a completed stage) - never end a task on a single' "$brief" \
@@ -898,7 +900,7 @@ test_ship_worker_operating_contracts() {
   assert_grep "This is MANDATORY if you hit a gotcha, a trap, or anything that cost you time" "$brief" \
     "ship brief did not make the retrospective mandatory after a gotcha"
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'In no-mistakes mode the final line is `done: PR {url} checks green` after CI reports green' "$brief" \
+  assert_grep 'In no-mistakes mode this means the `done: PR {url} checks green` line after CI reports green' "$brief" \
     "ship brief did not name which terminal line the retrospective precedes in no-mistakes mode"
   assert_grep "it does not affect the Project memory step above" "$brief" \
     "ship brief did not exempt the Project memory step from the retrospective write gate"
@@ -915,12 +917,25 @@ test_ship_worker_operating_contracts() {
 
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gh-direct gh-proj --mode direct-PR >/dev/null 2>&1
   brief="$home/data/brief-contracts-gh-direct/brief.md"
+  assert_present "$brief" "direct-PR ship brief was not scaffolded"
+  assert_grep 'If a declared wait concerns an open PR under review, describe it as awaiting a' "$brief" \
+    "direct-PR brief lost the colleague-approval pause reminder, which its own mode can reach"
+  assert_no_grep "In no-mistakes mode this means" "$brief" \
+    "direct-PR brief carries the no-mistakes-only retrospective clarification"
   sed -n '/^# Definition of done$/,$p' "$brief" > "$dod"
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
   assert_grep 'then append `done: PR {url}` to the status file and stop.' "$dod" \
     "direct-PR DOD lost its terminal done: line"
   assert_no_grep "paused:" "$dod" \
     "direct-PR DOD appends a pause after the terminal done: line, which supersedes the completion"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gh-local gh-proj --mode local-only >/dev/null 2>&1
+  brief="$home/data/brief-contracts-gh-local/brief.md"
+  assert_present "$brief" "local-only ship brief was not scaffolded"
+  assert_no_grep "If a declared wait concerns an open" "$brief" \
+    "local-only brief carries a pause reminder about a PR its Rule 1 forbids it from opening"
+  assert_no_grep "In no-mistakes mode this means" "$brief" \
+    "local-only brief carries the no-mistakes-only retrospective clarification"
 
   write_project_clone "$home" gl-proj https://gitlab.com/acme/gl-proj.git
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gl gl-proj --mode direct-PR >/dev/null 2>&1

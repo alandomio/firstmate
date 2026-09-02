@@ -435,6 +435,8 @@ fi
 case "$MODE" in
   direct-PR)
     SETUP2=""
+    RETRO_FINAL_NOTE=""
+    PAUSE_NOTE=" If a declared wait concerns an open $FORGE_ABBR under review, describe it as awaiting a colleague's approval, never the captain's merge decision - the captain cannot approve their own $FORGE_NOUN."
     RULE1='1. Never push to the default branch (push only your `fm/'"$ID"'` branch). Never merge a '"$FORGE_NOUN"'.'
     IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
@@ -448,6 +450,8 @@ EOF
     ;;
   local-only)
     SETUP2=""
+    RETRO_FINAL_NOTE=""
+    PAUSE_NOTE=""
     RULE1="1. Never push to any remote and never open a $FORGE_NOUN. Work only on your \`fm/$ID\` branch; firstmate handles the merge into local \`main\`."
     IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
@@ -462,6 +466,8 @@ EOF
   *)  # no-mistakes
     SETUP2="
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
+    RETRO_FINAL_NOTE=" In no-mistakes mode this means the \`done: $FORGE_ABBR {url} checks green\` line after CI reports green, not the earlier \`done: {summary}\` handoff before validation starts."
+    PAUSE_NOTE=" If a declared wait concerns an open $FORGE_ABBR under review, describe it as awaiting a colleague's approval, never the captain's merge decision - the captain cannot approve their own $FORGE_NOUN."
     RULE1='1. Never push to the default branch. Never merge a '"$FORGE_NOUN"'.'
     IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
@@ -533,17 +539,14 @@ $RULE1
    Use \`$PAUSED_VERB: {why}\` - distinct from \`blocked:\` - ONLY when you are deliberately idling on a
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset,
    a scheduled window): firstmate then leaves your idle pane alone and rechecks it on a long
-   cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
-   If a declared wait concerns an open $FORGE_ABBR under review, describe it as awaiting a
-   colleague's approval, never the captain's merge decision - the captain cannot approve their
-   own $FORGE_NOUN.
+   cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.$PAUSE_NOTE
    When you discover a durable finding (knowledge-store drift, a ticket whose real state differs
    from this brief, verified behavior of a tool, a trap the next worker would hit), append it as
    \`working: CANDIDATE - {finding}\` rather than acting on it yourself: you record candidates, only
-   firstmate promotes them, and you must never write to PP Brain or any other shared,
-   cross-session memory store directly. This does not cover agentmemory or the retrospective
-   report the Retrospective section below asks you to produce - those are workstation-local,
-   not shared.
+   firstmate promotes them, and you must never write to PP Brain or any other memory store
+   shared beyond this workstation directly. This does not cover agentmemory or the
+   retrospective report - both are local to this workstation, even though agentmemory
+   persists across sessions here.
    Before your final \`done:\` or \`failed:\` line, send at least one \`working:\` status that carries
    real substance (a finding, a decision, a completed stage) - never end a task on a single
    \`done:\` line with nothing reported before it.
@@ -564,8 +567,7 @@ If you touch a project \`AGENTS.md\` that lacks \`## Maintaining this file\`, ad
 Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced no durable project knowledge.
 
 # Retrospective
-Before your final \`done:\` or \`failed:\` line, run the \`retrospective\` skill in its no-human-reachable mode - the one where gated writes become drafted pending items instead of being skipped or assumed.
-In no-mistakes mode the final line is \`done: $FORGE_ABBR {url} checks green\` after CI reports green, not the earlier \`done: {summary}\` handoff line before validation starts - running it there would miss the phase where most gotchas occur.
+Before your final \`done:\` or \`failed:\` line, run the \`retrospective\` skill in its no-human-reachable mode - the one where gated writes become drafted pending items instead of being skipped or assumed.$RETRO_FINAL_NOTE
 This is MANDATORY if you hit a gotcha, a trap, or anything that cost you time; use your judgment otherwise.
 This gate applies to routing your own session learnings; it does not affect the Project memory step above, which is ordinary task deliverable work, not a retrospective-routed learning.
 
