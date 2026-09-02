@@ -877,16 +877,16 @@ test_ship_worker_operating_contracts() {
     "ship brief did not route durable findings through the note: unread-surface channel"
   assert_grep "States: working, note, needs-decision, blocked, paused, done, failed." "$brief" \
     "ship brief instructs a note: line but omits note from its own states enumeration"
-  # Finding prose that reads like a completion signal escalates the note as if
-  # it were a real terminal line, so the brief must warn against that shape.
-  assert_grep 'Keep the finding text plain prose: firstmate scans a note for completion and merge signals,' "$brief" \
-    "ship brief did not warn that completion-shaped finding prose escalates the note"
-  assert_grep 'makes it read the note as a real escalation. Say it another way' "$brief" \
-    "ship brief did not tell the worker to phrase the finding around that shape"
-  # The default captain regex is overridable per home via FM_CAPTAIN_RE, so
-  # the guidance must not enumerate that default's literal tokens.
-  assert_no_grep 'ready in branch' "$brief" \
-    "ship brief hardcodes the default captain regex tokens, which a custom FM_CAPTAIN_RE replaces"
+  # Delivery of a note: line does not depend on its wording, so the brief
+  # states the guarantee rather than coaching the worker around word choices.
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'Wording does not change whether the finding reaches firstmate: every `note:` line is' "$brief" \
+    "ship brief did not state that a note: line reaches firstmate regardless of its wording"
+  assert_grep 'signal may surface it sooner as well - a difference in timing, not in whether it is seen.' "$brief" \
+    "ship brief did not frame escalation-shaped prose as a timing difference rather than a lost finding"
+  # Word-substitution coaching cannot be complete, so it must not return.
+  assert_no_grep 'Say it another way' "$brief" \
+    "ship brief again coaches the worker to swap specific words, which no list can make complete"
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
   assert_grep 'A mid-task `working:` or `note:` line (including setup complete) is nonterminal' "$brief" \
     "ship brief did not declare a note: line nonterminal, so a worker may stop on one and look wedged"

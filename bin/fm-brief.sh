@@ -553,10 +553,9 @@ $RULE1
    \`note: CANDIDATE - {finding}\` rather than acting on it yourself: you record candidates, only
    firstmate promotes them, and you must never write to PP Brain or any shared memory system
    beyond this workstation directly.
-   Keep the finding text plain prose: firstmate scans a note for completion and merge signals,
-   so wording that reads like one - a status verb with its colon, a CI-green or ready-to-merge
-   claim - makes it read the note as a real escalation. Say it another way ("landed" rather
-   than "merged").
+   Wording does not change whether the finding reaches firstmate: every \`note:\` line is
+   presented in the next status drain. Prose that happens to read like a completion or merge
+   signal may surface it sooner as well - a difference in timing, not in whether it is seen.
    Before the FIRST \`done:\` or \`failed:\` line you write, send at least one \`working:\` status
    that carries real substance (a finding, a decision, a completed stage) - never end a task on
    a single \`done:\` line with nothing reported before it.
