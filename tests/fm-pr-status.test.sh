@@ -23,7 +23,8 @@ TMP_ROOT=$(fm_test_tmproot fm-pr-status)
 # FM_TEST_GLAB_LOG, so a case can assert which project path was actually
 # requested - the observable effect of shortname resolution - and that an
 # unresolved shortname produced no request at all. FM_TEST_GLAB_RC lets a case
-# drive a non-zero glab exit.
+# drive a non-zero glab exit, and FM_TEST_GLAB_PIPELINES_RC one for the
+# pipelines call alone.
 make_case() {
   local case_dir="$TMP_ROOT/$1" fakebin
   mkdir -p "$case_dir"
@@ -33,7 +34,8 @@ make_case() {
 if [ "${1:-}" = api ]; then
   [ -n "${FM_TEST_GLAB_LOG:-}" ] && printf '%s\n' "${2:-}" >> "$FM_TEST_GLAB_LOG"
   case "${2:-}" in
-    *pipelines*) cat "${FM_TEST_PIPELINES_JSON:-/dev/null}" ;;
+    *pipelines*) cat "${FM_TEST_PIPELINES_JSON:-/dev/null}"
+                 exit "${FM_TEST_GLAB_PIPELINES_RC:-${FM_TEST_GLAB_RC:-0}}" ;;
     *)           cat "${FM_TEST_MR_JSON:-/dev/null}" ;;
   esac
 fi
@@ -53,6 +55,7 @@ run_case() {
     FM_TEST_PIPELINES_JSON="$pipelines_json" \
     FM_TEST_GLAB_LOG="${FM_TEST_GLAB_LOG:-}" \
     FM_TEST_GLAB_RC="${FM_TEST_GLAB_RC:-0}" \
+    FM_TEST_GLAB_PIPELINES_RC="${FM_TEST_GLAB_PIPELINES_RC:-}" \
     FM_PROJECTS_OVERRIDE="${FM_PROJECTS_OVERRIDE:-}" \
     "$SCRIPT" "$@"
 }
@@ -67,7 +70,7 @@ cat > "$case_a/mr.json" <<'JSON'
 {"iid":1,"state":"opened","draft":false,"work_in_progress":false,
  "sha":"aaaaaaaa1111","detailed_merge_status":"mergeable",
  "approved":false,"approved_by":[],"has_conflicts":false,"merged_at":null,
- "head_pipeline":{"sha":"aaaaaaaa1111","status":"success"}}
+ "head_pipeline":{"sha":"aaaaaaaa1111","status":"success","source":"push"}}
 JSON
 out=$(run_case "$case_a" "$case_a/mr.json" "" g/a!1)
 assert_contains "$out" "green(head)" "green(head): a run on the real head is reported"
@@ -83,7 +86,7 @@ cat > "$case_b/mr.json" <<'JSON'
 {"iid":2,"state":"opened","draft":false,"work_in_progress":false,
  "sha":"bbbbbbbb1111","detailed_merge_status":"not_approved",
  "approved":true,"approved_by":[],"has_conflicts":false,"merged_at":null,
- "head_pipeline":{"sha":"bbbbbbbb1111","status":"failed"}}
+ "head_pipeline":{"sha":"bbbbbbbb1111","status":"failed","source":"push"}}
 JSON
 out=$(run_case "$case_b" "$case_b/mr.json" "" g/b!2)
 assert_contains "$out" "FAILED(head)" "FAILED(head): a failed run on the real head is reported, whatever the badge says"
@@ -97,7 +100,7 @@ cat > "$case_c/mr.json" <<'JSON'
 {"iid":3,"state":"opened","draft":false,"work_in_progress":false,
  "sha":"cccccccc1111","detailed_merge_status":"conflict",
  "approved":false,"approved_by":[],"has_conflicts":true,"merged_at":null,
- "head_pipeline":{"sha":"cccccccc1111","status":"manual"}}
+ "head_pipeline":{"sha":"cccccccc1111","status":"manual","source":"push"}}
 JSON
 out=$(run_case "$case_c" "$case_c/mr.json" "" g/c!3)
 assert_contains "$out" "manual(head)" "manual(head): a head run blocked on manual jobs is not reported as passed"
@@ -112,7 +115,7 @@ cat > "$case_d/mr.json" <<'JSON'
 {"iid":4,"state":"opened","draft":true,"work_in_progress":false,
  "sha":"dddddddd1111","detailed_merge_status":"draft_status",
  "approved":false,"approved_by":[],"has_conflicts":false,"merged_at":null,
- "head_pipeline":{"sha":"eeeeeeee2222","status":"failed"}}
+ "head_pipeline":{"sha":"eeeeeeee2222","status":"failed","source":"merge_request_event"}}
 JSON
 printf '[]' > "$case_d/pipelines.json"
 out=$(run_case "$case_d" "$case_d/mr.json" "$case_d/pipelines.json" g/d!4)
@@ -129,7 +132,7 @@ cat > "$case_e/mr.json" <<'JSON'
 {"iid":5,"state":"opened","draft":false,"work_in_progress":false,
  "sha":"11112222aaaa","detailed_merge_status":"mergeable",
  "approved":true,"approved_by":["someone"],"has_conflicts":false,"merged_at":null,
- "head_pipeline":{"sha":"22223333bbbb","status":"success"}}
+ "head_pipeline":{"sha":"22223333bbbb","status":"success","source":"merge_request_event"}}
 JSON
 printf '[]' > "$case_e/pipelines.json"
 out=$(run_case "$case_e" "$case_e/mr.json" "$case_e/pipelines.json" g/e!5)
@@ -155,7 +158,7 @@ pass "case F: a merged merge request short-circuits to MERGED"
 # --- fixture G: a raw control character in MR text must not break parsing -
 # it broke `jq` mid-parse repeatedly before the response was scrubbed first. -
 case_g=$(make_case g)
-printf '{"iid":7,"state":"opened","draft":false,"work_in_progress":false,\n "sha":"aaaaaaaa1111","detailed_merge_status":"mergeable",\n "approved":false,"approved_by":[],"has_conflicts":false,"merged_at":null,\n "description":"broken by a raw control char ->\x01<- right there",\n "head_pipeline":{"sha":"aaaaaaaa1111","status":"success"}}' \
+printf '{"iid":7,"state":"opened","draft":false,"work_in_progress":false,\n "sha":"aaaaaaaa1111","detailed_merge_status":"mergeable",\n "approved":false,"approved_by":[],"has_conflicts":false,"merged_at":null,\n "description":"broken by a raw control char ->\x01<- right there",\n "head_pipeline":{"sha":"aaaaaaaa1111","status":"success","source":"push"}}' \
   > "$case_g/mr.json"
 out=$(run_case "$case_g" "$case_g/mr.json" "" g/g!7)
 assert_contains "$out" "green(head)" "a control character in MR text is scrubbed rather than breaking the parse"
@@ -171,11 +174,11 @@ cat > "$case_h/mr.json" <<'JSON'
  "sha":"1111aaaabbbb","detailed_merge_status":"mergeable",
  "approved":true,"approved_by":["someone"],"has_conflicts":false,"merged_at":null,
  "source_branch":"fix/merge-conflicts",
- "head_pipeline":{"sha":"9999ccccdddd","status":"success"}}
+ "head_pipeline":{"sha":"9999ccccdddd","status":"success","source":"merge_request_event"}}
 JSON
 cat > "$case_h/pipelines.json" <<'JSON'
-[{"sha":"1111aaaabbbb","ref":"fix/merge-conflicts","status":"failed"},
- {"sha":"9999ccccdddd","ref":"refs/merge-requests/8/merge","status":"success"}]
+[{"sha":"1111aaaabbbb","ref":"fix/merge-conflicts","status":"failed","source":"push"},
+ {"sha":"9999ccccdddd","ref":"refs/merge-requests/8/merge","status":"success","source":"merge_request_event"}]
 JSON
 out=$(run_case "$case_h" "$case_h/mr.json" "$case_h/pipelines.json" g/h!8)
 assert_contains "$out" "FAILED(head)" "a head run on a branch named fix/merge-conflicts is found, not discarded as a merge-result ref"
@@ -191,11 +194,11 @@ cat > "$case_i/mr.json" <<'JSON'
 {"iid":9,"state":"opened","draft":false,"work_in_progress":false,
  "sha":"2222aaaabbbb","detailed_merge_status":"mergeable",
  "approved":true,"approved_by":["someone"],"has_conflicts":false,"merged_at":null,
- "head_pipeline":{"sha":"8888ccccdddd","status":"failed"}}
+ "head_pipeline":{"sha":"8888ccccdddd","status":"failed","source":"merge_request_event"}}
 JSON
 cat > "$case_i/pipelines.json" <<'JSON'
-[{"sha":"8888ccccdddd","ref":"refs/merge-requests/9/merge","status":"failed"},
- {"sha":"2222aaaabbbb","ref":"refs/merge-requests/9/head","status":"success"}]
+[{"sha":"8888ccccdddd","ref":"refs/merge-requests/9/merge","status":"failed","source":"merge_request_event"},
+ {"sha":"2222aaaabbbb","ref":"refs/merge-requests/9/head","status":"success","source":"merge_request_event"}]
 JSON
 out=$(run_case "$case_i" "$case_i/mr.json" "$case_i/pipelines.json" g/i!9)
 assert_contains "$out" "green(head)" "a detached refs/merge-requests/<iid>/head run counts as a run against the real head"
@@ -210,7 +213,7 @@ cat > "$case_j/mr.json" <<'JSON'
 {"iid":10,"state":"opened","draft":false,"work_in_progress":false,
  "sha":"abcdef1211110000","detailed_merge_status":"mergeable",
  "approved":true,"approved_by":["someone"],"has_conflicts":false,"merged_at":null,
- "head_pipeline":{"sha":"abcdef1222220000","status":"success"}}
+ "head_pipeline":{"sha":"abcdef1222220000","status":"success","source":"merge_request_event"}}
 JSON
 printf '[]' > "$case_j/pipelines.json"
 out=$(run_case "$case_j" "$case_j/mr.json" "$case_j/pipelines.json" g/j!10)
@@ -347,3 +350,115 @@ assert_grep "projects/group%2Fsub%2Fproject/merge_requests/17" "$case_r/glab.log
   "a path containing '/' is used verbatim as the project path"
 assert_contains "$out" "green(head)" "a verbatim project path still produces a normal verdict"
 pass "case R: a full group/project path is used verbatim without resolution"
+
+# --- fixture S: the head-run lookup itself fails. A token that can read merge
+# requests but not pipelines gets a non-zero glab exit here; reporting
+# NO-HEAD-RUN would assert "never tested" from a response nobody read. ------
+case_s=$(make_case s)
+cat > "$case_s/mr.json" <<'JSON'
+{"iid":18,"state":"opened","draft":false,"work_in_progress":false,
+ "sha":"aaaa1111cccc","detailed_merge_status":"mergeable",
+ "approved":true,"approved_by":["someone"],"has_conflicts":false,"merged_at":null,
+ "head_pipeline":{"sha":"bbbb2222dddd","status":"success","source":"merge_request_event"}}
+JSON
+printf '{"message":"403 Forbidden"}' > "$case_s/pipelines.json"
+export FM_TEST_GLAB_PIPELINES_RC=1
+out=$(run_case "$case_s" "$case_s/mr.json" "$case_s/pipelines.json" g/s!18); rc=$?
+unset FM_TEST_GLAB_PIPELINES_RC
+assert_contains "$out" "UNVERIFIED" "a failed head-run lookup is reported as unverified"
+assert_not_contains "$out" "NO-HEAD-RUN" "a failed lookup must not be reported as 'nothing ever ran against the head'"
+assert_not_contains "$out" "(head)" "a failed lookup must not produce any head-attributed verdict"
+expect_code 1 "$rc" "a failed head-run lookup fails the run"
+pass "case S: a failing pipelines lookup reports UNVERIFIED, never NO-HEAD-RUN"
+
+# --- fixture T: the pipelines lookup succeeds but answers with a well-formed
+# body that is not a list - glab printing an error object on stdout. Parsing
+# it as "no runs found" is the same fabrication, without even an exit code. --
+case_t=$(make_case t)
+cat > "$case_t/mr.json" <<'JSON'
+{"iid":19,"state":"opened","draft":false,"work_in_progress":false,
+ "sha":"aaaa3333cccc","detailed_merge_status":"mergeable",
+ "approved":true,"approved_by":["someone"],"has_conflicts":false,"merged_at":null,
+ "head_pipeline":{"sha":"bbbb4444dddd","status":"success","source":"merge_request_event"}}
+JSON
+printf '{"message":"403 Forbidden"}' > "$case_t/pipelines.json"
+out=$(run_case "$case_t" "$case_t/mr.json" "$case_t/pipelines.json" g/t!19); rc=$?
+assert_contains "$out" "UNVERIFIED" "a non-list pipelines body is reported as unverified"
+assert_not_contains "$out" "NO-HEAD-RUN" "a non-list pipelines body must not be read as 'no runs found'"
+expect_code 1 "$rc" "an unreadable pipelines body fails the run"
+pass "case T: a non-list pipelines body reports UNVERIFIED, never NO-HEAD-RUN"
+
+# --- fixture U: no head_pipeline at all, but the pipeline list does carry a
+# real CI run on the head. The verdict comes from that run, and no note may
+# describe a merge-result badge that does not exist. ------------------------
+case_u=$(make_case u)
+cat > "$case_u/mr.json" <<'JSON'
+{"iid":20,"state":"opened","draft":false,"work_in_progress":false,
+ "sha":"aaaa5555cccc","detailed_merge_status":"mergeable",
+ "approved":true,"approved_by":["someone"],"has_conflicts":false,"merged_at":null,
+ "head_pipeline":null}
+JSON
+cat > "$case_u/pipelines.json" <<'JSON'
+[{"sha":"aaaa5555cccc","ref":"feature/u","status":"failed","source":"push"}]
+JSON
+out=$(run_case "$case_u" "$case_u/mr.json" "$case_u/pipelines.json" g/u!20)
+assert_contains "$out" "FAILED(head)" "the head's own failed CI run drives the verdict"
+assert_contains "$out" "no pipeline recorded for this merge request" "the absent badge is described as absent"
+assert_not_contains "$out" "merge-result" "no note may claim a merge-result badge when head_pipeline is null"
+pass "case U: with head_pipeline null, no arm invents a merge-result badge"
+
+# --- fixture V: a response with no sha at all. Both sha fields default to the
+# same "-" sentinel, which would compare equal and produce a head verdict
+# derived from two absent values. -------------------------------------------
+case_v=$(make_case v)
+cat > "$case_v/mr.json" <<'JSON'
+{"iid":21,"state":"opened","draft":false,"work_in_progress":false,
+ "detailed_merge_status":"mergeable",
+ "approved":true,"approved_by":["someone"],"has_conflicts":false,"merged_at":null,
+ "head_pipeline":null}
+JSON
+out=$(run_case "$case_v" "$case_v/mr.json" "" g/v!21); rc=$?
+assert_contains "$out" "UNREACHABLE" "a response with no head sha is a read failure"
+assert_not_contains "$out" "(head)" "two absent shas must not compare equal into a head verdict"
+expect_code 1 "$rc" "a response with no head sha fails the run"
+pass "case V: a missing head sha is reported as unreachable, not as none(head)"
+
+# --- fixture W: the shape observed on platform-infra !1740. The head carries
+# only source=external entries (Atlantis reporting through the commit status
+# API) and no CI pipeline at all. An external red says nothing about whether
+# this repo's CI ran, so the verdict must be NO-HEAD-RUN - never FAILED(head)
+# - with the external red disclosed as its own distinct signal. -------------
+case_w=$(make_case w)
+cat > "$case_w/mr.json" <<'JSON'
+{"iid":22,"state":"opened","draft":false,"work_in_progress":false,
+ "sha":"9c0ede5f0000","detailed_merge_status":"mergeable",
+ "approved":true,"approved_by":["someone"],"has_conflicts":false,"merged_at":null,
+ "head_pipeline":{"sha":"9c0ede5f0000","status":"failed","source":"external"}}
+JSON
+cat > "$case_w/pipelines.json" <<'JSON'
+[{"sha":"9c0ede5f0000","ref":"feature/w","status":"failed","source":"external","name":"atlantis/plan"},
+ {"sha":"9c0ede5f0000","ref":"feature/w","status":"failed","source":"external","name":"atlantis/apply"}]
+JSON
+out=$(run_case "$case_w" "$case_w/mr.json" "$case_w/pipelines.json" g/w!22)
+assert_contains "$out" "NO-HEAD-RUN" "a head carrying only external entries was never tested by CI"
+assert_not_contains "$out" "FAILED(head)" "a failed external status must not be reported as a failed CI run on the head"
+assert_contains "$out" "external status red: atlantis/plan, atlantis/apply" "the failed external statuses are disclosed as their own signal"
+pass "case W: failed external statuses never substitute for a CI verdict"
+
+# --- fixture X: the head has a real CI run AND a failed external entry. The
+# CI run alone decides the verdict; the external red is still disclosed. ----
+case_x=$(make_case x)
+cat > "$case_x/mr.json" <<'JSON'
+{"iid":23,"state":"opened","draft":false,"work_in_progress":false,
+ "sha":"aaaa6666cccc","detailed_merge_status":"mergeable",
+ "approved":true,"approved_by":["someone"],"has_conflicts":false,"merged_at":null,
+ "head_pipeline":{"sha":"bbbb7777dddd","status":"success","source":"merge_request_event"}}
+JSON
+cat > "$case_x/pipelines.json" <<'JSON'
+[{"sha":"aaaa6666cccc","ref":"feature/x","status":"failed","source":"external","name":"atlantis/plan"},
+ {"sha":"aaaa6666cccc","ref":"feature/x","status":"success","source":"push"}]
+JSON
+out=$(run_case "$case_x" "$case_x/mr.json" "$case_x/pipelines.json" g/x!23)
+assert_contains "$out" "green(head)" "the real CI run on the head decides the verdict"
+assert_contains "$out" "external status red: atlantis/plan" "a failed external status is never silently dropped"
+pass "case X: external entries are excluded from the CI verdict but still disclosed"

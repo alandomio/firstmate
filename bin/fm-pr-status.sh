@@ -13,12 +13,23 @@
 #   NO-HEAD-RUN   nothing ever ran against the head; "never tested" is not "passed"
 #   green(merge)  only a merge-result run is green; the head is unverified
 #
-# Two further traps stay encoded because they were each got wrong by hand:
+# A verdict is only ever printed from data that was actually read. When a call
+# fails or returns something unreadable the row says UNREACHABLE (the merge
+# request itself could not be read) or UNVERIFIED (the head-run lookup could
+# not be read) and the run exits non-zero, rather than reporting "never tested"
+# for a response nobody managed to look at.
+#
+# Three further traps stay encoded because they were each got wrong by hand:
 #   - merge request descriptions routinely carry raw control characters that
 #     break `jq`/`json.load` mid-parse; the API response is scrubbed first.
 #   - approval is read from detailed_merge_status, not the `approved` flag:
 #     approved==true with an empty approved_by list means zero approvals were
 #     REQUIRED, not that anyone signed off.
+#   - a merge request's pipeline list mixes real CI runs with source=external
+#     entries that third-party tools (Atlantis and friends) post through the
+#     commit status API. Only non-external runs decide a verdict; a red
+#     external status is disclosed in the notes on its own terms, and a head
+#     carrying nothing but external entries is still NO-HEAD-RUN.
 #
 # GitLab-only by design: the merge-result-vs-head gap above is this script's
 # entire reason to exist, and GitHub has no equivalent - its checks attach
@@ -103,7 +114,7 @@ fm_prstat_unreachable() {  # <repo-path> <iid> <why>
 }
 
 fm_prstat_one() {  # <repo-path> <iid>
-  local repo="$1" iid="$2" enc j rc=0 state sha pipe_sha pipe dms conflicts merged draft
+  local repo="$1" iid="$2" enc j rc=0 state sha pipe_sha pipe pipe_source dms conflicts merged draft
   enc=$(urlenc "$repo")
 
   j=$(glab api "projects/$enc/merge_requests/$iid" 2>/dev/null) || rc=$?
@@ -116,7 +127,7 @@ fm_prstat_one() {  # <repo-path> <iid>
   # The parser emits a lone UNREADABLE sentinel rather than defaulted fields:
   # `glab api` prints an error body on stdout for a non-2xx, and defaulting
   # that to "- / - / none" would compare equal and fabricate a head verdict.
-  read -r state draft sha pipe_sha pipe dms conflicts merged <<EOF
+  read -r state draft sha pipe_sha pipe pipe_source dms conflicts merged <<EOF
 $(printf '%s' "$j" | python3 -c '
 import json,sys
 try: d=json.load(sys.stdin)
@@ -130,6 +141,7 @@ print(" ".join(str(x) for x in (
   d.get("sha") or "-",
   hp.get("sha") or "-",
   hp.get("status") or "none",
+  hp.get("source") or "-",
   d.get("detailed_merge_status") or "?",
   "yes" if d.get("has_conflicts") else "no",
   (d.get("merged_at") or "-")[:10],
@@ -146,11 +158,16 @@ EOF
     return
   fi
 
+  if [ "$sha" = "-" ]; then
+    fm_prstat_unreachable "$repo" "$iid" "no head sha in response"
+    return
+  fi
+
   # Was there ever a run against the REAL head, and how did it go? Shas are
   # compared in full and truncated only for display, so two distinct commits
   # sharing a short prefix are never read as the same run.
   local verdict notes="" sha_short=${sha:0:8} pipe_short=${pipe_sha:0:8}
-  if [ "$sha" = "$pipe_sha" ]; then
+  if [ "$sha" = "$pipe_sha" ] && [ "$pipe_source" != external ]; then
     case "$pipe" in
       success) verdict="green(head)" ;;
       failed)  verdict="FAILED(head)" ;;
@@ -158,10 +175,12 @@ EOF
       *)       verdict="$pipe(head)" ;;
     esac
   else
-    # Badge is a merge-result run. Ask specifically about the head.
-    local hp
-    hp=$(glab api "projects/$enc/merge_requests/$iid/pipelines?per_page=30" 2>/dev/null | scrub \
-      | python3 -c '
+    # The badge is not a CI run on the head - it is a merge-result run, an
+    # external status, or absent. Ask the pipeline list specifically about the
+    # head, and say what the badge actually is rather than assuming.
+    local praw prc=0 plook ci_status ext_red badge
+    praw=$(glab api "projects/$enc/merge_requests/$iid/pipelines?per_page=30" 2>/dev/null) || prc=$?
+    plook=$(printf '%s' "$praw" | scrub | python3 -c '
 import json,sys
 def is_merge_result(ref):
     # Merge-result runs carry refs/merge-requests/<iid>/merge exactly; a
@@ -169,25 +188,51 @@ def is_merge_result(ref):
     ref=str(ref or "")
     return ref.startswith("refs/merge-requests/") and ref.endswith("/merge")
 try: rs=json.load(sys.stdin)
-except Exception: raise SystemExit(0)
-if not isinstance(rs,list): raise SystemExit(0)
+except Exception: print("UNREADABLE"); print(); raise SystemExit(0)
+if not isinstance(rs,list):
+    print("UNREADABLE"); print(); raise SystemExit(0)
 want=sys.argv[1]
+ci="-"; ext=[]
 for r in rs:
     if not isinstance(r,dict): continue
-    if str(r.get("sha","")) == want and not is_merge_result(r.get("ref")):
-        print(r.get("status","?")); break
+    if str(r.get("sha","")) != want: continue
+    # source=external is a third-party tool reporting through the commit
+    # status API; it says nothing about whether the repo own CI pipeline ran.
+    if str(r.get("source","")) == "external":
+        if str(r.get("status","")) == "failed":
+            ext.append(str(r.get("name") or r.get("ref") or r.get("id") or "external"))
+        continue
+    if is_merge_result(r.get("ref")): continue
+    if ci == "-": ci=str(r.get("status") or "?")
+print(ci)
+print(", ".join(ext))
 ' "$sha" 2>/dev/null)
-    case "${hp:-}" in
-      success) verdict="green(head)"; notes="badge is merge-result; head run is green too" ;;
-      failed)  verdict="FAILED(head)"; notes="badge shows $pipe on merge-result $pipe_short" ;;
-      "")      verdict="NO-HEAD-RUN"
-               if [ "$pipe_sha" = "-" ]; then
-                 notes="no pipeline recorded for this merge request"
-               else
-                 notes="only a merge-result run exists ($pipe on $pipe_short)"
-               fi ;;
-      *)       verdict="$hp(head)"; notes="badge is merge-result $pipe_short" ;;
-    esac
+    ci_status=$(printf '%s\n' "$plook" | sed -n 1p)
+    ext_red=$(printf '%s\n' "$plook" | sed -n 2p)
+
+    if [ "$pipe_sha" = "-" ]; then
+      badge="no pipeline recorded for this merge request"
+    elif [ "$pipe_source" = external ]; then
+      badge="badge is an external status ($pipe on $pipe_short)"
+    else
+      badge="badge is merge-result ($pipe on $pipe_short)"
+    fi
+
+    if [ "$prc" -ne 0 ] || [ -z "$plook" ] || [ "$ci_status" = UNREADABLE ]; then
+      verdict="UNVERIFIED"
+      notes="$badge; head-run lookup failed - the pipeline list could not be read"
+      STATUS=1
+    else
+      case "$ci_status" in
+        success) verdict="green(head)"; notes="head run is green too" ;;
+        failed)  verdict="FAILED(head)" ;;
+        manual)  verdict="manual(head)" ;;
+        -)       verdict="NO-HEAD-RUN" ;;
+        *)       verdict="$ci_status(head)" ;;
+      esac
+      notes="${badge}${notes:+; $notes}"
+      [ -n "$ext_red" ] && notes="$notes; external status red: $ext_red"
+    fi
   fi
 
   # Approval, read from the merge status rather than a third API call:
