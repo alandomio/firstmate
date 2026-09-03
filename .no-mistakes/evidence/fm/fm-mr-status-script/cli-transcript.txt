@@ -1,0 +1,49 @@
+fm-pr-status.sh - end-user CLI transcript
+=========================================
+
+Driven against a fake GitLab (a `glab` shim on PATH serving fixture JSON);
+no network. The shortname 'platform-infra' resolves from the origin remote of
+a local clone at projects/platform-infra (git@gitlab.example.com:acme/infra/platform-infra.git).
+
+$ fm-pr-status.sh platform-infra 1 2 3 4 5 6 7 8 99
+platform-infra!1                    opened  ok            green(head)   7f3a91c4  
+platform-infra!2                    opened  NOT-APPROVED  FAILED(head)  b21d55e9  - badge is merge-result (success on cc90ab12)
+platform-infra!3                    opened  -             manual(head)  5e0c778b  - CONFLICTS
+platform-infra!4                    opened  draft         NO-HEAD-RUN   a4b8ff23  - badge is merge-result (success on d9e7001a); DRAFT - cannot merge until marked ready
+platform-infra!5                    opened  ok            NO-HEAD-RUN   9c0ede5f  - badge is an external status (failed on 9c0ede5f); external status red: atlantis/plan, atlantis/apply
+platform-infra!6                    MERGED  on 2026-08-27
+platform-infra!7                    opened  ok            UNVERIFIED    c3d99a04  - badge is merge-result (success on ee1177aa); head-run lookup failed - the pipeline list could not be read
+platform-infra!8                    opened  ok            green(head)   0fa1cc38  - external status red: atlantis/plan
+platform-infra!99                   UNREACHABLE (unreadable response - check repo/number/auth)
+$ echo $?
+1
+
+What each row proves
+--------------------
+!1  green(head)   a real push run on the branch head succeeded. Approval reads
+                  'ok' from detailed_merge_status:mergeable even though the
+                  fixture has approved:false / approved_by:[] - zero approvals
+                  REQUIRED is not NOT-APPROVED.
+!2  FAILED(head)  the badge is a GREEN merge-result run on synthetic commit
+                  cc90ab12; the real head b21d55e9 failed. The tool reports the
+                  head, and discloses the badge for what it is.
+!3  manual(head)  the head run is blocked on manual jobs - not 'passed' - and a
+                  real conflict is surfaced.
+!4  NO-HEAD-RUN   THE TRAP. GitLab shows a green badge (merge-result success on
+                  d9e7001a). Nothing ever ran against head a4b8ff23, so the
+                  verdict is NO-HEAD-RUN - never green - with the badge's own
+                  green status disclosed only in the notes. Draft state flagged.
+!5  NO-HEAD-RUN   the head carries only source=external entries (Atlantis via the
+                  commit status API). External red never substitutes for a CI
+                  verdict, and is disclosed as its own named signal.
+!6  MERGED        an already-merged MR short-circuits, no pipeline verdict.
+!7  UNVERIFIED    the pipelines lookup failed (403/exit 1). Reporting
+                  NO-HEAD-RUN here would assert 'never tested' from a response
+                  nobody read.
+!8  green(head)   the MR description carries raw control chars (0x01/0x02) that
+                  break jq/json.load mid-parse; the response is scrubbed first so
+                  the row still parses. A red external status is still disclosed.
+!99 UNREACHABLE   glab printed a well-formed 404 error body on stdout. It parses,
+                  but it is not a merge request, so no verdict is fabricated.
+
+The run exits 1 because UNVERIFIED and UNREACHABLE rows are present.

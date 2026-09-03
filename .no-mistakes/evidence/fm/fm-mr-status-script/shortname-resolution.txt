@@ -1,0 +1,26 @@
+fm-pr-status.sh - shortname resolution carries no hardcoded organization
+=======================================================================
+
+The promoted script replaced an 'expand_repo' function that hardcoded one
+operator's org shortnames with a catch-all guess. Shortnames now resolve only
+from local, gitignored state: the origin remote of a clone at projects/<name>.
+
+Local registry used here:
+  projects/platform-infra -> git@gitlab.example.com:acme/infra/platform-infra.git
+  (nothing at projects/peter-park-billing)
+
+$ fm-pr-status.sh platform-infra 1
+$ fm-pr-status.sh peter-park-billing!42
+error: unknown repo 'peter-park-billing' - no clone at projects/peter-park-billing; pass a full group/project path instead
+  (exit 1)
+$ fm-pr-status.sh --repo acme/infra/other-thing 17
+
+Every glab API call the three invocations actually made:
+  glab api projects/acme%2Finfra%2Fplatform-infra/merge_requests/1
+  glab api projects/acme%2Finfra%2Fother-thing/merge_requests/17
+
+- 'platform-infra' became acme%2Finfra%2Fplatform-infra, read from the clone's
+  own remote - no org prefix is compiled into the script.
+- 'peter-park-billing' produced NO call at all: it failed with a message naming
+  the clone it looked for, instead of guessing an org and querying a wrong path.
+- '--repo acme/infra/other-thing' (contains '/') was used verbatim, unresolved.

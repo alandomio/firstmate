@@ -1,0 +1,137 @@
+fm-pr-status.sh - end-user CLI transcript
+=========================================
+Recorded against a stand-in `glab` that replays recorded GitLab API bodies
+(merge_requests/<iid> and merge_requests/<iid>/pipelines). No network.
+Shortnames resolve from projects/<name> clones, as they do in real use.
+
+Fixture set (one merge request per row):
+  !101 head run green            !105 already merged
+  !102 GREEN MERGE-RESULT BADGE, !106 draft, head run blocked on manual jobs
+       head never tested         !107 pipelines lookup returns HTTP 403
+  !103 head run failed, conflicts,
+       description carries a raw 0x02 control character
+  !104 head CI green + failed Atlantis external status
+
+$ fm-pr-status.sh --repo gateway 101 102 103 104 105 106 107
+gateway!101                         opened  ok            green(head)   9f3c0ab7  
+gateway!102                         opened  ok            NO-HEAD-RUN   1c7d55ea  - badge is merge-result (success on aa00bb11)
+gateway!103                         opened  -             FAILED(head)  4b81ff20  - CONFLICTS
+gateway!104                         opened  NOT-APPROVED  green(head)   77e2a4c0  - external status red: atlantis/plan
+gateway!105                         MERGED  on 2026-08-28
+gateway!106                         opened  draft         manual(head)  5d10c8ba  - DRAFT - cannot merge until marked ready
+gateway!107                         opened  ok            UNVERIFIED    c4419ab0  - badge is merge-result (success on bb99cc88); head-run lookup failed - the pipeline list could not be read
+$ echo $?
+1   # non-zero: !107's head-run lookup could not be read
+
+Read the rows against what a naive badge reader sees:
+
+  !102  head_pipeline.status = success, source = merge_request_event,
+        badge sha aa00bb11 != head sha 1c7d55ea
+        -> the badge is GREEN. The tool prints NO-HEAD-RUN and discloses the
+           badge only in the notes, under its own status and origin.
+           This is the entire trap the tool exists to close.
+
+  !104  head_pipeline.status = success, source = push, sha == head sha
+        -> green(head) is correct for CI, and the failed source=external
+           Atlantis status is disclosed as its own note rather than folded
+           into (or hidden behind) the CI verdict.
+
+  !103  the fixture's description carries a raw 0x02 byte; `json.loads` on the
+        unscrubbed bytes raises "Invalid control character at: line 1 column
+        96". The row parses anyway - the response is scrubbed first.
+
+  !104  detailed_merge_status = not_approved with approved:true and an empty
+        approved_by -> NOT-APPROVED. !101 is the mirror case: approved:false,
+        approved_by:[] but detailed_merge_status = mergeable -> "ok", because
+        zero approvals were REQUIRED. Approval never reads the `approved` flag.
+
+  !107  the pipelines call fails; the row says UNVERIFIED, never NO-HEAD-RUN -
+        "could not look" is not "never tested" - and the run exits non-zero.
+
+$ fm-pr-status.sh gateway!101 gateway!102        # repo!iid form
+gateway!101                         opened  ok            green(head)   9f3c0ab7  
+gateway!102                         opened  ok            NO-HEAD-RUN   1c7d55ea  - badge is merge-result (success on aa00bb11)
+
+$ fm-pr-status.sh peterpark/platform/gateway!104  # a full path is used verbatim
+gateway!104                         opened  NOT-APPROVED  green(head)   77e2a4c0  - external status red: atlantis/plan
+
+$ fm-pr-status.sh acme-widgets!7                  # unresolvable shortname
+error: unknown repo 'acme-widgets' - no clone at projects/acme-widgets; pass a full group/project path instead
+exit=1  # names what it looked for; never guesses an org prefix
+
+$ GLAB_CALL_LOG=... fm-pr-status.sh --repo gateway 101 104   # API calls issued
+  projects/peterpark%2Fplatform%2Fgateway/merge_requests/101
+  projects/peterpark%2Fplatform%2Fgateway/merge_requests/101/pipelines?per_page=30
+  projects/peterpark%2Fplatform%2Fgateway/merge_requests/104
+  projects/peterpark%2Fplatform%2Fgateway/merge_requests/104/pipelines?per_page=30
+  # the pipeline list is read on every row, including !101 where the badge
+  # already matches the head - otherwise a red external status there is invisible.
+
+$ fm-pr-status.sh --help
+fm-pr-status.sh - one compact line per GitLab merge request: merged,
+approved, conflicted, and whether its reported pipeline is ACTUALLY green.
+
+The trap this exists to close: GitLab's head_pipeline is frequently a
+MERGE-RESULT run against a synthetic merge commit, not the branch head, so a
+green badge can sit on top of a head that failed or was never tested at all.
+This script never reports the badge. It establishes whether a run existed
+against the real head and reports one of:
+  green(head)     a run on the real branch head succeeded - trustworthy
+  FAILED(head)    a run on the real head failed, whatever the badge says
+  manual(head)    the head's run is blocked on manual jobs - not "passed"
+  <status>(head)  any other head-run status, printed under its own name
+  NO-HEAD-RUN     nothing ever ran against the head; "never tested" is not
+                  "passed"
+  UNVERIFIED      the head-run lookup itself could not be read, so no
+                  pipeline verdict is claimed at all
+
+There is deliberately no green verdict for a merge-result run: a green badge
+over an unverified head prints NO-HEAD-RUN, and the badge appears only in the
+notes under its own status and origin ("badge is merge-result (success on
+<sha>)"), so a green merge-result run is never mistakable for a green head.
+
+A verdict is only ever printed from data that was actually read. When a call
+fails or returns something unreadable the row says UNREACHABLE (the merge
+request itself could not be read) or UNVERIFIED (the head-run lookup could
+not be read) and the run exits non-zero, rather than reporting "never tested"
+for a response nobody managed to look at.
+
+Three further traps stay encoded because they were each got wrong by hand:
+  - merge request descriptions routinely carry raw control characters that
+    break `jq`/`json.load` mid-parse; the API response is scrubbed first.
+  - approval is read from detailed_merge_status, not the `approved` flag:
+    approved==true with an empty approved_by list means zero approvals were
+    REQUIRED, not that anyone signed off.
+  - a merge request's pipeline list mixes real CI runs with source=external
+    entries that third-party tools (Atlantis and friends) post through the
+    commit status API. Only non-external runs decide a verdict; a red
+    external status is disclosed in the notes on its own terms, and a head
+    carrying nothing but external entries is still NO-HEAD-RUN.
+
+GitLab-only by design: the merge-result-vs-head gap above is this script's
+entire reason to exist, and GitHub has no equivalent - its checks attach
+directly to the head commit, so there is no comparable trap to close, and a
+GitHub path would add an unrelated, un-hardened code path for no verdict this
+tool needs to make. fm-pr-check.sh / fm-pr-merge.sh / fm-pr-poll.sh remain
+the forge-agnostic family for arming and landing a PR/MR once it is ready.
+
+A repo argument containing "/" is used verbatim as a GitLab project path.
+A bare shortname instead resolves from a local clone at projects/<name> (the
+same registry firstmate already keeps for project management): its origin
+remote is read and its path extracted, regardless of host, so this script
+carries no hardcoded organization. An unresolvable shortname fails with a
+clear message naming what it looked for rather than guessing a prefix.
+
+Usage:
+  fm-pr-status.sh <repo> <iid> [<iid>...]
+  fm-pr-status.sh <repo!iid> [<repo!iid>...]
+  fm-pr-status.sh --repo group/subgroup/project <iid>...
+  fm-pr-status.sh -h | --help
+
+Output columns: repo!num  state  approval  pipeline  head-sha  [- notes]
+A merged merge request prints just "repo!num  MERGED  on <date>", and an
+unreadable one just "repo!num  UNREACHABLE (<why>)". Conflicts, draft state,
+what the badge actually is, and any failed external status are all disclosed
+as their own notes - never folded into the pipeline verdict.
+
+Requires: glab (authenticated against the target GitLab host), python3.

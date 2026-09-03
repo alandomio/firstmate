@@ -1,0 +1,30 @@
+$ bash tests/fm-pr-status.test.sh
+ok - case A: green(head) verdict and zero-approvals-required mergeable status
+ok - case B: FAILED(head) verdict and not_approved read from merge status
+ok - case C: manual(head) verdict and a real conflict
+ok - case D: NO-HEAD-RUN with a failed merge-result badge and a draft note
+ok - case E: a green badge on an unverified head is still reported as NO-HEAD-RUN
+ok - case F: a merged merge request short-circuits to MERGED
+ok - case G: a raw control character in the response does not break parsing
+ok - case H: a source branch containing 'merge' is not misread as a merge-result run
+ok - case I: a refs/merge-requests/<iid>/head run is recognised as a head run
+ok - case J: shas are compared in full, not by their displayed 8-char prefix
+ok - case K: an MR with no pipeline reports that, not a phantom merge-result run
+ok - case L: an unparseable response reports UNREACHABLE and exits non-zero
+ok - case M: a parseable non-MR error body reports UNREACHABLE and exits non-zero
+ok - case N: a non-zero glab exit reports UNREACHABLE and exits non-zero
+ok - case O: a shortname resolves from an https origin remote of projects/<name>
+ok - case P: a shortname resolves from an scp-style origin remote of projects/<name>
+ok - case Q: an unresolvable shortname fails clearly and never guesses an org prefix
+ok - case R: a full group/project path is used verbatim without resolution
+ok - case S: a failing pipelines lookup reports UNVERIFIED, never NO-HEAD-RUN
+ok - case T: a non-list pipelines body reports UNVERIFIED, never NO-HEAD-RUN
+ok - case U: with head_pipeline null, no arm invents a merge-result badge
+ok - case V: a missing head sha is reported as unreachable, not as none(head)
+ok - case W: failed external statuses never substitute for a CI verdict
+ok - case X: external entries are excluded from the CI verdict but still disclosed
+ok - case Y: a failed external status is never dropped on the badge-matches-head path
+ok - case Z: a stale push badge is described as a push run, not a merge-result run
+ok - case AA: unnamed external entries are identified individually, not by their shared branch
+ok - case AB: the head's CI status comes from the newest run, not the first listed
+exit=0

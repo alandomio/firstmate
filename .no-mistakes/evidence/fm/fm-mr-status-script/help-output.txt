@@ -1,0 +1,62 @@
+$ fm-pr-status.sh --help
+fm-pr-status.sh - one compact line per GitLab merge request: merged,
+approved, conflicted, and whether its reported pipeline is ACTUALLY green.
+
+The trap this exists to close: GitLab's head_pipeline is frequently a
+MERGE-RESULT run against a synthetic merge commit, not the branch head, so a
+green badge can sit on top of a head that failed or was never tested at all.
+This script never reports the badge. It establishes whether a run existed
+against the real head and returns one of five verdicts:
+  green(head)   a run on the real branch head succeeded - trustworthy
+  FAILED(head)  a run on the real head failed, whatever the badge says
+  manual(head)  the head's run is blocked on manual jobs - not "passed"
+  NO-HEAD-RUN   nothing ever ran against the head; "never tested" is not "passed"
+  green(merge)  only a merge-result run is green; the head is unverified
+
+A verdict is only ever printed from data that was actually read. When a call
+fails or returns something unreadable the row says UNREACHABLE (the merge
+request itself could not be read) or UNVERIFIED (the head-run lookup could
+not be read) and the run exits non-zero, rather than reporting "never tested"
+for a response nobody managed to look at.
+
+Three further traps stay encoded because they were each got wrong by hand:
+  - merge request descriptions routinely carry raw control characters that
+    break `jq`/`json.load` mid-parse; the API response is scrubbed first.
+  - approval is read from detailed_merge_status, not the `approved` flag:
+    approved==true with an empty approved_by list means zero approvals were
+    REQUIRED, not that anyone signed off.
+  - a merge request's pipeline list mixes real CI runs with source=external
+    entries that third-party tools (Atlantis and friends) post through the
+    commit status API. Only non-external runs decide a verdict; a red
+    external status is disclosed in the notes on its own terms, and a head
+    carrying nothing but external entries is still NO-HEAD-RUN.
+
+GitLab-only by design: the merge-result-vs-head gap above is this script's
+entire reason to exist, and GitHub has no equivalent - its checks attach
+directly to the head commit, so there is no comparable trap to close, and a
+GitHub path would add an unrelated, un-hardened code path for no verdict this
+tool needs to make. fm-pr-check.sh / fm-pr-merge.sh / fm-pr-poll.sh remain
+the forge-agnostic family for arming and landing a PR/MR once it is ready.
+
+A repo argument containing "/" is used verbatim as a GitLab project path.
+A bare shortname instead resolves from a local clone at projects/<name> (the
+same registry firstmate already keeps for project management): its origin
+remote is read and its path extracted, regardless of host, so this script
+carries no hardcoded organization. An unresolvable shortname fails with a
+clear message naming what it looked for rather than guessing a prefix.
+
+Usage:
+  fm-pr-status.sh <repo> <iid> [<iid>...]
+  fm-pr-status.sh <repo!iid> [<repo!iid>...]
+  fm-pr-status.sh --repo group/subgroup/project <iid>...
+  fm-pr-status.sh -h | --help
+
+Output columns: repo!num  state  approval  conflicts  pipeline  head-sha  [notes]
+
+Requires: glab (authenticated against the target GitLab host), python3.
+
+$ fm-pr-status.sh   # no args prints the same help, exit 0
+fm-pr-status.sh - one compact line per GitLab merge request: merged,
+approved, conflicted, and whether its reported pipeline is ACTUALLY green.
+
+...
