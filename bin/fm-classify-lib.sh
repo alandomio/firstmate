@@ -113,14 +113,14 @@ status_is_terminal_verb() {
 }
 
 # 0 if the status line's leading verb is a known nonterminal progress verb:
-# working, resolved, captain-held, note, or the configured paused verb. The
-# single shared predicate so no enumeration site can drift from another.
+# working, note, or the configured resolve/captain-held/paused verbs. The single
+# shared predicate so no enumeration site can drift from another.
 status_is_nonterminal_progress_verb() {  # <status-line>
   local line=$1 verb
   [ -n "$line" ] || return 1
   verb=$(status_line_verb "$line")
   case "$verb" in
-    working|resolved|captain-held|note|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}")
+    working|note|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|"${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}"|"${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}")
       return 0
       ;;
     *) return 1 ;;
@@ -131,14 +131,11 @@ status_is_nonterminal_progress_verb() {  # <status-line>
 # verbs always match; status_is_nonterminal_progress_verb's verbs never match
 # free text; other lines (legacy bare "merged"/"PR ready") still match free text.
 status_is_captain_relevant() {
-  local line=$1 verb
+  local line=$1
   [ -n "$line" ] || return 1
   status_is_nonterminal_progress_verb "$line" && return 1
-  verb=$(status_line_verb "$line")
-  if [ -z "${FM_CAPTAIN_RE+x}" ]; then
-    case "$verb" in
-      done|needs-decision|blocked|failed) return 0 ;;
-    esac
+  if [ -z "${FM_CAPTAIN_RE+x}" ] && status_is_terminal_verb "$line"; then
+    return 0
   fi
   printf '%s' "$line" | grep -qiE "${FM_CAPTAIN_RE:-$FM_CLASSIFY_CAPTAIN_RE_DEFAULT}"
 }

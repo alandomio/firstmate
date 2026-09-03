@@ -320,6 +320,10 @@ test_status_is_nonterminal_progress_verb_unifies_call_sites() {
     && fail "a legacy bare line with no leading verb wrongly matched the progress-verb set"
   FM_CLASSIFY_PAUSED_VERB=holding status_is_nonterminal_progress_verb "holding: x" \
     || fail "FM_CLASSIFY_PAUSED_VERB override not honored by the shared predicate"
+  FM_CLASSIFY_RESOLVE_VERB=closed status_is_nonterminal_progress_verb "closed: x" \
+    || fail "FM_CLASSIFY_RESOLVE_VERB override not honored by the shared predicate"
+  FM_CLASSIFY_CAPTAIN_HELD_VERB=handed-off status_is_nonterminal_progress_verb "handed-off: x" \
+    || fail "FM_CLASSIFY_CAPTAIN_HELD_VERB override not honored by the shared predicate"
   pass "status_is_nonterminal_progress_verb is the single shared predicate for all three call sites"
 }
 
