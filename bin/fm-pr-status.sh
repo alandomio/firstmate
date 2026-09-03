@@ -25,7 +25,11 @@
 # fails or returns something unreadable the row says UNREACHABLE (the merge
 # request itself could not be read) or UNVERIFIED (the head-run lookup could
 # not be read) and the run exits non-zero, rather than reporting "never tested"
-# for a response nobody managed to look at.
+# for a response nobody managed to look at. The one case where an unreadable
+# response still leaves a head verdict standing is a badge that already ran
+# against the head: the verdict is real, but the same unreadable list was also
+# the only view of any external status, so the note says those could not be
+# checked and that row exits non-zero too.
 #
 # Three further traps stay encoded because they were each got wrong by hand:
 #   - merge request descriptions routinely carry raw control characters that
