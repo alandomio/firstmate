@@ -560,3 +560,45 @@ out=$(run_case "$case_ab" "$case_ab/mr.json" "$case_ab/pipelines.json" g/ab!27)
 assert_contains "$out" "green(head)" "the most recent CI run on the head decides the verdict"
 assert_not_contains "$out" "FAILED(head)" "an earlier failed run must not outrank a later passing one because of list order"
 pass "case AB: the head's CI status comes from the newest run, not the first listed"
+
+# --- fixture AC: the --help text is the tool's own generated interface, and
+# it is the only place a user learns what a row can say. It advertised a
+# green(merge) verdict no code path can print and a `conflicts` output column
+# the row never emits - so the surface that exists to keep the operator from
+# trusting a wrong pipeline reading was itself wrong. Both claims are checked
+# against what the tool actually prints for the fixtures above, rather than
+# against a copy of the text. -----------------------------------------------
+help=$("$SCRIPT" --help); rc=$?
+expect_code 0 "$rc" "--help exits cleanly"
+
+# Every literal verdict the help advertises, excluding the <status>(head)
+# placeholder that stands for the arbitrary-status fallback.
+advertised=$(printf '%s\n' "$help" \
+  | awk '/(verdicts:|one of:)$/ {f=1; next} f && /^[[:space:]]*$/ {exit} f {print $1}' \
+  | grep -E '^([A-Za-z<>-]+\([a-z]+\)|[A-Z][A-Z-]{2,})$' \
+  | grep -vx '<status>(head)' | sort -u)
+
+# Every verdict the tool actually prints, taken from the verdict column of the
+# rows the verdict fixtures above produce.
+verdict_of() { printf '%s\n' "$1" | awk 'NF {print $4}'; }
+printed=$(
+  { verdict_of "$(run_case "$case_a" "$case_a/mr.json" "$case_a/pipelines.json" g/a!1)"
+    verdict_of "$(run_case "$case_b" "$case_b/mr.json" "$case_b/pipelines.json" g/b!2)"
+    verdict_of "$(run_case "$case_c" "$case_c/mr.json" "$case_c/pipelines.json" g/c!3)"
+    verdict_of "$(run_case "$case_e" "$case_e/mr.json" "$case_e/pipelines.json" g/e!5)"
+    verdict_of \
+      "$(FM_TEST_GLAB_PIPELINES_RC=1 run_case "$case_s" "$case_s/mr.json" "$case_s/pipelines.json" g/s!18)"
+  } | sort -u
+)
+[ -n "$advertised" ] || fail "--help no longer lists the verdicts a row can report"
+[ "$advertised" = "$printed" ] || fail \
+  "--help advertises verdicts the tool does not print (or omits ones it does)"$'\n'"--- advertised ---"$'\n'"$advertised"$'\n'"--- printed ---"$'\n'"$printed"
+
+# The documented column list, minus the optional trailing "[- notes]", must
+# name exactly as many columns as a notes-free row emits fields.
+documented=$(printf '%s\n' "$help" | sed -n 's/^Output columns: *//p' \
+  | sed 's/\[[^]]*\]//' | wc -w | tr -d ' ')
+emitted=$(run_case "$case_a" "$case_a/mr.json" "$case_a/pipelines.json" g/a!1 | awk 'NF {print NF; exit}')
+[ "$documented" = "$emitted" ] || fail \
+  "--help documents $documented mandatory output columns but a notes-free row emits $emitted fields"
+pass "case AC: --help describes the verdicts and columns the tool really emits"

@@ -6,12 +6,20 @@
 # MERGE-RESULT run against a synthetic merge commit, not the branch head, so a
 # green badge can sit on top of a head that failed or was never tested at all.
 # This script never reports the badge. It establishes whether a run existed
-# against the real head and returns one of five verdicts:
-#   green(head)   a run on the real branch head succeeded - trustworthy
-#   FAILED(head)  a run on the real head failed, whatever the badge says
-#   manual(head)  the head's run is blocked on manual jobs - not "passed"
-#   NO-HEAD-RUN   nothing ever ran against the head; "never tested" is not "passed"
-#   green(merge)  only a merge-result run is green; the head is unverified
+# against the real head and reports one of:
+#   green(head)     a run on the real branch head succeeded - trustworthy
+#   FAILED(head)    a run on the real head failed, whatever the badge says
+#   manual(head)    the head's run is blocked on manual jobs - not "passed"
+#   <status>(head)  any other head-run status, printed under its own name
+#   NO-HEAD-RUN     nothing ever ran against the head; "never tested" is not
+#                   "passed"
+#   UNVERIFIED      the head-run lookup itself could not be read, so no
+#                   pipeline verdict is claimed at all
+#
+# There is deliberately no green verdict for a merge-result run: a green badge
+# over an unverified head prints NO-HEAD-RUN, and the badge appears only in the
+# notes under its own status and origin ("badge is merge-result (success on
+# <sha>)"), so a green merge-result run is never mistakable for a green head.
 #
 # A verdict is only ever printed from data that was actually read. When a call
 # fails or returns something unreadable the row says UNREACHABLE (the merge
@@ -51,7 +59,11 @@
 #   fm-pr-status.sh --repo group/subgroup/project <iid>...
 #   fm-pr-status.sh -h | --help
 #
-# Output columns: repo!num  state  approval  conflicts  pipeline  head-sha  [notes]
+# Output columns: repo!num  state  approval  pipeline  head-sha  [- notes]
+# A merged merge request prints just "repo!num  MERGED  on <date>", and an
+# unreadable one just "repo!num  UNREACHABLE (<why>)". Conflicts, draft state,
+# what the badge actually is, and any failed external status are all disclosed
+# as their own notes - never folded into the pipeline verdict.
 #
 # Requires: glab (authenticated against the target GitLab host), python3.
 set -u
