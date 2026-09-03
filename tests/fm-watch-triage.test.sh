@@ -220,6 +220,8 @@ test_classifier_primitives() {
   [ "$(last_status_line "$state/x.status")" = "done: b" ] || fail "last_status_line did not return the last non-blank line"
   status_is_captain_relevant "done: b" || fail "done: not recognized as captain-relevant"
   status_is_captain_relevant "needs-decision [key=q1]: b" || fail "keyed needs-decision not recognized as captain-relevant"
+  status_is_captain_relevant "blocked: no perms" || fail "blocked: not recognized as captain-relevant"
+  status_is_captain_relevant "failed: boom" || fail "failed: not recognized as captain-relevant"
   status_is_captain_relevant "working: b" && fail "working: wrongly recognized as captain-relevant"
   # Incident regression: free-text "merged" inside a nonterminal working: line must
   # not become captain-relevant (AFK false-terminal path).
@@ -239,6 +241,15 @@ test_classifier_primitives() {
   status_is_captain_relevant "merged" || fail "legacy bare merged free-text not captain-relevant"
   status_is_captain_relevant "PR ready https://x/pull/2" \
     || fail "legacy bare PR ready free-text not captain-relevant"
+  # Regression: a note: line carries a leading verb, so it must never fall
+  # through to free-text matching on tokens like "merged" or "PR ready" -
+  # doing so let a note wedge a worker's stall detection permanently open.
+  status_is_captain_relevant "note: CANDIDATE - upstream already merged the same fix" \
+    && fail "note: free-text merged wrongly recognized as captain-relevant"
+  status_is_captain_relevant "note: PR ready checks green merged ready in branch" \
+    && fail "note: free-text tokens wrongly recognized as captain-relevant"
+  status_is_captain_relevant "note: plain informational update" \
+    && fail "note: without any free-text trigger wrongly recognized as captain-relevant"
   [ "$(window_to_task "sess:fm-fix-login-k3")" = "fix-login-k3" ] || fail "window_to_task did not strip session+fm- prefix"
   fm_write_meta "$state/herdr-task.meta" "window=default:w1:p2" "backend=herdr"
   [ "$(window_to_task "default:w1:p2" "$state")" = "herdr-task" ] || fail "window_to_task did not resolve opaque backend target through metadata"
@@ -281,6 +292,43 @@ EOF
   [ -z "$(status_open_activities "$state/legacy-activity.status")" ] \
     || fail "a legacy terminal event did not supersede the default working phase"
   pass "classifier primitives: keyed decisions and activity phases, captain relevance, window-to-task, and overrides"
+}
+
+# status_is_captain_relevant and both fm-supervise-daemon.sh wedge guards call
+# this one shared predicate for the nonterminal-progress-verb set, so a verb
+# added to one enumeration can never again be missing from another.
+test_status_is_nonterminal_progress_verb_unifies_call_sites() {
+  status_is_nonterminal_progress_verb "note: merged" \
+    || fail "note: not classified as a nonterminal progress verb"
+  status_is_nonterminal_progress_verb "working: x" \
+    || fail "working: not classified as a nonterminal progress verb"
+  status_is_nonterminal_progress_verb "resolved: x" \
+    || fail "resolved: not classified as a nonterminal progress verb"
+  status_is_nonterminal_progress_verb "captain-held [key=a]: x" \
+    || fail "captain-held not classified as a nonterminal progress verb"
+  status_is_nonterminal_progress_verb "paused: x" \
+    || fail "paused: not classified as a nonterminal progress verb"
+  status_is_nonterminal_progress_verb "done: x" \
+    && fail "done: wrongly classified as a nonterminal progress verb"
+  status_is_nonterminal_progress_verb "needs-decision: x" \
+    && fail "needs-decision: wrongly classified as a nonterminal progress verb"
+  status_is_nonterminal_progress_verb "blocked: x" \
+    && fail "blocked: wrongly classified as a nonterminal progress verb"
+  status_is_nonterminal_progress_verb "failed: x" \
+    && fail "failed: wrongly classified as a nonterminal progress verb"
+  status_is_nonterminal_progress_verb "merged" \
+    && fail "a legacy bare line with no leading verb wrongly matched the progress-verb set"
+  FM_CLASSIFY_PAUSED_VERB=holding status_is_nonterminal_progress_verb "holding: x" \
+    || fail "FM_CLASSIFY_PAUSED_VERB override not honored by the shared predicate"
+  FM_CLASSIFY_RESOLVE_VERB=closed status_is_nonterminal_progress_verb "closed: x" \
+    || fail "FM_CLASSIFY_RESOLVE_VERB override not honored by the shared predicate"
+  FM_CLASSIFY_CAPTAIN_HELD_VERB=handed-off status_is_nonterminal_progress_verb "handed-off: x" \
+    || fail "FM_CLASSIFY_CAPTAIN_HELD_VERB override not honored by the shared predicate"
+  FM_CLASSIFY_RESOLVE_VERB=closed status_is_nonterminal_progress_verb "resolved: x" \
+    || fail "literal resolved: must still match while an override is configured"
+  FM_CLASSIFY_CAPTAIN_HELD_VERB=handed-off status_is_nonterminal_progress_verb "captain-held [key=a]: x" \
+    || fail "literal captain-held must still match while an override is configured"
+  pass "status_is_nonterminal_progress_verb is the single shared predicate for all three call sites"
 }
 
 # crew_is_provably_working: the absorb-only-when-provably-working predicate. It is
@@ -2610,6 +2658,7 @@ test_signal_reason_is_actionable_classifier
 test_stale_is_terminal_classifier
 test_scan_captain_relevant_statuses_classifier
 test_classifier_primitives
+test_status_is_nonterminal_progress_verb_unifies_call_sites
 test_crew_is_provably_working_classifier
 test_status_is_paused_classifier
 test_crew_absorb_class_classifier

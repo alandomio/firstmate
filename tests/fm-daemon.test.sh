@@ -1129,6 +1129,86 @@ test_afk_nonterminal_working_merged_keeps_wedge_aging() {
   pass "AFK nonterminal working:+merged keeps wedge aging and re-escalates at bound"
 }
 
+# A note: line has a leading verb, so classify_stale must treat it exactly like
+# working: - transient, never terminal - even when its free text contains a
+# legacy trigger token like "merged".
+test_stale_note_transient_self_handles() {
+  local dir state out
+  dir=$(make_supercase stale-note-transient)
+  state="$dir/state"
+  printf 'note: CANDIDATE - upstream already merged the same fix\n' > "$state/cand-w5.status"
+  out=$(FM_STATE_OVERRIDE="$state" classify_stale "sess:fm-cand-w5" "$state")
+  case "$out" in
+    self\|*transient*) ;;
+    *) fail "note: with merged free text was not classified transient: $out" ;;
+  esac
+  pass "note: verb is never treated as terminal by classify_stale, even with free-text merged"
+}
+
+# Both daemon sites already exclude paused earlier via
+# status_is_paused_or_captain_held, so merging paused into the shared
+# nonterminal-progress-verb predicate must not change their paused handling.
+test_paused_unaffected_by_shared_nonterminal_progress_verb() {
+  local dir state out key pause_reason
+  dir=$(make_supercase paused-shared-predicate)
+  state="$dir/state"
+  pause_reason='paused: waiting for upstream checks green, merged, and blocked state to clear'
+  status_is_nonterminal_progress_verb "$pause_reason" \
+    || fail "paused: not covered by the shared nonterminal-progress-verb predicate"
+  printf '%s\n' "$pause_reason" > "$state/probe.status"
+  out=$(FM_STATE_OVERRIDE="$state" classify_stale "sess:fm-probe" "$state")
+  case "$out" in pause\|*) ;; *) fail "paused: no longer classifies as pause: $out" ;; esac
+  key=$(printf '%s' "probe" | tr ':/.' '___')
+  FM_STATE_OVERRIDE="$state" handle_wake "stale: sess:fm-probe" "$state"
+  [ -e "$state/.subsuper-paused-$key" ] || fail "paused: pause marker no longer recorded"
+  [ ! -e "$state/.subsuper-stale-$key" ] || fail "paused: wrongly left a wedge stale marker"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "paused: wrongly escalated"
+  pass "paused: reaches the pause action before either daemon site's nonterminal-verb case, so merging it into the shared predicate changes nothing observable"
+}
+
+# note: carries a leading verb, so it must never fall through to free-text
+# matching - otherwise the wedge guards below treat a nonterminal note as
+# terminal and permanently clear the worker's possible-wedge marker.
+test_afk_nonterminal_note_merged_keeps_wedge_aging() {
+  local dir state key out win pane incident fakebin
+  dir=$(make_supercase afk-note-merged-wedge)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  win="sess:fm-wishlist-w2"
+  pane="$dir/pane.txt"
+  incident='note: CANDIDATE - upstream already merged the same fix'
+  printf '%s\n' "$incident" > "$state/wishlist-w2.status"
+  printf 'idle prompt $\n' > "$pane"
+  key=$(printf '%s' "wishlist-w2" | tr ':/.' '___')
+  # Simulate an earlier false-positive escalate that wrote the seen marker.
+  printf '%s' "$incident" > "$state/.subsuper-seen-status-$key"
+  out=$(FM_STATE_OVERRIDE="$state" classify_stale "$win" "$state")
+  case "$out" in
+    self\|*transient*) ;;
+    escalate\|*) fail "nonterminal note: escalated as terminal stale: $out" ;;
+    *)
+      case "$out" in
+        *already\ escalated*) fail "nonterminal note: treated as already-escalated terminal: $out" ;;
+        *) fail "nonterminal note: unexpected classify_stale: $out" ;;
+      esac
+      ;;
+  esac
+  FM_STATE_OVERRIDE="$state" handle_wake "stale: $win" "$state"
+  [ -e "$state/.subsuper-stale-$key" ] \
+    || fail "wedge stale marker was not recorded for already-seen nonterminal note:"
+  [ ! -s "$state/.subsuper-escalations" ] \
+    || fail "nonterminal note: stale incorrectly escalated immediately"
+  # Age the marker past the escalate bound (marker stores first-seen epoch).
+  echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  [ -s "$state/.subsuper-escalations" ] \
+    || fail "housekeeping did not re-escalate aged nonterminal note: wedge"
+  grep -q 'possible wedge' "$state/.subsuper-escalations" \
+    || fail "housekeeping escalate was not a possible-wedge: $(cat "$state/.subsuper-escalations")"
+  pass "AFK nonterminal note:+merged keeps wedge aging and re-escalates at bound"
+}
+
 test_afk_genuine_done_still_terminal_stale() {
   local dir state out
   dir=$(make_supercase afk-genuine-done-stale)
@@ -1980,6 +2060,9 @@ test_pane_input_pending_preserves_bright_placeholder_like_draft
 test_classify_signal_dedup_against_scan
 test_classify_stale_dedup_against_signal
 test_afk_nonterminal_working_merged_keeps_wedge_aging
+test_paused_unaffected_by_shared_nonterminal_progress_verb
+test_stale_note_transient_self_handles
+test_afk_nonterminal_note_merged_keeps_wedge_aging
 test_afk_genuine_done_still_terminal_stale
 test_pane_input_pending_bordered_idle_not_pending
 test_pane_input_pending_bordered_with_text_is_pending

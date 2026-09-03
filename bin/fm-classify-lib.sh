@@ -56,11 +56,9 @@ unset _fm_classify_nounset
 # its away-mode classification. FM_CAPTAIN_RE overrides the whole set when a home
 # needs a custom verb vocabulary; absent, this default applies.
 #
-# Free-text tokens (PR ready, checks green, ready in branch, merged) exist only for
-# legacy lines that lack a standard terminal verb. status_is_captain_relevant is
-# verb-aware: a nonterminal working: or paused: line never becomes captain-relevant
-# merely because its prose contains one of those tokens (for example
-# "working: rebased onto merged #76").
+# Free-text tokens (PR ready, checks green, ready in branch, merged) match only
+# legacy lines that lack a terminal verb: a verb status_is_nonterminal_progress_verb
+# owns ("working: rebased onto merged #76") never turns captain-relevant on prose.
 FM_CLASSIFY_CAPTAIN_RE_DEFAULT='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'
 
 # The deliberate-external-wait verb. A crew (or firstmate steering it) appends
@@ -112,25 +110,30 @@ status_is_terminal_verb() {
   esac
 }
 
-# 0 if the given (last) status line matches a captain-relevant verb.
-# Verb-aware by default: terminal verbs always match; nonterminal progress verbs
-# (working, resolved, captain-held) and paused never match from free-text prose;
-# only lines without those leading verbs may still match free-text tokens for
-# legacy bare lines such as "merged" or "PR ready".
-status_is_captain_relevant() {
+# 0 if the status line's leading verb is a known nonterminal progress verb. The
+# single shared predicate so no enumeration site can drift. Configured verbs are
+# additive: writers emit the built-in literal whether or not an override is set.
+status_is_nonterminal_progress_verb() {  # <status-line>
   local line=$1 verb
   [ -n "$line" ] || return 1
-  status_is_paused "$line" && return 1
   verb=$(status_line_verb "$line")
   case "$verb" in
-    working|resolved|captain-held|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}")
-      return 1
+    working|note|resolved|captain-held|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|"${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}"|"${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}")
+      return 0
       ;;
+    *) return 1 ;;
   esac
-  if [ -z "${FM_CAPTAIN_RE+x}" ]; then
-    case "$verb" in
-      done|needs-decision|blocked|failed) return 0 ;;
-    esac
+}
+
+# 0 if the given (last) status line matches a captain-relevant verb. Terminal
+# verbs always match; status_is_nonterminal_progress_verb's verbs never match
+# free text; other lines (legacy bare "merged"/"PR ready") still match free text.
+status_is_captain_relevant() {
+  local line=$1
+  [ -n "$line" ] || return 1
+  status_is_nonterminal_progress_verb "$line" && return 1
+  if [ -z "${FM_CAPTAIN_RE+x}" ] && status_is_terminal_verb "$line"; then
+    return 0
   fi
   printf '%s' "$line" | grep -qiE "${FM_CAPTAIN_RE:-$FM_CLASSIFY_CAPTAIN_RE_DEFAULT}"
 }
