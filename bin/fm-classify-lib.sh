@@ -112,15 +112,15 @@ status_is_terminal_verb() {
   esac
 }
 
-# 0 if the status line's leading verb is a known nonterminal progress verb:
-# working, note, or the configured resolve/captain-held/paused verbs. The single
-# shared predicate so no enumeration site can drift from another.
+# 0 if the status line's leading verb is a known nonterminal progress verb. The
+# single shared predicate so no enumeration site can drift. Configured verbs are
+# additive: writers emit the built-in literal whether or not an override is set.
 status_is_nonterminal_progress_verb() {  # <status-line>
   local line=$1 verb
   [ -n "$line" ] || return 1
   verb=$(status_line_verb "$line")
   case "$verb" in
-    working|note|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|"${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}"|"${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}")
+    working|note|resolved|captain-held|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|"${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}"|"${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}")
       return 0
       ;;
     *) return 1 ;;

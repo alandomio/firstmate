@@ -324,6 +324,10 @@ test_status_is_nonterminal_progress_verb_unifies_call_sites() {
     || fail "FM_CLASSIFY_RESOLVE_VERB override not honored by the shared predicate"
   FM_CLASSIFY_CAPTAIN_HELD_VERB=handed-off status_is_nonterminal_progress_verb "handed-off: x" \
     || fail "FM_CLASSIFY_CAPTAIN_HELD_VERB override not honored by the shared predicate"
+  FM_CLASSIFY_RESOLVE_VERB=closed status_is_nonterminal_progress_verb "resolved: x" \
+    || fail "literal resolved: must still match while an override is configured"
+  FM_CLASSIFY_CAPTAIN_HELD_VERB=handed-off status_is_nonterminal_progress_verb "captain-held [key=a]: x" \
+    || fail "literal captain-held must still match while an override is configured"
   pass "status_is_nonterminal_progress_verb is the single shared predicate for all three call sites"
 }
 
