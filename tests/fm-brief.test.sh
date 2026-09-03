@@ -228,8 +228,8 @@ test_ship_modes_generate_clean_briefs() {
     grep -qx "Delivery contract: mode=$mode" "$brief" \
       || fail "$id: brief did not record its machine-readable delivery contract line"
     assert_grep "{TASK}" "$brief" "$id: brief missing the {TASK} placeholder"
-    assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
-      "$id: brief missing nonterminal working:/setup-complete gate protection"
+    assert_grep "mid-task \`working:\` or \`note:\` line (including setup complete) is nonterminal" "$brief" \
+      "$id: brief missing nonterminal working:/note:/setup-complete gate protection"
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
   done
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
@@ -735,7 +735,7 @@ test_herdr_lab_contract_applies_to_scouts_but_not_secondmates() {
 }
 
 test_pause_verb_override_renders_all_brief_scaffolds() {
-  local home kind id brief
+  local home kind id brief states
   home="$TMP_ROOT/pause-verb-home"
   mkdir -p "$home/data"
 
@@ -756,7 +756,11 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
         ;;
     esac
     brief="$home/data/$id/brief.md"
-    assert_grep "States: working, needs-decision, blocked, awaiting, done, failed." "$brief" \
+    case "$kind" in
+      ship) states="States: working, note, needs-decision, blocked, awaiting, done, failed." ;;
+      *)    states="States: working, needs-decision, blocked, awaiting, done, failed." ;;
+    esac
+    assert_grep "$states" "$brief" \
       "$kind brief did not render the configured pause verb in its states list"
     # shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
     assert_grep 'Use `awaiting: {why}`' "$brief" \
@@ -832,6 +836,171 @@ test_grounding_section_requires_search_and_reporting() {
     "secondmate charter should not duplicate the Grounding section its own crewmates already carry"
 
   pass "fm-brief.sh: ship and scout briefs require Brain/memory grounding with reported outcome; secondmate charter does not duplicate it"
+}
+
+# The worker-operating contracts added on 2026-09-02 are ship-only: they govern
+# the crewmate that performs the task itself. A scout produces a written report
+# and a secondmate charter routes work to its own crewmates, whose generated
+# ship briefs already carry these contracts, so neither may duplicate them.
+test_ship_worker_operating_contracts() {
+  local home brief dod
+  home="$TMP_ROOT/worker-contracts-home"
+  mkdir -p "$home/data"
+  dod="$TMP_ROOT/worker-contracts-dod.txt"
+
+  write_project_clone "$home" gh-proj https://github.com/acme/gh-proj.git
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gh gh-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-contracts-gh/brief.md"
+  assert_present "$brief" "ship no-mistakes brief was not scaffolded"
+
+  # A pp-brain auth warning in the session-start banner is a known false
+  # positive, so only one real live call counts as evidence either way.
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'If the session-start banner reports `pp-brain: auth_missing`' "$brief" \
+    "ship brief did not name the pp-brain auth banner as the warning to verify"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'known false positive: make ONE real `search_knowledge` call before acting on it' "$brief" \
+    "ship brief did not require one live search_knowledge call before believing the banner"
+  assert_grep 'Only a failing live call is evidence - never stop, and never proceed without org context, on the banner alone.' "$brief" \
+    "ship brief did not forbid both stopping and proceeding on the banner alone"
+
+  # Degraded mode reuses an existing classifier verb with a fixed template, so
+  # the supervisor classifies the outage instead of parsing invented prose.
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'append `blocked: <server> unreachable (confirmed by a live call, not the startup banner)` to the status file and stop' "$brief" \
+    "ship brief did not carry the typed degraded-mode blocked: template"
+
+  # Durable findings travel as supervisor-promoted candidates on the existing
+  # status channel, never as worker writes into a shared store.
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep '`note: CANDIDATE - {finding}` rather than acting on it yourself' "$brief" \
+    "ship brief did not route durable findings through the note: unread-surface channel"
+  assert_grep "States: working, note, needs-decision, blocked, paused, done, failed." "$brief" \
+    "ship brief instructs a note: line but omits note from its own states enumeration"
+  # Delivery of a note: line does not depend on its wording, but the wedge
+  # guards do not yet cover note:, so the brief discloses that gap honestly
+  # instead of coaching the worker around word choices.
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'Every `note:` line reaches firstmate: the next status drain presents it whatever its wording.' "$brief" \
+    "ship brief did not state that a note: line reaches firstmate regardless of its wording"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'But `note:` is not yet covered by the supervision wedge guards that protect `working:`,' "$brief" \
+    "ship brief did not disclose that note: lacks the wedge-guard coverage working:/resolved:/captain-held: have"
+  assert_grep 'suppressed. That gap lives in those guards, not in note wording, and is tracked separately.' "$brief" \
+    "ship brief did not place the wedge-guard gap outside the worker's note wording"
+  # Word-substitution coaching cannot be complete, so it must not return.
+  assert_no_grep 'Say it another way' "$brief" \
+    "ship brief again coaches the worker to swap specific words, which no list can make complete"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'A mid-task `working:` or `note:` line (including setup complete) is nonterminal' "$brief" \
+    "ship brief did not declare a note: line nonterminal, so a worker may stop on one and look wedged"
+  assert_grep 'you record candidates, only' "$brief" \
+    "ship brief did not reserve promotion of candidates to firstmate"
+  assert_grep 'never write to PP Brain or any shared memory directly.' "$brief" \
+    "ship brief did not forbid direct writes to PP Brain or any shared memory"
+  assert_no_grep 'beyond this workstation' "$brief" \
+    "ship brief still qualifies the shared-memory ban, licensing workstation-local memory writes"
+  assert_no_grep 'narrow exception' "$brief" \
+    "ship brief still carves an exception out of the shared-memory ban"
+
+  # A terminal line with nothing before it tells the supervisor nothing, and
+  # in no-mistakes mode the handoff done: line is the one firstmate acts on.
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'Before the FIRST `done:` or `failed:` line you write, send at least one `working:` status' "$brief" \
+    "ship brief did not bind the substantive working: requirement to the first terminal line"
+  assert_grep 'that carries real substance (a finding, a decision, a completed stage) - never end a task on' "$brief" \
+    "ship brief did not require that working: line to carry real substance"
+
+  # The wait on an open PR/MR is a colleague's approval; the captain cannot
+  # approve their own, so the reminder must use the project's forge vocabulary.
+  assert_grep 'If a declared wait concerns an open PR under review, describe it as awaiting a' "$brief" \
+    "github ship brief did not carry the colleague-approval pause reminder in PR vocabulary"
+  assert_grep "colleague's approval, never the captain's merge decision - the captain cannot approve their" "$brief" \
+    "ship brief did not name the captain's merge decision as the wrong way to describe the wait"
+  assert_no_grep "awaiting the captain's merge decision" "$brief" \
+    "ship brief still describes the wait as the captain's merge decision"
+
+  # Nothing in the ship brief mandates a write outside the disposable
+  # worktree, so Rule 2's isolation guarantee carries no carve-out.
+  assert_grep "2. Stay inside this worktree; modify nothing outside it." "$brief" \
+    "ship Rule 2 lost its unqualified worktree-isolation guarantee"
+  assert_no_grep "# Retrospective" "$brief" \
+    "ship brief still mandates a retrospective whose writes escape the disposable worktree"
+  assert_no_grep "retrospective" "$brief" \
+    "ship brief still references the retrospective skill"
+
+  # Every supervisor consumer classifies a task from the LAST status line, so
+  # the Definition of done must end on its terminal done: line: a trailing
+  # pause would supersede the completion and hide the PR/MR url.
+  sed -n '/^# Definition of done$/,$p' "$brief" > "$dod"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'append `done: PR {url} checks green` and stop. You are finished.' "$dod" \
+    "no-mistakes DOD lost its terminal done: line"
+  assert_no_grep "paused:" "$dod" \
+    "no-mistakes DOD appends a pause after the terminal done: line, which supersedes the completion"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gh-direct gh-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/brief-contracts-gh-direct/brief.md"
+  assert_present "$brief" "direct-PR ship brief was not scaffolded"
+  assert_grep 'If a declared wait concerns an open PR under review, describe it as awaiting a' "$brief" \
+    "direct-PR brief lost the colleague-approval pause reminder, which its own mode can reach"
+  assert_grep "2. Stay inside this worktree; modify nothing outside it." "$brief" \
+    "direct-PR Rule 2 lost its unqualified worktree-isolation guarantee"
+  assert_no_grep "retrospective" "$brief" \
+    "direct-PR brief still references the retrospective skill"
+  sed -n '/^# Definition of done$/,$p' "$brief" > "$dod"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'then append `done: PR {url}` to the status file and stop.' "$dod" \
+    "direct-PR DOD lost its terminal done: line"
+  assert_no_grep "paused:" "$dod" \
+    "direct-PR DOD appends a pause after the terminal done: line, which supersedes the completion"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gh-local gh-proj --mode local-only >/dev/null 2>&1
+  brief="$home/data/brief-contracts-gh-local/brief.md"
+  assert_present "$brief" "local-only ship brief was not scaffolded"
+  assert_no_grep "If a declared wait concerns an open" "$brief" \
+    "local-only brief carries a pause reminder about a PR its Rule 1 forbids it from opening"
+  assert_grep "2. Stay inside this worktree; modify nothing outside it." "$brief" \
+    "local-only Rule 2 lost its unqualified worktree-isolation guarantee"
+  assert_no_grep "retrospective" "$brief" \
+    "local-only brief still references the retrospective skill"
+
+  write_project_clone "$home" gl-proj https://gitlab.com/acme/gl-proj.git
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gl gl-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/brief-contracts-gl/brief.md"
+  assert_grep 'If a declared wait concerns an open MR under review, describe it as awaiting a' "$brief" \
+    "gitlab ship brief did not carry the colleague-approval pause reminder in MR vocabulary"
+  assert_grep "own merge request." "$brief" \
+    "gitlab ship brief did not use the GitLab forge noun in the self-approval reminder"
+  assert_no_grep "own pull request." "$brief" \
+    "gitlab ship brief mixed GitHub vocabulary into the self-approval reminder"
+  sed -n '/^# Definition of done$/,$p' "$brief" > "$dod"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'then append `done: MR {url}` to the status file and stop.' "$dod" \
+    "gitlab direct-PR DOD lost its terminal done: line"
+  assert_no_grep "paused:" "$dod" \
+    "gitlab direct-PR DOD appends a pause after the terminal done: line"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-scout gh-proj --scout >/dev/null 2>&1
+  brief="$home/data/brief-contracts-scout/brief.md"
+  assert_present "$brief" "scout brief was not scaffolded"
+  assert_no_grep "note: CANDIDATE" "$brief" \
+    "scout brief duplicated the ship-only CANDIDATE findings contract"
+  assert_no_grep "unreachable (confirmed by a live call" "$brief" \
+    "scout brief duplicated the ship-only degraded-mode template"
+  assert_no_grep "colleague's approval" "$brief" \
+    "scout brief duplicated the ship-only colleague-approval pause reminder"
+
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='sample domain' \
+    "$ROOT/bin/fm-brief.sh" brief-contracts-sm --secondmate --no-projects >/dev/null 2>&1
+  brief="$home/data/brief-contracts-sm/brief.md"
+  assert_present "$brief" "secondmate charter was not scaffolded"
+  assert_no_grep "note: CANDIDATE" "$brief" \
+    "secondmate charter duplicated the ship-only CANDIDATE findings contract"
+  assert_no_grep "unreachable (confirmed by a live call" "$brief" \
+    "secondmate charter duplicated the ship-only degraded-mode template"
+
+  pass "fm-brief.sh: ship briefs carry the worker-operating contracts and keep a terminal done: line; scout/secondmate do not duplicate them"
 }
 
 # Scout and secondmate paths still scaffold well-formed briefs.
@@ -1036,6 +1205,7 @@ test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_grounding_section_requires_search_and_reporting
+test_ship_worker_operating_contracts
 test_scout_and_secondmate_scaffold
 test_forge_detection_shapes_vocabulary
 test_forge_detection_rejects_bare_github_dir
