@@ -114,7 +114,7 @@ fm_prstat_unreachable() {  # <repo-path> <iid> <why>
 }
 
 fm_prstat_one() {  # <repo-path> <iid>
-  local repo="$1" iid="$2" enc j rc=0 state sha pipe_sha pipe pipe_source dms conflicts merged draft
+  local repo="$1" iid="$2" enc j rc=0 state sha pipe_sha pipe pipe_source pipe_ref dms conflicts merged draft
   enc=$(urlenc "$repo")
 
   j=$(glab api "projects/$enc/merge_requests/$iid" 2>/dev/null) || rc=$?
@@ -127,7 +127,7 @@ fm_prstat_one() {  # <repo-path> <iid>
   # The parser emits a lone UNREADABLE sentinel rather than defaulted fields:
   # `glab api` prints an error body on stdout for a non-2xx, and defaulting
   # that to "- / - / none" would compare equal and fabricate a head verdict.
-  read -r state draft sha pipe_sha pipe pipe_source dms conflicts merged <<EOF
+  read -r state draft sha pipe_sha pipe pipe_source pipe_ref dms conflicts merged <<EOF
 $(printf '%s' "$j" | python3 -c '
 import json,sys
 try: d=json.load(sys.stdin)
@@ -142,6 +142,7 @@ print(" ".join(str(x) for x in (
   hp.get("sha") or "-",
   hp.get("status") or "none",
   hp.get("source") or "-",
+  hp.get("ref") or "-",
   d.get("detailed_merge_status") or "?",
   "yes" if d.get("has_conflicts") else "no",
   (d.get("merged_at") or "-")[:10],
@@ -167,6 +168,68 @@ EOF
   # compared in full and truncated only for display, so two distinct commits
   # sharing a short prefix are never read as the same run.
   local verdict notes="" sha_short=${sha:0:8} pipe_short=${pipe_sha:0:8}
+  local praw prc=0 plook ci_status ext_red pipe_kind badge lookup_ok=yes
+
+  # The pipeline list is read for every row, not only when the badge looks
+  # wrong: it is the only place a red external status is visible, and dropping
+  # it on the rows whose badge happens to match would hide exactly the signal
+  # the notes promise to disclose.
+  praw=$(glab api "projects/$enc/merge_requests/$iid/pipelines?per_page=30" 2>/dev/null) || prc=$?
+  plook=$(printf '%s' "$praw" | scrub | python3 -c '
+import json,sys
+want,badge_ref,badge_source,badge_sha=sys.argv[1:5]
+def is_merge_result(ref):
+    # Merge-result runs carry refs/merge-requests/<iid>/merge exactly; a
+    # substring test would also discard a source branch called fix/merge-foo.
+    ref=str(ref or "")
+    return ref.startswith("refs/merge-requests/") and ref.endswith("/merge")
+if badge_sha == "-": kind="none"
+elif badge_source == "external": kind="external"
+elif is_merge_result(badge_ref): kind="merge-result"
+else: kind=badge_source
+ci="-"; ext=[]; ok=True
+try: rs=json.load(sys.stdin)
+except Exception: ok=False
+if ok and not isinstance(rs,list): ok=False
+if ok:
+    # Newest first: the endpoint does not document an order, and "the head run"
+    # means the most recent one, not whichever the response happened to list.
+    for r in sorted((x for x in rs if isinstance(x,dict)),
+                    key=lambda x: x.get("id") or 0, reverse=True):
+        if str(r.get("sha","")) != want: continue
+        # source=external is a third-party tool reporting through the commit
+        # status API; it says nothing about whether the repo own CI ran.
+        if str(r.get("source","")) == "external":
+            if str(r.get("status","")) == "failed":
+                ext.append(str(r.get("name") or
+                               ("#%s" % r.get("id") if r.get("id") is not None else "external")))
+            continue
+        if is_merge_result(r.get("ref")): continue
+        if ci == "-": ci=str(r.get("status") or "?")
+print(ci if ok else "UNREADABLE")
+print(", ".join(ext))
+print(kind)
+' "$sha" "$pipe_ref" "$pipe_source" "$pipe_sha" 2>/dev/null)
+  ci_status=$(printf '%s\n' "$plook" | sed -n 1p)
+  ext_red=$(printf '%s\n' "$plook" | sed -n 2p)
+  pipe_kind=$(printf '%s\n' "$plook" | sed -n 3p)
+  if [ "$prc" -ne 0 ] || [ -z "$plook" ] || [ "$ci_status" = UNREADABLE ]; then
+    lookup_ok=no
+    ext_red=""
+  fi
+  [ -n "$pipe_kind" ] || pipe_kind="-"
+
+  # Say what the badge actually is. Only a merge-result ref makes it a
+  # merge-result run; a stale push or schedule run on an older commit is a
+  # different situation and is named as one.
+  case "$pipe_kind" in
+    none)         badge="no head pipeline badge recorded on this merge request" ;;
+    external)     badge="badge is an external status ($pipe on $pipe_short)" ;;
+    merge-result) badge="badge is merge-result ($pipe on $pipe_short)" ;;
+    -)            badge="badge is a run of unrecorded origin ($pipe on $pipe_short)" ;;
+    *)            badge="badge is a $pipe_kind run ($pipe on $pipe_short)" ;;
+  esac
+
   if [ "$sha" = "$pipe_sha" ] && [ "$pipe_source" != external ]; then
     case "$pipe" in
       success) verdict="green(head)" ;;
@@ -174,66 +237,25 @@ EOF
       manual)  verdict="manual(head)" ;;
       *)       verdict="$pipe(head)" ;;
     esac
-  else
-    # The badge is not a CI run on the head - it is a merge-result run, an
-    # external status, or absent. Ask the pipeline list specifically about the
-    # head, and say what the badge actually is rather than assuming.
-    local praw prc=0 plook ci_status ext_red badge
-    praw=$(glab api "projects/$enc/merge_requests/$iid/pipelines?per_page=30" 2>/dev/null) || prc=$?
-    plook=$(printf '%s' "$praw" | scrub | python3 -c '
-import json,sys
-def is_merge_result(ref):
-    # Merge-result runs carry refs/merge-requests/<iid>/merge exactly; a
-    # substring test would also discard a source branch called fix/merge-foo.
-    ref=str(ref or "")
-    return ref.startswith("refs/merge-requests/") and ref.endswith("/merge")
-try: rs=json.load(sys.stdin)
-except Exception: print("UNREADABLE"); print(); raise SystemExit(0)
-if not isinstance(rs,list):
-    print("UNREADABLE"); print(); raise SystemExit(0)
-want=sys.argv[1]
-ci="-"; ext=[]
-for r in rs:
-    if not isinstance(r,dict): continue
-    if str(r.get("sha","")) != want: continue
-    # source=external is a third-party tool reporting through the commit
-    # status API; it says nothing about whether the repo own CI pipeline ran.
-    if str(r.get("source","")) == "external":
-        if str(r.get("status","")) == "failed":
-            ext.append(str(r.get("name") or r.get("ref") or r.get("id") or "external"))
-        continue
-    if is_merge_result(r.get("ref")): continue
-    if ci == "-": ci=str(r.get("status") or "?")
-print(ci)
-print(", ".join(ext))
-' "$sha" 2>/dev/null)
-    ci_status=$(printf '%s\n' "$plook" | sed -n 1p)
-    ext_red=$(printf '%s\n' "$plook" | sed -n 2p)
-
-    if [ "$pipe_sha" = "-" ]; then
-      badge="no pipeline recorded for this merge request"
-    elif [ "$pipe_source" = external ]; then
-      badge="badge is an external status ($pipe on $pipe_short)"
-    else
-      badge="badge is merge-result ($pipe on $pipe_short)"
-    fi
-
-    if [ "$prc" -ne 0 ] || [ -z "$plook" ] || [ "$ci_status" = UNREADABLE ]; then
-      verdict="UNVERIFIED"
-      notes="$badge; head-run lookup failed - the pipeline list could not be read"
+    if [ "$lookup_ok" = no ]; then
+      notes="external statuses could not be checked - the pipeline list could not be read"
       STATUS=1
-    else
-      case "$ci_status" in
-        success) verdict="green(head)"; notes="head run is green too" ;;
-        failed)  verdict="FAILED(head)" ;;
-        manual)  verdict="manual(head)" ;;
-        -)       verdict="NO-HEAD-RUN" ;;
-        *)       verdict="$ci_status(head)" ;;
-      esac
-      notes="${badge}${notes:+; $notes}"
-      [ -n "$ext_red" ] && notes="$notes; external status red: $ext_red"
     fi
+  elif [ "$lookup_ok" = no ]; then
+    verdict="UNVERIFIED"
+    notes="$badge; head-run lookup failed - the pipeline list could not be read"
+    STATUS=1
+  else
+    case "$ci_status" in
+      success) verdict="green(head)"; notes="head run is green too" ;;
+      failed)  verdict="FAILED(head)" ;;
+      manual)  verdict="manual(head)" ;;
+      -)       verdict="NO-HEAD-RUN" ;;
+      *)       verdict="$ci_status(head)" ;;
+    esac
+    notes="${badge}${notes:+; $notes}"
   fi
+  [ -n "$ext_red" ] && notes="${notes:+$notes; }external status red: $ext_red"
 
   # Approval, read from the merge status rather than a third API call:
   # approved==true with an empty approved_by list just means none was required.
