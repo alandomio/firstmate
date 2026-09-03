@@ -1,0 +1,64 @@
+BEFORE - base commit 7583d6d
+
+CONFIG OVERRIDE  | STATUS LINE THE WORKER WROTE               | DAEMON VERDICT
+-----------------+--------------------------------------------+-----------------
+-                | done: PR https://x/y/pull/1                | captain-relevant
+-                | needs-decision [key=q1]: pick A or B       | captain-relevant
+-                | blocked: no perms on the deploy key        | captain-relevant
+-                | failed: build broke on arm64               | captain-relevant
+-                | working: stage 2 setup complete            | self-handled   
+-                | working: rebased onto merged #76           | self-handled   
+-                | resolved [key=q1]: captain picked A        | self-handled   
+-                | captain-held [key=q1]: tracked by captain  | self-handled   
+-                | paused: waiting on upstream review         | self-handled   
+-                | note: plain informational update           | self-handled   
+-                | note: CANDIDATE - upstream already merged it | captain-relevant
+-                | note: PR ready checks green in branch      | captain-relevant
+-                | merged                                     | captain-relevant
+-                | PR ready https://x/y/pull/2                | captain-relevant
+FM_CLASSIFY_RESOLVE_VERB=closed | resolved: upstream merged the patch        | self-handled   
+FM_CLASSIFY_RESOLVE_VERB=closed | closed: upstream merged the patch          | captain-relevant
+FM_CLASSIFY_PAUSED_VERB=holding | holding: merged upstream, awaiting review  | self-handled   
+
+
+AFTER - target commit d12c9c0
+
+CONFIG OVERRIDE  | STATUS LINE THE WORKER WROTE               | DAEMON VERDICT
+-----------------+--------------------------------------------+-----------------
+-                | done: PR https://x/y/pull/1                | captain-relevant
+-                | needs-decision [key=q1]: pick A or B       | captain-relevant
+-                | blocked: no perms on the deploy key        | captain-relevant
+-                | failed: build broke on arm64               | captain-relevant
+-                | working: stage 2 setup complete            | self-handled   
+-                | working: rebased onto merged #76           | self-handled   
+-                | resolved [key=q1]: captain picked A        | self-handled   
+-                | captain-held [key=q1]: tracked by captain  | self-handled   
+-                | paused: waiting on upstream review         | self-handled   
+-                | note: plain informational update           | self-handled   
+-                | note: CANDIDATE - upstream already merged it | self-handled   
+-                | note: PR ready checks green in branch      | self-handled   
+-                | merged                                     | captain-relevant
+-                | PR ready https://x/y/pull/2                | captain-relevant
+FM_CLASSIFY_RESOLVE_VERB=closed | resolved: upstream merged the patch        | self-handled   
+FM_CLASSIFY_RESOLVE_VERB=closed | closed: upstream merged the patch          | self-handled   
+FM_CLASSIFY_PAUSED_VERB=holding | holding: merged upstream, awaiting review  | self-handled   
+
+
+CELLS THAT CHANGED (unified diff, before -> after)
+
+--- /tmp/matrix-before.txt	2026-09-03 12:49:39.801309661 +0200
++++ /tmp/matrix-after.txt	2026-09-03 12:49:39.942837422 +0200
+@@ -10,10 +10,10 @@
+ -                | captain-held [key=q1]: tracked by captain  | self-handled   
+ -                | paused: waiting on upstream review         | self-handled   
+ -                | note: plain informational update           | self-handled   
+--                | note: CANDIDATE - upstream already merged it | captain-relevant
+--                | note: PR ready checks green in branch      | captain-relevant
++-                | note: CANDIDATE - upstream already merged it | self-handled   
++-                | note: PR ready checks green in branch      | self-handled   
+ -                | merged                                     | captain-relevant
+ -                | PR ready https://x/y/pull/2                | captain-relevant
+ FM_CLASSIFY_RESOLVE_VERB=closed | resolved: upstream merged the patch        | self-handled   
+-FM_CLASSIFY_RESOLVE_VERB=closed | closed: upstream merged the patch          | captain-relevant
++FM_CLASSIFY_RESOLVE_VERB=closed | closed: upstream merged the patch          | self-handled   
+ FM_CLASSIFY_PAUSED_VERB=holding | holding: merged upstream, awaiting review  | self-handled   

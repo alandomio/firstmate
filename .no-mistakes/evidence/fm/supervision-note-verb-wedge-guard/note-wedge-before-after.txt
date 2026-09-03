@@ -1,0 +1,66 @@
+==============================================================
+ BEFORE the fix - base commit 7583d6d
+==============================================================
+
+[00:00] captain is AFK; worker window sess:fm-wishlist-w2 is under daemon supervision.
+        worker appends its own status line:
+          note: CANDIDATE - upstream already merged the same fix
+
+[00:00] daemon wake #1 (signal: the status file changed)
+        classify_signal -> escalate|wishlist-w2.status: note: CANDIDATE - upstream already merged the same fix
+        possible-wedge marker: ABSENT  (no hang timer running for this worker)
+
+[00:04] worker has produced nothing since. daemon wake #2 (stale: sess:fm-wishlist-w2)
+        classify_stale  -> self|stale + terminal (already escalated by signal): note: CANDIDATE - upstream already merged the same fix
+        possible-wedge marker: ABSENT  (no hang timer running for this worker)
+
+[00:08] still nothing. daemon wake #3 (stale: sess:fm-wishlist-w2, status unchanged)
+        classify_stale  -> self|stale + terminal (already escalated by signal): note: CANDIDATE - upstream already merged the same fix
+        possible-wedge marker: ABSENT  (no hang timer running for this worker)
+
+[00:12] >4 min of silence. housekeeping rechecks the worker pane (idle).
+        escalation buffer now holds:
+          | wishlist-w2.status: note: CANDIDATE - upstream already merged the same fix
+
+[00:13] daemon flushes the digest into the captain's supervisor pane.
+
+--------------------------------------------------------------
+WHAT THE CAPTAIN ACTUALLY RECEIVES IN THEIR PANE:
+--------------------------------------------------------------
+  ⁣FIRSTMATE_OP: v1 away-supervisor: Supervisor escalate (       1 event(s)): wishlist-w2.status: note: CANDIDATE - upstream already merged the same fix (pre-read; re-arm not needed — watcher daemon-managed)
+
+RESULT: the hung worker is NEVER surfaced as a possible wedge.
+
+
+==============================================================
+ AFTER the fix - target commit d12c9c0
+==============================================================
+
+[00:00] captain is AFK; worker window sess:fm-wishlist-w2 is under daemon supervision.
+        worker appends its own status line:
+          note: CANDIDATE - upstream already merged the same fix
+
+[00:00] daemon wake #1 (signal: the status file changed)
+        classify_signal -> self|routine signal: wishlist-w2.status: note: CANDIDATE - upstream already merged the same fix
+        possible-wedge marker: ABSENT  (no hang timer running for this worker)
+
+[00:04] worker has produced nothing since. daemon wake #2 (stale: sess:fm-wishlist-w2)
+        classify_stale  -> self|transient stale (sess:fm-wishlist-w2): note: CANDIDATE - upstream already merged the same fix
+        possible-wedge marker: PRESENT (worker still being aged for a hang)
+
+[00:08] still nothing. daemon wake #3 (stale: sess:fm-wishlist-w2, status unchanged)
+        classify_stale  -> self|transient stale (sess:fm-wishlist-w2): note: CANDIDATE - upstream already merged the same fix
+        possible-wedge marker: PRESENT (worker still being aged for a hang)
+
+[00:12] >4 min of silence. housekeeping rechecks the worker pane (idle).
+        escalation buffer now holds:
+          | stale persisted 500s (possible wedge): sess:fm-wishlist-w2
+
+[00:13] daemon flushes the digest into the captain's supervisor pane.
+
+--------------------------------------------------------------
+WHAT THE CAPTAIN ACTUALLY RECEIVES IN THEIR PANE:
+--------------------------------------------------------------
+  ⁣FIRSTMATE_OP: v1 away-supervisor: Supervisor escalate (       1 event(s)): stale persisted 500s (possible wedge): sess:fm-wishlist-w2 (pre-read; re-arm not needed — watcher daemon-managed)
+
+RESULT: the hung worker IS surfaced as a possible wedge.

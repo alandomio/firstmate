@@ -1,0 +1,30 @@
+Red-before / green-after proof for the note: wedge regression tests.
+
+Method: a scratch copy of the branch tree with bin/fm-classify-lib.sh and
+bin/fm-supervise-daemon.sh reverted to base commit 7583d6d (new tests, pre-fix
+source). Each test script aborts on its first failure, so the three behavioral
+regression tests were driven one at a time.
+
+--- RED (new tests, pre-fix source) ------------------------------------------
+
+$ bash tests/fm-watch-triage.test.sh   # test_classifier_primitives
+not ok - note: free-text merged wrongly recognized as captain-relevant
+
+$ bash tests/fm-daemon.test.sh         # test_stale_note_transient_self_handles
+not ok - note: with merged free text was not classified transient: escalate|stale + terminal status: note: CANDIDATE - upstream already merged the same fix
+
+$ bash tests/fm-daemon.test.sh         # test_afk_nonterminal_note_merged_keeps_wedge_aging
+not ok - nonterminal note: treated as already-escalated terminal: self|stale + terminal (already escalated by signal): note: CANDIDATE - upstream already merged the same fix
+
+--- GREEN (same tests, branch source d12c9c0) --------------------------------
+
+$ bin/fm-test-run.sh tests/fm-daemon.test.sh
+ok - paused: reaches the pause action before either daemon site's nonterminal-verb case, so merging it into the shared predicate changes nothing observable
+ok - note: verb is never treated as terminal by classify_stale, even with free-text merged
+ok - AFK nonterminal note:+merged keeps wedge aging and re-escalates at bound
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=44572
+
+$ bin/fm-test-run.sh tests/fm-watch-triage.test.sh
+ok - classifier primitives: keyed decisions and activity phases, captain relevance, window-to-task, and overrides
+ok - status_is_nonterminal_progress_verb is the single shared predicate for all three call sites
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=329554
