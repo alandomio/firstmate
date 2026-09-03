@@ -97,27 +97,38 @@ urlenc() { printf '%s' "$1" | sed 's|/|%2F|g'; }
 # jq/json.load mid-parse; strip them before anything touches the response.
 scrub() { tr -d '\000-\010\013\014\016-\037'; }
 
+fm_prstat_unreachable() {  # <repo-path> <iid> <why>
+  printf '%-34s  %s\n' "$(basename "$1")!$2" "UNREACHABLE ($3 - check repo/number/auth)"
+  STATUS=1
+}
+
 fm_prstat_one() {  # <repo-path> <iid>
-  local repo="$1" iid="$2" enc j state sha pipe_sha pipe dms conflicts merged draft
+  local repo="$1" iid="$2" enc j rc=0 state sha pipe_sha pipe dms conflicts merged draft
   enc=$(urlenc "$repo")
 
-  j=$(glab api "projects/$enc/merge_requests/$iid" 2>/dev/null | scrub)
-  if [ -z "$j" ]; then
-    printf '%-34s  %s\n' "$(basename "$repo")!$iid" "UNREACHABLE (no data - check repo/number/auth)"
+  j=$(glab api "projects/$enc/merge_requests/$iid" 2>/dev/null) || rc=$?
+  j=$(printf '%s' "$j" | scrub)
+  if [ "$rc" -ne 0 ] || [ -z "$j" ]; then
+    fm_prstat_unreachable "$repo" "$iid" "no data"
     return
   fi
 
+  # The parser emits a lone UNREADABLE sentinel rather than defaulted fields:
+  # `glab api` prints an error body on stdout for a non-2xx, and defaulting
+  # that to "- / - / none" would compare equal and fabricate a head verdict.
   read -r state draft sha pipe_sha pipe dms conflicts merged <<EOF
 $(printf '%s' "$j" | python3 -c '
 import json,sys
 try: d=json.load(sys.stdin)
-except Exception: print("? ? - - none ? ? -"); raise SystemExit(0)
+except Exception: print("UNREADABLE"); raise SystemExit(0)
+if not isinstance(d,dict) or "iid" not in d or "state" not in d:
+    print("UNREADABLE"); raise SystemExit(0)
 hp=d.get("head_pipeline") or {}
 print(" ".join(str(x) for x in (
-  d.get("state","?"),
+  d.get("state") or "?",
   "draft" if d.get("draft") or d.get("work_in_progress") else "ready",
-  (d.get("sha") or "-")[:8],
-  (hp.get("sha") or "-")[:8],
+  d.get("sha") or "-",
+  hp.get("sha") or "-",
   hp.get("status") or "none",
   d.get("detailed_merge_status") or "?",
   "yes" if d.get("has_conflicts") else "no",
@@ -125,14 +136,20 @@ print(" ".join(str(x) for x in (
 )))
 ' 2>/dev/null)
 EOF
+  if [ -z "$state" ] || [ "$state" = "UNREADABLE" ]; then
+    fm_prstat_unreachable "$repo" "$iid" "unreadable response"
+    return
+  fi
 
   if [ "$merged" != "-" ] && [ -n "$merged" ]; then
     printf '%-34s  %-7s %s\n' "$(basename "$repo")!$iid" "MERGED" "on $merged"
     return
   fi
 
-  # Was there ever a run against the REAL head, and how did it go?
-  local verdict notes=""
+  # Was there ever a run against the REAL head, and how did it go? Shas are
+  # compared in full and truncated only for display, so two distinct commits
+  # sharing a short prefix are never read as the same run.
+  local verdict notes="" sha_short=${sha:0:8} pipe_short=${pipe_sha:0:8}
   if [ "$sha" = "$pipe_sha" ]; then
     case "$pipe" in
       success) verdict="green(head)" ;;
@@ -146,19 +163,30 @@ EOF
     hp=$(glab api "projects/$enc/merge_requests/$iid/pipelines?per_page=30" 2>/dev/null | scrub \
       | python3 -c '
 import json,sys
+def is_merge_result(ref):
+    # Merge-result runs carry refs/merge-requests/<iid>/merge exactly; a
+    # substring test would also discard a source branch called fix/merge-foo.
+    ref=str(ref or "")
+    return ref.startswith("refs/merge-requests/") and ref.endswith("/merge")
 try: rs=json.load(sys.stdin)
 except Exception: raise SystemExit(0)
 if not isinstance(rs,list): raise SystemExit(0)
 want=sys.argv[1]
 for r in rs:
-    if str(r.get("sha","")).startswith(want) and "/merge" not in str(r.get("ref","")):
+    if not isinstance(r,dict): continue
+    if str(r.get("sha","")) == want and not is_merge_result(r.get("ref")):
         print(r.get("status","?")); break
 ' "$sha" 2>/dev/null)
     case "${hp:-}" in
       success) verdict="green(head)"; notes="badge is merge-result; head run is green too" ;;
-      failed)  verdict="FAILED(head)"; notes="badge shows $pipe on merge-result $pipe_sha" ;;
-      "")      verdict="NO-HEAD-RUN"; notes="only a merge-result run exists ($pipe on $pipe_sha)" ;;
-      *)       verdict="$hp(head)"; notes="badge is merge-result $pipe_sha" ;;
+      failed)  verdict="FAILED(head)"; notes="badge shows $pipe on merge-result $pipe_short" ;;
+      "")      verdict="NO-HEAD-RUN"
+               if [ "$pipe_sha" = "-" ]; then
+                 notes="no pipeline recorded for this merge request"
+               else
+                 notes="only a merge-result run exists ($pipe on $pipe_short)"
+               fi ;;
+      *)       verdict="$hp(head)"; notes="badge is merge-result $pipe_short" ;;
     esac
   fi
 
@@ -178,7 +206,7 @@ for r in rs:
   [ "$draft" = "draft" ] && notes="${notes:+$notes; }DRAFT - cannot merge until marked ready"
 
   printf '%-34s  %-7s %-13s %-13s %-9s %s\n' \
-    "$(basename "$repo")!$iid" "$state" "$appr" "$verdict" "$sha" "${notes:+- $notes}"
+    "$(basename "$repo")!$iid" "$state" "$appr" "$verdict" "$sha_short" "${notes:+- $notes}"
 }
 
 [ "$#" -gt 0 ] || { usage; exit 0; }
