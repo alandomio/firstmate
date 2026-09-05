@@ -60,6 +60,7 @@ README.md            public overview and development notes
 .github/workflows/   shared CI and PR enforcement, committed
 .tasks.toml          tracked tasks-axi markdown backend config for the default backlog backend (section 10)
 .agents/skills/      firstmate-loaded internal skills, committed; each carries metadata.internal=true for installers
+  retrospective/reports/  dated /retrospective session reports; LOCAL, gitignored except its .gitkeep, never committed (.agents/skills/retrospective/SKILL.md "Step 6")
 .claude/skills       symlink to .agents/skills for claude compatibility
 skills/              standalone public installer-facing skills, committed; not loaded by firstmate
 bin/                 helper scripts, committed; read each script's header before first use
