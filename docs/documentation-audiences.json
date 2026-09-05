@@ -185,6 +185,14 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/retrospective/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/retrospective/reference.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/secondmate-provisioning/SKILL.md",
       "audience": "agent-runtime"
     },
