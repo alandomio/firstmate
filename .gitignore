@@ -11,3 +11,7 @@ __pycache__/
 *.pyc
 .env
 config/
+.agents/skills/retrospective/reports/*
+.agents/skills/retrospective/pre-compact/*
+!.agents/skills/retrospective/reports/.gitkeep
+!.agents/skills/retrospective/pre-compact/.gitkeep
