@@ -1,0 +1,18 @@
+Intent conformance for AGENTS.md section 9 absence rule
+base   409d8f2
+target dff628a
+
+[PASS] only AGENTS.md changed
+         changed files: ['AGENTS.md']
+[PASS] purely additive: 2 lines added, 0 removed
+         +2 / -0
+[PASS] added text is the captain-approved text verbatim
+[PASS] split at the sentence boundary onto two lines (repo one-sentence-per-line style)
+[PASS] inserted immediately after the verify-before-asserting sentence
+[PASS] the captain-nouns line that followed is undisplaced
+[PASS] no section renumbered or restructured
+         25 headings, identical
+[PASS] vocabulary translation list untouched
+         12 entries unchanged
+[PASS] removing the two new lines reproduces the base file byte-for-byte
+[PASS] no agent co-author trailer
