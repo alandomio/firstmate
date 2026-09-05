@@ -1,0 +1,54 @@
+bin/fm-watch-arm.sh - repeat SIGTERM during its own signal teardown
+host bash: GNU bash, version 5.2.37(1)-release (aarch64-apple-darwin24.2.0)
+real, unmodified bin/fm-watch-arm.sh + bin/fm-watch.sh; the race window is opened by
+holding the arm's own state/.watch-cycle-exits.lock (real contention cycle_log_append retries against).
+
+########## BEFORE the fix (409d8f2, handlers do 'trap - HUP TERM INT') ##########
+=== prefix : bin/fm-watch-arm.sh under a repeat SIGTERM during its own cleanup ===
+
+--- arm stdout (what lands in state/.claude-autoarm-output.*) ---
+watcher: started pid=56362 (beacon fresh)
+
+--- arm exit status ---
+143   (128+15 = 143 is the correct TERM status)
+
+--- cycle-exit ledger: state/.watch-cycle-exits.log ---
+(no ledger row written)
+
+--- child watcher pid=56362 still alive? ---
+no - watcher torn down
+
+--- stale singleton lock state/.watch.lock present? ---
+no - lock released
+
+repeatability, 5 further pre-fix runs:
+  run1: cleanup never completed - no cycle-ledger row
+  run2: cleanup never completed - no cycle-ledger row
+  run3: cleanup never completed - no cycle-ledger row
+  run4: cleanup never completed - no cycle-ledger row
+  run5: cleanup never completed - no cycle-ledger row
+
+########## AFTER the fix (cffe5a0, handlers do "trap '' HUP TERM INT") ##########
+=== fixed : bin/fm-watch-arm.sh under a repeat SIGTERM during its own cleanup ===
+
+--- arm stdout (what lands in state/.claude-autoarm-output.*) ---
+watcher: started pid=50349 (beacon fresh)
+
+--- arm exit status ---
+143   (128+15 = 143 is the correct TERM status)
+
+--- cycle-exit ledger: state/.watch-cycle-exits.log ---
+arm_pid=50325	watcher_pid=50349	origin=started	started_at=1788630749	ended_at=1788630755	exit_code=143	signal=TERM	reason=arm-interrupted	beacon_age=5	lock_before=pid:50349|identity:Sat Sep  5 19:52:29 2026     bash /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M1S9S39M34XCDKWVKQ9ACN7N/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=none
+
+--- child watcher pid=50349 still alive? ---
+no - watcher torn down
+
+--- stale singleton lock state/.watch.lock present? ---
+no - lock released
+
+repeatability, 5 further post-fix runs:
+  run1: ledger row present, watcher torn down, .watch.lock released
+  run2: ledger row present, watcher torn down, .watch.lock released
+  run3: ledger row present, watcher torn down, .watch.lock released
+  run4: ledger row present, watcher torn down, .watch.lock released
+  run5: ledger row present, watcher torn down, .watch.lock released

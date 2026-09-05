@@ -1,0 +1,16 @@
+=== fixed : bin/fm-watch-arm.sh under a repeat SIGTERM during its own cleanup ===
+
+--- arm stdout (what lands in state/.claude-autoarm-output.*) ---
+watcher: started pid=50349 (beacon fresh)
+
+--- arm exit status ---
+143   (128+15 = 143 is the correct TERM status)
+
+--- cycle-exit ledger: state/.watch-cycle-exits.log ---
+arm_pid=50325	watcher_pid=50349	origin=started	started_at=1788630749	ended_at=1788630755	exit_code=143	signal=TERM	reason=arm-interrupted	beacon_age=5	lock_before=pid:50349|identity:Sat Sep  5 19:52:29 2026     bash /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M1S9S39M34XCDKWVKQ9ACN7N/bin/fm-watch.sh	lock_after=pid:none|identity:none	successor=none
+
+--- child watcher pid=50349 still alive? ---
+no - watcher torn down
+
+--- stale singleton lock state/.watch.lock present? ---
+no - lock released

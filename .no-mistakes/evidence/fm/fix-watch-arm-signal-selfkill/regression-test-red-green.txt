@@ -1,0 +1,13 @@
+$ git checkout 409d8f2 -- bin/fm-watch-arm.sh   # pre-fix arm
+$ bash tests/fm-watcher-lock.test.sh   # arm signal cases
+ok - arm cleans child watcher and temp output on HUP
+ok - attached arm signals record a classified lifecycle entry
+not ok - a repeat signal during cleanup skipped the handler instead of completing it: 
+
+$ git checkout cffe5a0 -- bin/fm-watch-arm.sh   # with the fix
+$ bash tests/fm-watcher-lock.test.sh   # 34 cases, all ok; arm signal cases:
+ok - arm cleans child watcher and temp output on HUP
+ok - attached arm signals record a classified lifecycle entry
+ok - arm completes its cleanup instead of self-killing on a repeat signal during teardown
+
+$ bash tests/fm-watch-arm.test.sh   # 14 cases, exit 0, no failures
