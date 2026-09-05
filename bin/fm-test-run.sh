@@ -1026,8 +1026,12 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       printf '%s\n' live-harness-optin
       ;;
-    .agents/skills/*/SKILL.md)
+    .agents/skills/*/SKILL.md|.agents/skills/*/reference.md)
       printf '%s\n' pure-contract-unit
+      ;;
+    .agents/skills/*/reports/.gitkeep)
+      # Placeholder that keeps a gitignored skill output directory present;
+      # nothing executes it, so it selects no suite (same as .gitignore).
       ;;
     .github/workflows/ci.yml|.no-mistakes.yaml)
       printf '%s\n' pure-contract-unit
