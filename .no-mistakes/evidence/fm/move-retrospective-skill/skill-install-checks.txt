@@ -1,0 +1,50 @@
+# tracked files under the skill (private material must be absent)
+$ git ls-files .agents/skills/retrospective
+.agents/skills/retrospective/SKILL.md
+.agents/skills/retrospective/reference.md
+.agents/skills/retrospective/reports/.gitkeep
+
+# gitignore semantics: future reports ignored, .gitkeep kept
+$ git check-ignore -v .agents/skills/retrospective/reports/2026-09-06-test-run-deadbeef.md
+.gitignore:14:.agents/skills/retrospective/reports/*	.agents/skills/retrospective/reports/2026-09-06-test-run-deadbeef.md
+exit=0
+$ git check-ignore -v .agents/skills/retrospective/reports/2026-09-06/nested.md
+.gitignore:14:.agents/skills/retrospective/reports/*	.agents/skills/retrospective/reports/2026-09-06/nested.md
+exit=0
+$ git check-ignore -v .agents/skills/retrospective/reports/KILL-CRITERION.md
+.gitignore:14:.agents/skills/retrospective/reports/*	.agents/skills/retrospective/reports/KILL-CRITERION.md
+exit=0
+$ git check-ignore -v .agents/skills/retrospective/reports/.gitkeep
+exit=1
+$ git check-ignore -v .agents/skills/retrospective/SKILL.md
+exit=1
+$ git status --porcelain .agents/skills/retrospective   (expect empty: new reports are invisible to git)
+
+# skill resolves through the project .claude/skills path (how claude loads /retrospective in a firstmate home)
+$ readlink .claude/skills; test -f .claude/skills/retrospective/SKILL.md && echo "resolved: .claude/skills/retrospective/SKILL.md"
+../.agents/skills
+resolved: .claude/skills/retrospective/SKILL.md
+
+# frontmatter parsed as YAML, compared with bearings and stow
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+ModuleNotFoundError: No module named 'yaml'
+
+# README built-in skills table
+$ grep -n "^| \`/" README.md
+174:| `/afk`             | Enter away-mode supervision: the sub-supervisor self-handles routine notifications in bash, escalates captain-relevant events and bounded declared-external-wait rechecks as batched digests, and actively alerts if delivery gets stuck while you step away |
+175:| `/ahoy`            | Recap visible session events since the prior real captain message plus visibly unanswered captain decisions, then guide the captain through any open decisions one at a time in agent-judged impact order; fall back to Bearings when invoked as the session's first real captain message |
+176:| `/bearings`        | Generate a concise four-section chat digest from bounded local fleet and registered-secondmate state; use `/bearings file` to also replace today's dated report in `data/`, and add `include PRs` when live PR enrichment is wanted |
+177:| `/updatefirstmate` | Self-update the running firstmate and its secondmates to the latest from origin with fast-forward-only pulls, then re-read instructions and nudge secondmates |
+178:| `/stow`            | Sweep the session for uncaptured durable knowledge, persist the open work records this session knows are unfiled or now wrong, curate tiered startup memory with decay and cold archival, enforce each home's budget or surface the required decision, cascade to registered second mates, and report what is safe to reset |
+179:| `/retrospective`   | Analyze the active session, route durable learnings to CLAUDE.md/AGENTS.md, agentmemory, and PP Brain by blast radius, and write a dated report; see [`.agents/skills/retrospective/SKILL.md`](.agents/skills/retrospective/SKILL.md) |
+# frontmatter parsed as YAML (ruby), compared with bearings and stow
+-e:3:in `split': invalid byte sequence in US-ASCII (ArgumentError)
+	from -e:3:in `block in <main>'
+	from -e:2:in `each'
+	from -e:2:in `<main>'
+# frontmatter parsed as YAML (ruby), compared with bearings and stow
+retrospective  name="retrospective" user-invocable=true metadata={"internal"=>true}
+bearings       name="bearings" user-invocable=true metadata={"internal"=>true}
+stow           name="stow" user-invocable=true metadata={"internal"=>true}
+assert ok: retrospective frontmatter matches bearings/stow shape

@@ -1,0 +1,56 @@
+# Evidence: retrospective skill moved into firstmate repo (target 54b7931)
+
+## 1. Frontmatter parsed by a real YAML parser, compared with sibling captain skills
+retrospective  {"name"=>"retrospective", "user-invocable"=>true, "metadata"=>{"internal"=>true}}
+bearings       {"name"=>"bearings", "user-invocable"=>true, "metadata"=>{"internal"=>true}}
+stow           {"name"=>"stow", "user-invocable"=>true, "metadata"=>{"internal"=>true}}
+
+## 2. Skill resolves through the .claude/skills -> .agents/skills symlink (path Claude Code loads)
+lrwxr-xr-x@ 1 a.domio  staff  17 Sep  6 00:20 .claude/skills -> ../.agents/skills
+OK: .claude/skills/retrospective/SKILL.md readable
+OK: .claude/skills/retrospective/reference.md readable
+
+## 3. Copy is verbatim vs ~/.claude/skills/retrospective (body only; frontmatter added). Only Step 6 differs:
+174c174,175
+< - Changes outside any git repo (`~/.claude`, dotfiles, scratch) -> `~/.claude/skills/retrospective/reports/`, and say so. Dropping a personal report into an unrelated product repo pollutes someone else's diff, and `.claude/` is not gitignored everywhere.
+---
+>   Inside a firstmate home this resolves through the `.claude/skills` -> `.agents/skills` symlink, so no override is needed there.
+> - Changes outside any git repo (`~/.claude`, dotfiles, scratch) -> `~/.claude/skills/retrospective/reports/`, and say so, **unless** the session is running inside a firstmate home (`$FM_HOME` if set, else the Firstmate code root; it qualifies only if that root's `.agents/skills/stow/SKILL.md` exists) — there, write instead to that home's own `.agents/skills/retrospective/reports/`, keeping the report with the fleet it concerns rather than in the generic personal store. Dropping a personal report into an unrelated product repo pollutes someone else's diff, and `.claude/` is not gitignored everywhere.
+(reference.md) identical
+
+## 4. Step 6 fallback simulated as an end user would experience it inside a firstmate home
+qualifies as firstmate home: yes
+report dir chosen: .agents/skills/retrospective/reports
+written: 2026-09-06-simulated.md
+KILL-CRITERION.md
+git check-ignore:
+.gitignore:14:.agents/skills/retrospective/reports/*	/Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M1STGFH0PE74G4F4YY10CDMH/.agents/skills/retrospective/reports/2026-09-06-simulated.md
+.gitignore:14:.agents/skills/retrospective/reports/*	/Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M1STGFH0PE74G4F4YY10CDMH/.agents/skills/retrospective/reports/KILL-CRITERION.md
+git status --porcelain (must be empty => reports never committed):
+[end status]
+.gitkeep tracked: .agents/skills/retrospective/reports/.gitkeep
+
+## 5. README Built-in skills row and its link target
+179:| `/retrospective`   | Analyze the active session, route durable learnings to CLAUDE.md/AGENTS.md, agentmemory, and PP Brain by blast radius, and write a dated report; see [`.agents/skills/retrospective/SKILL.md`](.agents/skills/retrospective/SKILL.md) |
+OK: README link target exists
+
+## 6. Private material deliberately absent from the repo copy
+.agents/skills/retrospective/SKILL.md
+.agents/skills/retrospective/reference.md
+.agents/skills/retrospective/reports/.gitkeep
+pre-compact dir present? no
+
+## 7. What CI's changed-file selector maps these files to
+selected scripts: 1
+## 8. Repo changed-file test selector (CONTRIBUTING.md workflow) before/after test-runner mapping fix
+before (target 54b7931):
+  fm-test-run: no changed-test mapping for source path: .agents/skills/retrospective/reference.md  (exit 2)
+after (bin/fm-test-run.sh maps .agents/skills/*/reference.md -> pure-contract-unit, reports/.gitkeep -> none):
+  tests/fm-arm-pretool-check.test.sh
+  tests/fm-ask-user-authority.test.sh
+  tests/fm-bearings-board.test.sh
+  tests/fm-brief.test.sh
+  tests/fm-calm-pi-extension.test.sh
+  ... 32 scripts selected, exit 0
+tests/fm-test-run.test.sh via runner: FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=34700
+FM_TEST_COVERAGE ok total=157 parallel=24 serial=121 serial_shards=4 herdr=12

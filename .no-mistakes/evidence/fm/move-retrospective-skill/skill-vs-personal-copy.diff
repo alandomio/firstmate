@@ -1,0 +1,27 @@
+$ diff -u ~/.claude/skills/retrospective/SKILL.md .agents/skills/retrospective/SKILL.md
+--- /Users/a.domio/.claude/skills/retrospective/SKILL.md	2026-09-04 12:53:46.977850813 +0200
++++ .agents/skills/retrospective/SKILL.md	2026-09-06 00:20:01.081343593 +0200
+@@ -1,6 +1,9 @@
+ ---
+ name: retrospective
+ description: Performs comprehensive analysis of the active session, examines git logs, updates codebase guidelines (CLAUDE.md), persists lessons to agentmemory and PP Brain, and writes a detailed retrospective report. Invoke when the user asks for a retrospective, when a session that produced durable learnings or a failure receipt is ending, or when a supervising agent needs to close out its own session's learnings.
++user-invocable: true
++metadata:
++  internal: true
+ ---
+ 
+ # Session Retrospective Protocol
+@@ -175,7 +178,8 @@
+ Path: `<repo>/.claude/skills/retrospective/reports/YYYY-MM-DD-brief-description-SESSION_ID.md`
+ 
+ - `<repo>` is the repo the session **modified**, derived from the Step 2 diff — *not* `cwd`. A session run from one repo often changes files elsewhere.
+-- Changes outside any git repo (`~/.claude`, dotfiles, scratch) -> `~/.claude/skills/retrospective/reports/`, and say so. Dropping a personal report into an unrelated product repo pollutes someone else's diff, and `.claude/` is not gitignored everywhere.
++  Inside a firstmate home this resolves through the `.claude/skills` -> `.agents/skills` symlink, so no override is needed there.
++- Changes outside any git repo (`~/.claude`, dotfiles, scratch) -> `~/.claude/skills/retrospective/reports/`, and say so, **unless** the session is running inside a firstmate home (`$FM_HOME` if set, else the Firstmate code root; it qualifies only if that root's `.agents/skills/stow/SKILL.md` exists) — there, write instead to that home's own `.agents/skills/retrospective/reports/`, keeping the report with the fleet it concerns rather than in the generic personal store. Dropping a personal report into an unrelated product repo pollutes someone else's diff, and `.claude/` is not gitignored everywhere.
+ - Several repos -> the one carrying the primary deliverable, cross-referenced in section 1.
+ - `mkdir -p` first. `SESSION_ID` is the session UUID truncated to 8 characters (it is the scratchpad path's directory segment), else `HHMM`.
+ 
+exit=1
+
+$ diff -u ~/.claude/skills/retrospective/reference.md .agents/skills/retrospective/reference.md
+exit=0

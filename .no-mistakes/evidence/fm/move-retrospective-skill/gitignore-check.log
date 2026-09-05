@@ -1,0 +1,5 @@
+# git check-ignore -v
+.gitignore:14:.agents/skills/retrospective/reports/*	.agents/skills/retrospective/reports/2026-09-06-demo-abcd1234.md
+ignored-exit=0
+gitkeep-ignored-exit=1 (1 = tracked/not ignored)
+# git status --porcelain

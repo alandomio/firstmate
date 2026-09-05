@@ -1,0 +1,8 @@
+fm-bearings-board at base exit=1
+not ok - could not create the order-proof captain hold
+fm-calm-pi-extension at base exit=1
+not ok - Pi calm missing-adapter-export test printed output: (node:38490) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+fm-composer-lib at base exit=1
+not ok - a half-block rule row must count as a structural edge
+fm-documentation-audiences at base exit=1
+not ok - repository documentation audience check failed

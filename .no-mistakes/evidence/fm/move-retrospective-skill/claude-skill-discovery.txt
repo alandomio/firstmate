@@ -1,0 +1,5 @@
+afk, ahoy, ask-user-authority, aws-goplanner-skills, bearings, bootstrap-diagnostics, captain-hold-lifecycle, decision-hold-lifecycle, diagnostic-reasoning, firstmate-codexapp, firstmate-coding-guidelines, firstmate-orca, fmx-respond, goplanner-android-skills, goplanner-skills, harness-adapters, process-event-sources, project-management, quota-array-dispatch, retrospective, secondmate-provisioning, stow, stuck-crewmate-recovery, updatefirstmate, dataviz, update-config, keybindings-help, code-review, simplify, fewer-permission-prompts, loop, schedule, claude-api, workflow-authoring, run, init, security-review
+
+Yes.
+
+n/a
