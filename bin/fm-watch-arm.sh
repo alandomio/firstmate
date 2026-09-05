@@ -339,9 +339,12 @@ attach_and_wait() {
 }
 
 # shellcheck disable=SC2329 # Invoked indirectly by the signal traps below.
+# Ignore, never reset-to-default, while this handler runs: cycle_log_append
+# below can block on a contended lock, leaving the same repeat-signal self-kill
+# window handle_arm_signal's comment above describes.
 handle_attached_signal() {
   local signal=$1 rc=$2
-  trap - HUP TERM INT
+  trap '' HUP TERM INT
   cycle_log_append "$rc" "$signal" arm-interrupted none
   exit "$rc"
 }
@@ -458,9 +461,16 @@ cleanup_child() {
 }
 
 # shellcheck disable=SC2329 # Invoked indirectly by the signal traps below.
+# Ignore, never reset-to-default, while this handler runs.
+# A second copy of the trapped signal arriving while we are blocked in our own
+# `wait` below finds bash's trap disposition already reset to default, and bash's
+# pending-trap redelivery then resends that signal to us at SIG_DFL, killing this
+# process before cleanup_child and exit below ever run.
+# Ignoring the signal here instead keeps a repeat delivery harmless: we are
+# already tearing down and exit with the correct status a few lines later.
 handle_arm_signal() {
   local signal=$1 rc=$2
-  trap - HUP TERM INT
+  trap '' HUP TERM INT
   if [ -n "$child" ] && fm_pid_alive "$child"; then
     kill -TERM "$child" 2>/dev/null || true
     wait "$child" 2>/dev/null || true

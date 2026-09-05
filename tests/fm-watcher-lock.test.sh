@@ -723,6 +723,61 @@ test_arm_hup_cleans_child_and_temp_output() {
   pass "arm cleans child watcher and temp output on HUP"
 }
 
+# Regression for a self-kill: handle_arm_signal used to reset HUP/TERM/INT to
+# their default disposition before tearing down the child and logging the
+# cycle. A second copy of the trapped signal landing while that cleanup was
+# still under way found the disposition already reset, and bash's
+# pending-trap redelivery resent the signal to this very process at SIG_DFL,
+# killing the arm before cleanup_child and exit ever ran - the process died
+# silently, with no ledger row and (in an unluckier ordering) an orphaned
+# watcher. Ignoring the signal instead of resetting it closes the window.
+# A real watcher dies on TERM in milliseconds, too fast to reproduce the race
+# through it, so this holds the arm's own cycle-log lock - real production
+# contention cycle_log_append already retries against - just long enough for
+# a second signal to land while the handler is still inside that retry loop.
+test_arm_survives_a_second_signal_during_its_own_cleanup() {
+  local dir state armout armpid lock_pid holdpid status i
+  dir=$(make_case arm-second-signal-race)
+  state="$dir/state"
+  armout="$dir/arm.out"
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" 2>&1 &
+  armpid=$!
+  i=0
+  while [ "$i" -lt 80 ]; do
+    grep -qF 'watcher: started pid=' "$armout" 2>/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -qF 'watcher: started pid=' "$armout" || fail "arm did not start before the second-signal race check"
+  lock_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" && sleep 0.35
+  ' _ "$LIB" "$state/.watch-cycle-exits.lock" &
+  holdpid=$!
+  sleep 0.05
+  kill -TERM "$armpid" 2>/dev/null || fail "could not send the first TERM"
+  sleep 0.15
+  kill -TERM "$armpid" 2>/dev/null || fail "could not send the second TERM"
+
+  wait_for_exit "$armpid" 100
+  status=$?
+  wait "$holdpid" 2>/dev/null || true
+  [ "$status" -eq 143 ] || fail "arm did not exit with TERM status under a repeat signal (got $status)"
+  grep -q "arm_pid=$armpid.*watcher_pid=$lock_pid.*exit_code=143.*signal=TERM.*reason=arm-interrupted" "$state/.watch-cycle-exits.log" 2>/dev/null \
+    || fail "a repeat signal during cleanup skipped the handler instead of completing it: $(cat "$state/.watch-cycle-exits.log" 2>/dev/null)"
+  i=0
+  while [ "$i" -lt 50 ] && is_live_non_zombie "$lock_pid"; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  ! is_live_non_zombie "$lock_pid" || fail "a repeat signal during cleanup orphaned the child watcher"
+  [ ! -e "$state/.watch.lock" ] || fail "a repeat signal during cleanup left a stale watcher lock"
+  pass "arm completes its cleanup instead of self-killing on a repeat signal during teardown"
+}
+
 test_arm_propagates_immediate_wake_before_confirmation() {
   local dir state fakebin armout drain_out check_file rc
   dir=$(make_case arm-immediate-wake)
@@ -1122,6 +1177,7 @@ test_arm_attaches_and_waits_for_live_fresh_watcher
 test_attached_arm_signal_is_recorded_in_cycle_ledger
 test_arm_starts_and_self_heals
 test_arm_hup_cleans_child_and_temp_output
+test_arm_survives_a_second_signal_during_its_own_cleanup
 test_arm_propagates_immediate_wake_before_confirmation
 test_arm_waits_for_peer_beacon_after_child_stands_down
 test_arm_fails_loud_when_no_fresh_watcher_confirmable
