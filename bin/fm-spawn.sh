@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--advisor <model>[:<effort>]] [--backend <name>]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--advisor <model>[:<effort>]] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -38,6 +38,14 @@
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed.
+#   --advisor <model>[:<effort>] is the opt-in per-turn advisor axis: a stronger
+#   reviewer model firstmate resolved from a dispatch profile's "advisor" field
+#   (docs/configuration.md "Crew dispatch profiles" owns the schema). Accepted
+#   only for the claude harness on a ship or scout spawn (never --secondmate);
+#   when set, an additional Stop hook entry (bin/fm-advisor-hook.sh) is installed
+#   alongside the existing turn-end hook, and advisor=<model>[:<effort>] is
+#   recorded in task meta. Omitted entirely (no meta field, no hook, no launch
+#   change) when no profile carries it - the opt-in default stays byte-identical.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -141,7 +149,7 @@
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
-#   source of truth; shared --scout/--harness/--model/--effort/--backend/--mode/--yolo
+#   source of truth; shared --scout/--harness/--model/--effort/--advisor/--backend/--mode/--yolo
 #   applies to every pair. A ship batch therefore carries one delivery contract, and each
 #   pair still checks it against its own brief; a batch spanning modes is two invocations.
 #   If config/crew-dispatch.json exists, shared --harness is required for crewmate
@@ -271,6 +279,7 @@ KIND_SET=0
 HARNESS_ARG=
 MODEL=
 EFFORT=
+ADVISOR_ARG=
 BACKEND_ARG=
 MODE=
 YOLO=
@@ -278,6 +287,7 @@ TRACEPARENT_ARG=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
+ADVISOR_SET=0
 BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
@@ -294,6 +304,7 @@ for a in "$@"; do
       harness) HARNESS_ARG=$a; HARNESS_SET=1 ;;
       model) MODEL=$a; MODEL_SET=1 ;;
       effort) EFFORT=$a; EFFORT_SET=1 ;;
+      advisor) ADVISOR_ARG=$a; ADVISOR_SET=1 ;;
       backend) BACKEND_ARG=$a; BACKEND_SET=1 ;;
       mode) MODE=$a; MODE_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
@@ -313,6 +324,8 @@ for a in "$@"; do
     --model=*) MODEL=${a#--model=}; MODEL_SET=1 ;;
     --effort) want_value=effort ;;
     --effort=*) EFFORT=${a#--effort=}; EFFORT_SET=1 ;;
+    --advisor) want_value=advisor ;;
+    --advisor=*) ADVISOR_ARG=${a#--advisor=}; ADVISOR_SET=1 ;;
     --backend) want_value=backend ;;
     --backend=*) BACKEND_ARG=${a#--backend=}; BACKEND_SET=1 ;;
     --mode) want_value=mode ;;
@@ -328,6 +341,7 @@ done
 [ "$HARNESS_SET" -eq 0 ] || [ -n "$HARNESS_ARG" ] || { echo "error: --harness requires a non-empty value" >&2; exit 1; }
 [ "$MODEL_SET" -eq 0 ] || [ -n "$MODEL" ] || { echo "error: --model requires a non-empty value" >&2; exit 1; }
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || { echo "error: --effort requires a non-empty value" >&2; exit 1; }
+[ "$ADVISOR_SET" -eq 0 ] || [ -n "$ADVISOR_ARG" ] || { echo "error: --advisor requires a non-empty value" >&2; exit 1; }
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || { echo "error: --yolo requires a non-empty value" >&2; exit 1; }
@@ -349,6 +363,23 @@ case "$EFFORT" in
   ''|low|medium|high|xhigh|max) ;;
   *) echo "error: --effort must be one of low, medium, high, xhigh, max" >&2; exit 1 ;;
 esac
+# --advisor is a single "<model>[:<effort>]" token (firstmate resolves the
+# profile; this script never parses natural-language dispatch rules). Split
+# and validate its shape here; the claude-only and --secondmate restrictions
+# are checked once the final HARNESS/KIND are known, below.
+ADVISOR_MODEL=
+ADVISOR_EFFORT=
+if [ -n "$ADVISOR_ARG" ]; then
+  ADVISOR_MODEL=${ADVISOR_ARG%%:*}
+  if [ "$ADVISOR_ARG" != "$ADVISOR_MODEL" ]; then
+    ADVISOR_EFFORT=${ADVISOR_ARG#*:}
+  fi
+  [ -n "$ADVISOR_MODEL" ] || { echo "error: --advisor requires a non-empty model before the optional ':<effort>'" >&2; exit 1; }
+  case "$ADVISOR_EFFORT" in
+    ''|low|medium|high|xhigh|max) ;;
+    *) echo "error: --advisor effort must be one of low, medium, high, xhigh, max (got '$ADVISOR_EFFORT')" >&2; exit 1 ;;
+  esac
+fi
 
 # --relaunch reuses an existing task's endpoint, worktree, project, and kind,
 # so every axis this block resolves for a fresh spawn instead comes from that
@@ -870,6 +901,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   [ -z "$HARNESS_ARG" ] || shared_args+=(--harness "$HARNESS_ARG")
   [ -z "$MODEL" ] || shared_args+=(--model "$MODEL")
   [ -z "$EFFORT" ] || shared_args+=(--effort "$EFFORT")
+  [ -z "$ADVISOR_ARG" ] || shared_args+=(--advisor "$ADVISOR_ARG")
   [ -z "$BACKEND_ARG" ] || shared_args+=(--backend "$BACKEND_ARG")
   # One delivery contract applies to every pair in a batch, exactly like the shared
   # harness. Each pair still re-validates it against its own brief, so a batch
@@ -1233,6 +1265,19 @@ esac
 if [ "$KIND" = secondmate ] && [ "$HARNESS" = muse ]; then
   echo "error: muse is a verified crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
   exit 1
+fi
+
+# The advisor axis installs an additional claude Stop hook (below), so it is
+# refused outside that mechanism's boundary rather than silently no-op'd.
+if [ -n "$ADVISOR_ARG" ]; then
+  if [ "$KIND" = secondmate ]; then
+    echo "error: --advisor is not supported for --secondmate spawns" >&2
+    exit 1
+  fi
+  case "$HARNESS" in
+    claude) ;;
+    *) echo "error: --advisor is only supported for the claude harness, not '$HARNESS'" >&2; exit 1 ;;
+  esac
 fi
 
 case "$HARNESS" in
@@ -2363,8 +2408,23 @@ if [ "$KIND" != secondmate ]; then
       j_stop=$(json_escape "touch $(shell_quote "$TURNEND"); $busy_cmd_prefix idle $busy_suffix --event stop 2>/dev/null || true")
       j_stopfail=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event stop-failure 2>/dev/null || true")
       j_sessionend=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event session-end 2>/dev/null || true")
+      stop_hooks="{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_stop\"}]}"
+      # Opt-in per-turn advisor (docs/configuration.md "Crew dispatch profiles"):
+      # a second Stop hook entry that composes with the turn-end hook above
+      # rather than replacing it. Its counter/log live outside the worktree
+      # (state/, data/) so they never touch the crewmate's tracked tree.
+      if [ -n "$ADVISOR_ARG" ]; then
+        advisor_cmd="FM_ADVISOR_MODEL=$(shell_quote "$ADVISOR_MODEL")"
+        [ -z "$ADVISOR_EFFORT" ] || advisor_cmd="$advisor_cmd FM_ADVISOR_EFFORT=$(shell_quote "$ADVISOR_EFFORT")"
+        advisor_cmd="$advisor_cmd FM_ADVISOR_COUNTER=$(shell_quote "$STATE_REAL/$ID.advisor-count")"
+        advisor_cmd="$advisor_cmd FM_ADVISOR_LOG=$(shell_quote "$DATA/$ID/advisor-log.jsonl")"
+        advisor_cmd="$advisor_cmd FM_ADVISOR_BRIEF=$(shell_quote "$BRIEF")"
+        advisor_cmd="$advisor_cmd $(shell_quote "$FM_ROOT/bin/fm-advisor-hook.sh")"
+        j_advisor=$(json_escape "$advisor_cmd")
+        stop_hooks="$stop_hooks,{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_advisor\"}]}"
+      fi
       cat > "$WT/.claude/settings.local.json" <<EOF
-{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[{"hooks":[{"type":"command","command":"$j_stop"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}]}}
+{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[$stop_hooks],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}]}}
 EOF
       exclude_path '.claude/settings.local.json'
       ;;
@@ -2640,7 +2700,7 @@ fi
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort advisor busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -2658,6 +2718,9 @@ preserve_relaunch_meta() {
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
+  # advisor= is written only when a profile carried it, so the default (no
+  # advisor) path's meta stays byte-identical to before this axis existed.
+  [ -z "$ADVISOR_ARG" ] || echo "advisor=$ADVISOR_ARG"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.

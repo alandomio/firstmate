@@ -273,7 +273,7 @@ This section is the single owner of the canonical schema and its per-field seman
     {
       "when": "<natural-language condition describing a kind of task>",
       "use": [
-        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max, optional>" }
+        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max, optional>", "advisor": { "model": "<model>", "effort": "<optional effort>" } }
       ],
       "why": "<optional rationale that helps firstmate choose>"
     }
@@ -292,10 +292,17 @@ An omitted model or effort means the selected harness uses its own default for t
 Every profile array is an implicit quota-aware choice resolved through `quota-array-dispatch`.
 If no dispatch rule fits, firstmate resolves `default` through the same object-or-array path before falling back to `config/crew-harness`.
 If a selected profile carries an effort value the chosen harness does not accept, `fm-spawn.sh` records the requested `effort=` in task meta for traceability but omits the launch flag, and bootstrap reports the invalid harness/effort pair as a `CREW_DISPATCH` diagnostic when it is visible in the file.
+
+A profile's optional `advisor` object opts one crewmate or scout dispatch into a per-turn second-opinion reviewer: a stronger model that reviews each completed Claude turn and, at most, injects one bounded material note (a violated brief constraint, a wrong assumption, a fragile design choice - never a nit).
+`advisor.model` is required and non-empty; `advisor.effort` is optional and, when present, must be one of `low`, `medium`, `high`, `xhigh`, `max`.
+Unlike the top-level `effort`, an omitted `advisor.effort` does not fall back to the model's own default: the reviewer call always passes `--effort`, and the hook defaults it to `low`, so name a higher effort explicitly when the review should think harder.
+`advisor` is accepted only on a profile whose `harness` is `claude`; bootstrap reports any other harness or a malformed `advisor` shape as a `CREW_DISPATCH: invalid` diagnostic, exactly like an unverified harness or unsupported effort.
+Firstmate resolves an `advisor`-carrying profile to `fm-spawn.sh --advisor <model>[:<effort>]`, which records `advisor=<model>[:<effort>]` in task meta and installs an additional Claude Stop hook entry (`bin/fm-advisor-hook.sh`; that script's header owns its exact env knobs and exit contract) alongside the existing turn-end hook.
+It is opt-in only: a profile that omits `advisor` produces byte-identical meta, hooks, and launch behavior to before this field existed, and it is never installed for a `--secondmate` launch or the primary session.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
 When the file exists, bootstrap validates it with `jq`.
 Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
-Malformed JSON, an empty or malformed rule/default array, an unverified harness, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
+Malformed JSON, an empty or malformed rule/default array, an unverified harness, an effort value unsupported by that harness, an `advisor` on a non-claude harness, or a malformed `advisor` shape or effort is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
 While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
 

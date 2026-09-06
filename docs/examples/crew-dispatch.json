@@ -17,6 +17,11 @@
         { "harness": "codex", "model": "gpt-5.5", "effort": "high" }
       ],
       "why": "Use a strong coding profile for big, ambiguous work; resolve the alternatives through quota-array-dispatch."
+    },
+    {
+      "when": "The task is security-sensitive or touches an infra/production surface where a missed constraint is disproportionately expensive to discover later.",
+      "use": { "harness": "claude", "model": "claude-sonnet-5", "effort": "high", "advisor": { "model": "claude-opus-5", "effort": "low" } },
+      "why": "Opt this class of work into the per-turn advisor; a stronger reviewer catches a violated constraint while it is still cheap to fix. advisor is claude-only and opt-in - see docs/configuration.md."
     }
   ],
   "default": [
