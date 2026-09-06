@@ -2591,8 +2591,11 @@ SH
       || fail "$backend watcher did not complete the direct custom check"
     child_pid=$(cat "$child_pid_file")
     kill -TERM "$watcher_pid" 2>/dev/null || fail "could not stop $backend watcher"
+    # Bash runs the TERM trap only after the poll cycle's foreground helper
+    # (procevent/inactive reconcile) returns, so a loaded runner needs more
+    # than a few seconds here; the budget bounds a hang, not a normal stop.
     i=0
-    while kill -0 "$watcher_pid" 2>/dev/null && [ "$i" -lt 150 ]; do
+    while kill -0 "$watcher_pid" 2>/dev/null && [ "$i" -lt 750 ]; do
       sleep 0.02
       i=$((i + 1))
     done
