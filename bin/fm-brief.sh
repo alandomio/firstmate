@@ -55,11 +55,11 @@
 # declared-external-wait verb (FM_CLASSIFY_PAUSED_VERB, default "paused") from
 # "blocked:": pause for a known external wait expected to clear on its own,
 # blocked when firstmate must act.
-# Ship tasks include a project-memory section so durable project-intrinsic
-# learnings can be committed to AGENTS.md through the project's delivery path;
-# it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
-# over copied detail) and has the crewmate add the fm-ensure-agents-md.sh
-# self-governance section when a touched project AGENTS.md lacks it.
+# Ship tasks include a project-memory section forbidding the worker from
+# writing this project's AGENTS.md or CLAUDE.md; only firstmate writes it, and
+# only on the captain's explicit confirmation. Durable project-intrinsic
+# findings instead go through the note: CANDIDATE status line (Rule 4;
+# AGENTS.md section 6) for firstmate to route.
 # Ship and scout briefs include a Grounding section requiring PP Brain and
 # local-memory-store search before the first substantive action and a reported
 # outcome; a secondmate charter omits it because its own crewmates each get
@@ -455,7 +455,6 @@ Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the $FORGE_NOUN yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a $FORGE_NOUN with $FORGE_TOOL, then append \`done: $FORGE_ABBR {url}\` to the status file and stop.
-Write the $FORGE_ABBR description, and any later revision to it, with the \`mr-description\` skill.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the $FORGE_NOUN; firstmate relays the outcome.
 EOF
     ;;
@@ -489,12 +488,11 @@ Follow the guidance no-mistakes itself provides for the mechanics: it loads when
 When starting no-mistakes, make \`--intent\` preserve all relevant content from this brief's \`# Task\` section plus every later accepted Firstmate requirement, clarification, constraint, exclusion, and supersession, carrying only each requirement's current accepted form; retain direct requirements instead of substituting a diff summary, and exclude generic operational, status, delivery, and other scaffold boilerplate unless it is task-specific.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 
-Three firstmate-specific rules layer on top of that guidance:
+Two firstmate-specific rules layer on top of that guidance:
 - ask-user findings are never yours to answer: escalate to firstmate (rule 6) and stop.
   Firstmate applies \`ask-user-authority\` and obtains any required captain decision.
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - Avoid \`--yes\`: it would silently bypass firstmate's authority check and any required captain escalation.
-- Write the $FORGE_ABBR description, and any later revision to it (including a review-fix revision), with the \`mr-description\` skill.
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: $FORGE_ABBR {url} checks green\` and stop. You are finished.
 EOF
@@ -573,11 +571,8 @@ $RULE1
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
 
 # Project memory
-If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
-Record only project knowledge useful to almost every future session.
-For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
-If you touch a project \`AGENTS.md\` that lacks \`## Maintaining this file\`, add that short self-governance section from \`$FM_ROOT/bin/fm-ensure-agents-md.sh\` in the same pass.
-Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced no durable project knowledge.
+Never write to this project's \`AGENTS.md\` or \`CLAUDE.md\`; only firstmate writes it, and only on the captain's explicit confirmation.
+If this task produced durable project-intrinsic knowledge, raise it as a \`note: CANDIDATE - {finding}\` status line (Rule 4) instead of touching the file yourself.
 
 $DOD
 EOF
