@@ -1,0 +1,38 @@
+--- /tmp/brief-evidence/base/no-mistakes.md	2026-09-06 16:34:57.560280978 +0200
++++ /tmp/brief-evidence/after/no-mistakes.md	2026-09-06 16:34:36.760559556 +0200
+@@ -31,7 +31,7 @@
+ 2. Stay inside this worktree; modify nothing outside it.
+ 3. This project's forge could not be determined from its git remote; run `git remote -v` to check, then use gh-axi for GitHub or glab for GitLab. chrome-devtools-axi remains available for browser operations.
+ 4. Report status by appending one line:
+-   `echo "{state}: {one short line}" >> '/tmp/brief-evidence/base-home-no-mistakes/state/brief-no-mistakes.status'`
++   `echo "{state}: {one short line}" >> '/tmp/brief-evidence/after-home-no-mistakes/state/brief-no-mistakes.status'`
+    States: working, note, needs-decision, blocked, paused, done, failed.
+    Each append wakes firstmate, so report sparingly: only phase changes a supervisor
+    would act on (setup done, bug reproduced, fix implemented, validation passed) and the
+@@ -65,11 +65,8 @@
+    daemon error, append `blocked: {the daemon error}` and stop; only firstmate manages the daemon.
+ 
+ # Project memory
+-If `AGENTS.md` or `CLAUDE.md` already exists, or if this task produced durable project-intrinsic knowledge, run `/tmp/brief-evidence/base-repo/bin/fm-ensure-agents-md.sh .` in the worktree.
+-Record only project knowledge useful to almost every future session.
+-For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
+-If you touch a project `AGENTS.md` that lacks `## Maintaining this file`, add that short self-governance section from `/tmp/brief-evidence/base-repo/bin/fm-ensure-agents-md.sh` in the same pass.
+-Keep it proportionate: skip `AGENTS.md` edits for trivial tasks that produced no durable project knowledge.
++Never write to this project's `AGENTS.md` or `CLAUDE.md`; only firstmate writes it, and only on the captain's explicit confirmation.
++If this task produced durable project-intrinsic knowledge, raise it as a `note: CANDIDATE - {finding}` status line (Rule 4) instead of touching the file yourself.
+ 
+ # Definition of done
+ Delivery contract: mode=no-mistakes
+@@ -82,11 +79,10 @@
+ When starting no-mistakes, make `--intent` preserve all relevant content from this brief's `# Task` section plus every later accepted Firstmate requirement, clarification, constraint, exclusion, and supersession, carrying only each requirement's current accepted form; retain direct requirements instead of substituting a diff summary, and exclude generic operational, status, delivery, and other scaffold boilerplate unless it is task-specific.
+ Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
+ 
+-Three firstmate-specific rules layer on top of that guidance:
++Two firstmate-specific rules layer on top of that guidance:
+ - ask-user findings are never yours to answer: escalate to firstmate (rule 6) and stop.
+   Firstmate applies `ask-user-authority` and obtains any required captain decision.
+   When the decision comes back, feed it to the gate with `no-mistakes axi respond` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
+ - Avoid `--yes`: it would silently bypass firstmate's authority check and any required captain escalation.
+-- Write the PR/MR description, and any later revision to it (including a review-fix revision), with the `mr-description` skill.
+ 
+ After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append `done: PR/MR {url} checks green` and stop. You are finished.

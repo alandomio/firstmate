@@ -1,0 +1,30 @@
+--- /tmp/brief-evidence/base/direct-PR.md	2026-09-06 16:34:57.582049292 +0200
++++ /tmp/brief-evidence/after/direct-PR.md	2026-09-06 16:34:36.781253070 +0200
+@@ -30,7 +30,7 @@
+ 2. Stay inside this worktree; modify nothing outside it.
+ 3. This project's forge could not be determined from its git remote; run `git remote -v` to check, then use gh-axi for GitHub or glab for GitLab. chrome-devtools-axi remains available for browser operations.
+ 4. Report status by appending one line:
+-   `echo "{state}: {one short line}" >> '/tmp/brief-evidence/base-home-direct-PR/state/brief-direct-PR.status'`
++   `echo "{state}: {one short line}" >> '/tmp/brief-evidence/after-home-direct-PR/state/brief-direct-PR.status'`
+    States: working, note, needs-decision, blocked, paused, done, failed.
+    Each append wakes firstmate, so report sparingly: only phase changes a supervisor
+    would act on (setup done, bug reproduced, fix implemented, validation passed) and the
+@@ -64,16 +64,12 @@
+    daemon error, append `blocked: {the daemon error}` and stop; only firstmate manages the daemon.
+ 
+ # Project memory
+-If `AGENTS.md` or `CLAUDE.md` already exists, or if this task produced durable project-intrinsic knowledge, run `/tmp/brief-evidence/base-repo/bin/fm-ensure-agents-md.sh .` in the worktree.
+-Record only project knowledge useful to almost every future session.
+-For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
+-If you touch a project `AGENTS.md` that lacks `## Maintaining this file`, add that short self-governance section from `/tmp/brief-evidence/base-repo/bin/fm-ensure-agents-md.sh` in the same pass.
+-Keep it proportionate: skip `AGENTS.md` edits for trivial tasks that produced no durable project knowledge.
++Never write to this project's `AGENTS.md` or `CLAUDE.md`; only firstmate writes it, and only on the captain's explicit confirmation.
++If this task produced durable project-intrinsic knowledge, raise it as a `note: CANDIDATE - {finding}` status line (Rule 4) instead of touching the file yourself.
+ 
+ # Definition of done
+ Delivery contract: mode=direct-PR
+ This task ships **direct-PR**: you raise the pull/merge request yourself, without the no-mistakes pipeline.
+ The task is complete only when committed on your branch.
+ When it is implemented and committed, push your branch and open a pull/merge request with gh-axi (GitHub) or glab (GitLab) - confirm this project's forge with `git remote -v` before choosing, then append `done: PR/MR {url}` to the status file and stop.
+-Write the PR/MR description, and any later revision to it, with the `mr-description` skill.
+ Do NOT run /no-mistakes. The configured merge authority decides whether to merge the pull/merge request; firstmate relays the outcome.
