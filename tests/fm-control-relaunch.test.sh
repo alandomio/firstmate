@@ -546,6 +546,59 @@ test_harness_switch_does_not_carry_the_old_advisor_axis() {
   pass "fm-control relaunch: a harness switch resets the advisor axis unless it is named too"
 }
 
+test_advisor_onto_a_non_claude_harness_refuses_before_stop() {
+  local dir out rc
+  dir=$(new_case advisorcodex rl6e)
+  add_ship_task "$dir" rl6e claude
+  out=$(run_control "$dir" rl6e relaunch --harness codex --advisor claude-opus-5 --note "codex with advisor"); rc=$?
+  expect_code 1 "$rc" "--advisor with a non-claude target harness should refuse"$'\n'"$out"
+  assert_contains "$out" "--advisor is only supported for the claude harness" \
+    "the refusal should name the claude-only restriction"
+  [ "$(cat "$dir/fake/command")" = claude ] \
+    || fail "the refusal must land before the running agent is stopped"
+  [ "$(meta_field "$dir" rl6e harness)" = claude ] \
+    || fail "a refused relaunch must leave the durable record on the recorded harness"
+  [ -z "$(meta_field "$dir" rl6e advisor)" ] \
+    || fail "a refused relaunch must not record the refused advisor"
+  pass "fm-control relaunch: --advisor onto a non-claude harness refuses before the agent is stopped"
+}
+
+test_advisor_on_a_secondmate_refuses_before_stop() {
+  local dir home out rc
+  dir=$(new_case smadvisor sm8)
+  home="$dir/home"
+  mkdir -p "$home/config" "$home/data/sm8"
+  printf '# secondmate brief\n' > "$home/data/sm8/brief.md"
+  fm_git_worktree "$dir/proj" "$dir/smhome" sm-advisor-branch
+  mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
+  printf 'sm8\n' > "$dir/smhome/.fm-secondmate-home"
+  printf '# agents\n' > "$dir/smhome/AGENTS.md"
+  {
+    echo "window=fmses:fm-sm8"
+    echo "endpoint_task_id=sm8"
+    echo "worktree=$dir/smhome"
+    echo "project=$dir/smhome"
+    echo "harness=claude"
+    echo "kind=secondmate"
+    echo "mode=secondmate"
+    echo "yolo=off"
+    echo "model=default"
+    echo "effort=default"
+    echo "home=$dir/smhome"
+  } > "$home/state/sm8.meta"
+  printf '%s\n' "fm-sm8" > "$dir/fake/windows"
+  printf '%s' "$dir/smhome" > "$dir/fake/cwd"
+  out=$(run_control "$dir" sm8 relaunch --advisor claude-opus-5); rc=$?
+  expect_code 1 "$rc" "--advisor on a secondmate relaunch should refuse"$'\n'"$out"
+  assert_contains "$out" "--advisor is not supported for a secondmate" \
+    "the refusal should name the secondmate restriction"
+  [ "$(cat "$dir/fake/command")" = claude ] \
+    || fail "the refusal must land before the running agent is stopped"
+  [ -z "$(meta_field "$dir" sm8 advisor)" ] \
+    || fail "a refused relaunch must not record the refused advisor"
+  pass "fm-control relaunch: --advisor on a secondmate refuses before the agent is stopped"
+}
+
 test_explicit_advisor_wins_over_the_recorded_one() {
   local dir out rc
   dir=$(new_case explicitadvisor rl6d)
@@ -1365,6 +1418,8 @@ test_same_harness_relaunch_keeps_the_profile_axes
 test_same_harness_relaunch_keeps_the_advisor_axis
 test_harness_switch_does_not_carry_the_old_advisor_axis
 test_explicit_advisor_wins_over_the_recorded_one
+test_advisor_onto_a_non_claude_harness_refuses_before_stop
+test_advisor_on_a_secondmate_refuses_before_stop
 test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
 test_prior_harness_turnend_registry_entry_is_cleared

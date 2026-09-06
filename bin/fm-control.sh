@@ -713,6 +713,14 @@ resolve_relaunch_profile() {
   else
     TARGET_ADVISOR=
   fi
+  # fm-spawn.sh refuses an advisor for a non-claude harness or a secondmate,
+  # but only after the old agent has been stopped; refuse here, pre-stop.
+  if [ -n "$TARGET_ADVISOR" ]; then
+    [ "$KIND" != secondmate ] \
+      || die "--advisor is not supported for a secondmate, so relaunching $ID with advisor '$TARGET_ADVISOR' would stop the running agent for a launch that must be refused; drop --advisor"
+    [ "$TARGET_HARNESS" = claude ] \
+      || die "--advisor is only supported for the claude harness, so relaunching $ID onto '$TARGET_HARNESS' with advisor '$TARGET_ADVISOR' would stop the running agent for a launch that must be refused; drop --advisor or choose --harness claude"
+  fi
 }
 
 # safe_checkpoint: prove, before anything is stopped, that the work a relaunch

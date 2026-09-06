@@ -24,6 +24,10 @@
 # crewmate's turn, only advise on top of one that already completed.
 set -u
 
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"
+
 ADVISOR_MODEL="${FM_ADVISOR_MODEL:-sonnet}"
 ADVISOR_EFFORT="${FM_ADVISOR_EFFORT:-low}"
 MAX_CALLS="${FM_ADVISOR_MAX_CALLS:-20}"
@@ -51,16 +55,6 @@ transcript_path=$(printf '%s' "$payload" | jq -r '.transcript_path // empty' 2>/
 # quirk ever fails to set this flag.
 [ "$stop_hook_active" = "true" ] && { log_event skip 0 0 stop_hook_active; exit 0; }
 [ -n "$transcript_path" ] && [ -f "$transcript_path" ] || exit 0
-
-count=0
-[ -f "$COUNTER_FILE" ] && count=$(cat "$COUNTER_FILE" 2>/dev/null || printf 0)
-case "$count" in ''|*[!0-9]*) count=0 ;; esac
-count=$((count + 1))
-printf '%s' "$count" > "$COUNTER_FILE" 2>/dev/null
-if [ "$count" -gt "$MAX_CALLS" ]; then
-  log_event skip 0 0 "max-calls-exhausted:$MAX_CALLS"
-  exit 0
-fi
 
 # Bounded transcript window: last 8 user/assistant entries, each block
 # truncated so a huge tool result cannot blow up the review prompt.
@@ -107,6 +101,18 @@ if [ "$only_status_line" = true ]; then
   exit 0
 fi
 
+# The cap counts reviewer calls, so it is only spent once every pre-call skip
+# (loop guard, unreadable transcript, status-only turn) has been ruled out.
+count=0
+[ -f "$COUNTER_FILE" ] && count=$(cat "$COUNTER_FILE" 2>/dev/null || printf 0)
+case "$count" in ''|*[!0-9]*) count=0 ;; esac
+count=$((count + 1))
+printf '%s' "$count" > "$COUNTER_FILE" 2>/dev/null
+if [ "$count" -gt "$MAX_CALLS" ]; then
+  log_event skip 0 0 "max-calls-exhausted:$MAX_CALLS"
+  exit 0
+fi
+
 brief_text=""
 [ -f "$BRIEF_FILE" ] && brief_text=$(head -c 4000 "$BRIEF_FILE" 2>/dev/null)
 
@@ -131,7 +137,7 @@ ${window_text:-<no transcript window available>}
 PROMPT
 )
 
-response=$(printf '%s' "$review_prompt" | timeout "$TIMEOUT_SECS" claude -p \
+response=$(printf '%s' "$review_prompt" | fm_run_timed "$TIMEOUT_SECS" claude -p \
   --model "$ADVISOR_MODEL" --effort "$ADVISOR_EFFORT" --bare \
   --output-format json --tools "" --strict-mcp-config --permission-prompts none \
   --no-session-persistence 2>/dev/null)

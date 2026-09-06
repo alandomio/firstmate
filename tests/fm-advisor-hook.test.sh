@@ -98,6 +98,7 @@ test_status_only_turn_skips_without_a_reviewer_call() {
   expect_code 0 "$rc" "a status-line-only turn must exit 0"
   assert_absent "$called" "a status-line-only turn must never invoke the reviewer"
   assert_grep status-line-only-turn "$dir/log.jsonl" "the logged skip must name the status-line-only reason"
+  assert_absent "$dir/counter" "a status-line-only skip must not spend a unit of the reviewer call cap"
   pass "a turn that only appended a status line is skipped with no reviewer call spent"
 }
 

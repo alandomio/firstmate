@@ -101,6 +101,16 @@ hooks_json() {
   cat "$1/wt/.claude/settings.local.json"
 }
 
+# The written hooks JSON is fm-spawn's owned contract with Claude Code; these
+# read it structurally rather than by substring.
+stop_hook_command() {  # <json> <stop-entry-index> -> that entry's single command string
+  printf '%s' "$1" | jq -r --argjson i "$2" '.hooks.Stop[$i].hooks[0].command'
+}
+
+stop_hook_commands() {  # <json> -> every Stop command, one per line
+  printf '%s' "$1" | jq -r '.hooks.Stop[].hooks[].command'
+}
+
 test_no_advisor_produces_byte_identical_hooks_and_meta() {
   local rec id out status hooks
   id=advisor-off-z1
@@ -113,15 +123,14 @@ test_no_advisor_produces_byte_identical_hooks_and_meta() {
   assert_not_contains "$(cat "$HOME_DIR/state/$id.meta")" "advisor=" \
     "meta must carry no advisor= line when no profile carries the axis"
   hooks=$(hooks_json "$CASE_DIR")
-  # Exact single-entry Stop array shape, unchanged from before this axis existed.
-  [ "$(printf '%s' "$hooks" | grep -o '"Stop":\[[^]]*\]' | grep -o '"type":"command"' | wc -l | tr -d ' ')" = 1 ] \
+  [ "$(printf '%s' "$hooks" | jq '.hooks.Stop | length')" = 1 ] \
     || fail "default spawn must install exactly one Stop hook entry, got: $hooks"
-  assert_not_contains "$hooks" "fm-advisor-hook.sh" "default spawn must not install the advisor hook"
+  assert_not_contains "$(stop_hook_commands "$hooks")" "fm-advisor-hook.sh" "default spawn must not install the advisor hook"
   pass "no --advisor produces byte-identical meta and a single-entry Stop hook"
 }
 
 test_advisor_records_meta_and_composes_stop_hook() {
-  local rec id out status meta hooks stop_array state_real
+  local rec id out status meta hooks advisor_cmd state_real
   id=advisor-on-z2
   rec=$(make_spawn_case advisor-on claude "$id")
   read_case_record "$rec"
@@ -135,24 +144,24 @@ test_advisor_records_meta_and_composes_stop_hook() {
   assert_grep "advisor=claude-opus-5:low" "$meta" "meta did not record the advisor axis"
 
   hooks=$(hooks_json "$CASE_DIR")
-  stop_array=$(printf '%s' "$hooks" | grep -o '"Stop":\[.*\],"StopFailure"' )
-  assert_contains "$stop_array" 'fm-busy-event.sh' "advisor spawn must keep the existing turn-end busy hook"
-  assert_contains "$stop_array" 'fm-advisor-hook.sh' "advisor spawn must add the advisor hook"
-  assert_contains "$hooks" "FM_ADVISOR_MODEL=" "advisor hook command did not export FM_ADVISOR_MODEL"
-  assert_contains "$hooks" "claude-opus-5" "advisor hook command did not carry the resolved model"
-  assert_contains "$hooks" 'FM_ADVISOR_EFFORT=' "advisor hook command did not export FM_ADVISOR_EFFORT"
-  assert_contains "$hooks" "low" "advisor hook command did not carry the resolved effort"
-  assert_contains "$hooks" "FM_ADVISOR_COUNTER=" "advisor hook command did not export a counter path"
-  assert_contains "$hooks" "$state_real/$id.advisor-count" "advisor counter path is not the per-task state file"
-  assert_contains "$hooks" "FM_ADVISOR_LOG=" "advisor hook command did not export a log path"
-  assert_contains "$hooks" "$HOME_DIR/data/$id/advisor-log.jsonl" "advisor log path is not under the task's data directory"
-  assert_contains "$hooks" "FM_ADVISOR_BRIEF=" "advisor hook command did not export the brief path"
-  assert_contains "$hooks" "$HOME_DIR/data/$id/brief.md" "advisor brief path is not the task's own brief"
+  [ "$(printf '%s' "$hooks" | jq '.hooks.Stop | length')" = 2 ] \
+    || fail "advisor spawn must install exactly two Stop hook entries, got: $hooks"
+  [ "$(printf '%s' "$hooks" | jq -c '[.hooks.Stop[].hooks | length] | unique')" = "[1]" ] \
+    || fail "each Stop hook entry must carry exactly one command, got: $hooks"
+  assert_contains "$(stop_hook_command "$hooks" 0)" 'fm-busy-event.sh' "advisor spawn must keep the existing turn-end busy hook first"
+  advisor_cmd=$(stop_hook_command "$hooks" 1)
+  assert_contains "$advisor_cmd" "/bin/fm-advisor-hook.sh" "second Stop entry must run the advisor hook"
+  assert_not_contains "$advisor_cmd" 'fm-busy-event.sh' "advisor entry must not also run the turn-end hook"
+  assert_contains "$advisor_cmd" "FM_ADVISOR_MODEL='claude-opus-5' " "advisor hook command did not carry the resolved model"
+  assert_contains "$advisor_cmd" "FM_ADVISOR_EFFORT='low' " "advisor hook command did not carry the resolved effort"
+  assert_contains "$advisor_cmd" "FM_ADVISOR_COUNTER='$state_real/$id.advisor-count' " "advisor counter path is not the per-task state file"
+  assert_contains "$advisor_cmd" "FM_ADVISOR_LOG='$HOME_DIR/data/$id/advisor-log.jsonl' " "advisor log path is not under the task's data directory"
+  assert_contains "$advisor_cmd" "FM_ADVISOR_BRIEF='$HOME_DIR/data/$id/brief.md' " "advisor brief path is not the task's own brief"
   pass "advisor axis records meta and composes an additional Stop hook entry alongside the turn-end hook"
 }
 
 test_advisor_without_effort_omits_effort_env() {
-  local rec id out status hooks
+  local rec id out status hooks advisor_cmd
   id=advisor-noeffort-z3
   rec=$(make_spawn_case advisor-noeffort claude "$id")
   read_case_record "$rec"
@@ -164,7 +173,9 @@ test_advisor_without_effort_omits_effort_env() {
   assert_not_contains "$(cat "$HOME_DIR/state/$id.meta")" "advisor=claude-opus-5:" \
     "meta must not record a colon-suffixed effort when none was given"
   hooks=$(hooks_json "$CASE_DIR")
-  assert_not_contains "$hooks" 'FM_ADVISOR_EFFORT=' "advisor hook command must omit FM_ADVISOR_EFFORT when no effort was given"
+  advisor_cmd=$(stop_hook_command "$hooks" 1)
+  assert_contains "$advisor_cmd" "FM_ADVISOR_MODEL='claude-opus-5' " "advisor hook command did not carry the resolved model"
+  assert_not_contains "$advisor_cmd" 'FM_ADVISOR_EFFORT=' "advisor hook command must omit FM_ADVISOR_EFFORT when no effort was given"
   pass "advisor without an effort omits FM_ADVISOR_EFFORT from the installed hook command"
 }
 
