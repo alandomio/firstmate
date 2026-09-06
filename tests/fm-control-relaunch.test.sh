@@ -568,6 +568,7 @@ test_advisor_on_a_secondmate_refuses_before_stop() {
   dir=$(new_case smadvisor sm8)
   home="$dir/home"
   mkdir -p "$home/config" "$home/data/sm8"
+  printf 'claude\n' > "$home/config/secondmate-harness"
   printf '# secondmate brief\n' > "$home/data/sm8/brief.md"
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-advisor-branch
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"

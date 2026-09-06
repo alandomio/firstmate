@@ -116,7 +116,10 @@ fi
 brief_text=""
 [ -f "$BRIEF_FILE" ] && brief_text=$(head -c 4000 "$BRIEF_FILE" 2>/dev/null)
 
-review_prompt=$(cat <<PROMPT
+# read -d '' instead of $(cat <<EOF): stock macOS Bash 3.2 cannot parse a
+# heredoc with an apostrophe inside a command substitution.
+review_prompt=
+IFS= read -r -d '' review_prompt <<PROMPT || :
 You are a terse second-opinion reviewer for an autonomous coding agent's just-completed turn.
 Flag only a MATERIAL problem: a violated brief constraint, a wrong assumption, or a fragile
 design choice whose cost of discovering later clearly exceeds the cost of flagging it now.
@@ -135,7 +138,6 @@ ${brief_text:-<none available>}
 Recent turns (most recent last, truncated):
 ${window_text:-<no transcript window available>}
 PROMPT
-)
 
 response=$(fm_run_timed "$TIMEOUT_SECS" claude -p "$review_prompt" \
   --model "$ADVISOR_MODEL" --effort "$ADVISOR_EFFORT" --bare \
