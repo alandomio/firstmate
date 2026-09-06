@@ -9,6 +9,14 @@ This is a thin pointer, not a copy of any listed skill's own instructions.
 Each skill's own `SKILL.md` remains the one owner of its content; read it directly when it applies.
 Re-verify this inventory by hand next time it looks stale - firstmate does not auto-refresh it.
 
+Before trusting a grep-based lead on which tenant/config owns a given integration or client-facing
+behavior, check this project's agentmemory store first (`memory_recall`/`memory_smart_search`, or
+`/recall`) - a superficial string match (e.g. a matching code/ticket string in an unrelated tenant)
+is not evidence of relevance on its own. This applies to firstmate itself, not only a dispatched
+crewmate: confirmed 2026-08-29 when a grep-based lead on tenant `zcacea` for the VoiceAI
+appointment-scheduling integration was wrong - the real tenant was `sg_italgas`, and `zcacea` had
+nothing to do with it.
+
 ## Branch caveat
 
 GOPlanner's own git default branch is `master`, and `master` is nearly bare of skills.
