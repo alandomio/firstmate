@@ -1144,6 +1144,16 @@ empty default array is flagged^{"default":[]}^exact^CREW_DISPATCH: invalid confi
 non-object default array entry is flagged^{"default":["codex"]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each default profile must be an object
 default array profile without harness is flagged^{"default":[{"model":"gpt-5.5"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each default profile needs harness
 default array malformed effort is flagged^{"default":[{"harness":"codex","effort":3}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile model and effort must be non-empty strings when present
+claude advisor with model and effort is accepted^{"rules":[{"when":"infra work","use":{"harness":"claude","model":"claude-sonnet-5","advisor":{"model":"claude-opus-5","effort":"low"}}}]}^empty^
+claude advisor with only model is accepted^{"rules":[{"when":"infra work","use":{"harness":"claude","advisor":{"model":"claude-opus-5"}}}]}^empty^
+default advisor on claude is accepted^{"default":{"harness":"claude","advisor":{"model":"claude-opus-5"}}}^empty^
+advisor on non-claude harness is flagged^{"rules":[{"when":"infra work","use":{"harness":"codex","advisor":{"model":"gpt-5.5"}}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - advisor is only supported on the claude harness, not: codex
+advisor missing model is flagged^{"rules":[{"when":"infra work","use":{"harness":"claude","advisor":{"effort":"low"}}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - advisor must be an object with a non-empty model string when present
+advisor as a non-object is flagged^{"rules":[{"when":"infra work","use":{"harness":"claude","advisor":"claude-opus-5"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - advisor must be an object with a non-empty model string when present
+advisor with empty model is flagged^{"rules":[{"when":"infra work","use":{"harness":"claude","advisor":{"model":""}}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - advisor must be an object with a non-empty model string when present
+advisor with unsupported effort is flagged^{"rules":[{"when":"infra work","use":{"harness":"claude","advisor":{"model":"claude-opus-5","effort":"ultra"}}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid advisor effort: ultra
+default advisor on non-claude harness is flagged^{"default":{"harness":"pi","advisor":{"model":"claude-opus-5"}}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - advisor is only supported on the claude harness, not: pi
+default advisor missing model is flagged^{"default":{"harness":"claude","advisor":{"effort":"low"}}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - advisor must be an object with a non-empty model string when present
 ROWS
   pass "bootstrap validates crew-dispatch.json and reports malformed or unverified configs"
 }

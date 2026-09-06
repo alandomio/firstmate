@@ -15,6 +15,7 @@ Use this reference before any harness-specific firstmate operation: spawn, recov
 
 Crewmates default to the same harness firstmate is running on unless `config/crew-harness` records an adapter name.
 Optional dispatch profiles in `config/crew-dispatch.json` can override that static default for one crewmate or scout dispatch by selecting concrete harness, model, and effort axes at intake.
+A profile may also opt a claude dispatch into a per-turn advisor axis; `docs/configuration.md` "Crew dispatch profiles" owns that schema and `bin/fm-advisor-hook.sh` owns the reviewer mechanism.
 When a matched rule or default is a profile array, load `quota-array-dispatch` for the completion-aware candidate choice after this skill establishes harness and model/provider facts.
 The captain may override that file at session start or later; a per-task instruction such as "run this one on codex" overrides it for that dispatch only.
 `default` means mirror firstmate's own harness.

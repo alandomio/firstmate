@@ -519,6 +519,45 @@ test_same_harness_relaunch_keeps_the_profile_axes() {
   pass "fm-control relaunch: a same-harness relaunch keeps the profile axes it was running with"
 }
 
+test_same_harness_relaunch_keeps_the_advisor_axis() {
+  local dir out rc
+  dir=$(new_case keepadvisor rl6b)
+  add_ship_task "$dir" rl6b claude
+  printf 'advisor=claude-opus-5:low\n' >> "$dir/home/state/rl6b.meta"
+  out=$(run_control "$dir" rl6b relaunch --note "same runtime"); rc=$?
+  expect_code 0 "$rc" "a same-harness relaunch should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" rl6b advisor)" = claude-opus-5:low ] \
+    || fail "the advisor axis should carry across a same-harness relaunch"
+  assert_contains "$out" "advisor=claude-opus-5:low" "the outcome should report the carried advisor axis"
+  pass "fm-control relaunch: a same-harness relaunch keeps the advisor axis it was running with"
+}
+
+test_harness_switch_does_not_carry_the_old_advisor_axis() {
+  local dir out rc
+  dir=$(new_case switchadvisor rl6c)
+  add_ship_task "$dir" rl6c claude
+  printf 'advisor=claude-opus-5:low\n' >> "$dir/home/state/rl6c.meta"
+  printf 'codex' > "$dir/fake/becomes"
+  out=$(run_control "$dir" rl6c relaunch --harness codex --note "switching runtime"); rc=$?
+  expect_code 0 "$rc" "a harness switch should succeed"$'\n'"$out"
+  [ -z "$(meta_field "$dir" rl6c advisor)" ] \
+    || fail "an advisor chosen for the old harness must not carry to a different one"
+  assert_not_contains "$out" "advisor=" "the outcome should not report a dropped advisor axis"
+  pass "fm-control relaunch: a harness switch resets the advisor axis unless it is named too"
+}
+
+test_explicit_advisor_wins_over_the_recorded_one() {
+  local dir out rc
+  dir=$(new_case explicitadvisor rl6d)
+  add_ship_task "$dir" rl6d claude
+  printf 'advisor=claude-opus-5:low\n' >> "$dir/home/state/rl6d.meta"
+  out=$(run_control "$dir" rl6d relaunch --advisor claude-sonnet-5:high --note "override advisor"); rc=$?
+  expect_code 0 "$rc" "an explicit --advisor should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" rl6d advisor)" = claude-sonnet-5:high ] \
+    || fail "an explicit --advisor should win over the recorded one"
+  pass "fm-control relaunch: an explicit --advisor wins over the recorded one"
+}
+
 test_explicit_model_wins_over_the_recorded_one() {
   local dir out rc
   dir=$(new_case explicit rl7)
@@ -1323,6 +1362,9 @@ test_harness_switch_does_not_carry_the_old_profile_axes
 test_harness_switch_resolves_a_prefixed_recorded_harness
 test_prefixed_recorded_harness_requires_explicit_replacement
 test_same_harness_relaunch_keeps_the_profile_axes
+test_same_harness_relaunch_keeps_the_advisor_axis
+test_harness_switch_does_not_carry_the_old_advisor_axis
+test_explicit_advisor_wins_over_the_recorded_one
 test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
 test_prior_harness_turnend_registry_entry_is_cleared

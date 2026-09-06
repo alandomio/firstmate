@@ -5,7 +5,7 @@
 # Usage: fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
-#                                         [--effort <level>]
+#                                         [--effort <level>] [--advisor <model>[:<effort>]]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -34,7 +34,11 @@
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              SAME endpoint and SAME worktree, on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
-#              of this verb. With no explicit axis, a secondmate re-resolves its
+#              of this verb. The opt-in advisor axis (docs/configuration.md
+#              "Crew dispatch profiles") follows the same rule as model/effort:
+#              an explicit --advisor wins, a same-harness relaunch keeps the
+#              recorded one, and a harness switch resets it (claude-only). With
+#              no explicit axis, a secondmate re-resolves its
 #              durable config/secondmate-harness pin (harness plus its optional
 #              model and effort tokens) exactly as any other respawn does, while
 #              a ship or scout keeps the exact adapter already recorded for it.
@@ -187,9 +191,11 @@ fi
 NEW_HARNESS=
 NEW_MODEL=
 NEW_EFFORT=
+NEW_ADVISOR=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
+ADVISOR_SET=0
 NOTE=
 NOTE_SET=0
 want_value=
@@ -202,6 +208,7 @@ for a in "$@"; do
       harness) NEW_HARNESS=$a; HARNESS_SET=1 ;;
       model) NEW_MODEL=$a; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$a; EFFORT_SET=1 ;;
+      advisor) NEW_ADVISOR=$a; ADVISOR_SET=1 ;;
       note) NOTE=$a; NOTE_SET=1 ;;
       note-file)
         [ -f "$a" ] || die "--note-file '$a' is not a readable file"
@@ -219,6 +226,8 @@ for a in "$@"; do
     --model=*) NEW_MODEL=${a#--model=}; MODEL_SET=1 ;;
     --effort) want_value=effort ;;
     --effort=*) NEW_EFFORT=${a#--effort=}; EFFORT_SET=1 ;;
+    --advisor) want_value=advisor ;;
+    --advisor=*) NEW_ADVISOR=${a#--advisor=}; ADVISOR_SET=1 ;;
     --note) want_value=note ;;
     --note=*) NOTE=${a#--note=}; NOTE_SET=1 ;;
     --note-file) want_value=note-file ;;
@@ -233,16 +242,33 @@ done
 [ -z "$want_value" ] || die "--$want_value requires a value"
 
 if [ "$VERB" != relaunch ]; then
-  [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-    || die "--harness, --model, --effort, and --note apply to 'relaunch' only"
+  [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$ADVISOR_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
+    || die "--harness, --model, --effort, --advisor, and --note apply to 'relaunch' only"
 fi
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
+[ "$ADVISOR_SET" = 0 ] || [ -n "$NEW_ADVISOR" ] || die "--advisor requires a non-empty value"
 case "$NEW_EFFORT" in
   ''|low|medium|high|xhigh|max) ;;
   *) die "--effort must be one of low, medium, high, xhigh, max" ;;
 esac
+# --advisor is a single "<model>[:<effort>]" token, split and validated exactly
+# as fm-spawn.sh validates it; the claude-only restriction is enforced there
+# once the target harness is resolved, below.
+NEW_ADVISOR_MODEL=
+NEW_ADVISOR_EFFORT=
+if [ -n "$NEW_ADVISOR" ]; then
+  NEW_ADVISOR_MODEL=${NEW_ADVISOR%%:*}
+  if [ "$NEW_ADVISOR" != "$NEW_ADVISOR_MODEL" ]; then
+    NEW_ADVISOR_EFFORT=${NEW_ADVISOR#*:}
+  fi
+  [ -n "$NEW_ADVISOR_MODEL" ] || die "--advisor requires a non-empty model before the optional ':<effort>'"
+  case "$NEW_ADVISOR_EFFORT" in
+    ''|low|medium|high|xhigh|max) ;;
+    *) die "--advisor effort must be one of low, medium, high, xhigh, max (got '$NEW_ADVISOR_EFFORT')" ;;
+  esac
+fi
 
 # --- exact task-id resolution ----------------------------------------------
 
@@ -506,9 +532,11 @@ CONFIG_MODEL=
 CONFIG_EFFORT=
 PRIOR_MODEL=
 PRIOR_EFFORT=
+PRIOR_ADVISOR=
 TARGET_HARNESS=$HARNESS
 TARGET_MODEL=
 TARGET_EFFORT=
+TARGET_ADVISOR=
 
 journal_write() {  # <phase> [extra-line]...
   local phase=$1
@@ -525,9 +553,11 @@ journal_write() {  # <phase> [extra-line]...
     echo "from_harness=$PRIOR_RECORDED_HARNESS"
     echo "from_model=$PRIOR_MODEL"
     echo "from_effort=$PRIOR_EFFORT"
+    echo "from_advisor=$PRIOR_ADVISOR"
     echo "to_harness=$TARGET_HARNESS"
     echo "to_model=$TARGET_MODEL"
     echo "to_effort=$TARGET_EFFORT"
+    echo "to_advisor=$TARGET_ADVISOR"
     local line
     for line in "$@"; do
       echo "$line"
@@ -604,6 +634,10 @@ resolve_relaunch_profile() {
   PRIOR_EFFORT=$(fm_meta_get "$META" effort)
   [ -n "$PRIOR_MODEL" ] || PRIOR_MODEL=default
   [ -n "$PRIOR_EFFORT" ] || PRIOR_EFFORT=default
+  # Unlike model/effort, "no advisor" has no harness-default meaning - its
+  # natural default is off, so an absent meta field resolves to empty, not
+  # "default".
+  PRIOR_ADVISOR=$(fm_meta_get "$META" advisor)
   if [ "$HARNESS_SET" = 0 ] \
      && [ "$PRIOR_RECORDED_HARNESS" != "$PRIOR_HARNESS" ]; then
     die "task $ID records harness '$PRIOR_RECORDED_HARNESS', whose original launch command cannot be reconstructed from its recorded basename; relaunching without --harness would substitute the canonical adapter '$PRIOR_HARNESS' for the command actually running. Pass an explicit --harness to choose the replacement runtime deliberately"
@@ -667,6 +701,17 @@ resolve_relaunch_profile() {
     TARGET_EFFORT=$PRIOR_EFFORT
   else
     TARGET_EFFORT=default
+  fi
+  # advisor is claude-only and never a secondmate axis (no CONFIG_ADVISOR), so
+  # it follows model/effort's same-harness-carries/harness-switch-resets rule
+  # with no secondmate-config branch; fm-spawn.sh's own validation refuses it
+  # for any target harness other than claude.
+  if [ "$ADVISOR_SET" = 1 ]; then
+    TARGET_ADVISOR=$NEW_ADVISOR
+  elif [ "$TARGET_HARNESS" = "$PRIOR_HARNESS" ]; then
+    TARGET_ADVISOR=$PRIOR_ADVISOR
+  else
+    TARGET_ADVISOR=
   fi
 }
 
@@ -766,7 +811,7 @@ record_note() {
 }
 
 do_relaunch() {
-  local exit_result state note_line
+  local exit_result state note_line advisor_report
   local -a spawn_args
 
   require_state_verified_backend relaunch
@@ -814,6 +859,7 @@ do_relaunch() {
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
+  [ -z "$TARGET_ADVISOR" ] || spawn_args+=(--advisor "$TARGET_ADVISOR")
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
@@ -830,7 +876,9 @@ do_relaunch() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
-  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
+  advisor_report=
+  [ -z "$TARGET_ADVISOR" ] || advisor_report=" advisor=$TARGET_ADVISOR"
+  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT$advisor_report"
 }
 
 # --- verbs ------------------------------------------------------------------
