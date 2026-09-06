@@ -17,8 +17,14 @@ make_fake_claude() {  # <dir> -> writes fakebin/claude, prints fakebin path
   cat > "$fakebin/claude" <<'SH'
 #!/usr/bin/env bash
 set -u
-cat >/dev/null
 [ -z "${FM_FAKE_CLAUDE_CALLED:-}" ] || : > "$FM_FAKE_CLAUDE_CALLED"
+if [ -n "${FM_FAKE_CLAUDE_PROMPT:-}" ]; then
+  prev=
+  for a in "$@"; do
+    [ "$prev" != "-p" ] || printf '%s' "$a" > "$FM_FAKE_CLAUDE_PROMPT"
+    prev=$a
+  done
+fi
 if [ "${FM_FAKE_CLAUDE_RC:-0}" != 0 ]; then
   exit "${FM_FAKE_CLAUDE_RC}"
 fi
@@ -147,15 +153,23 @@ test_missing_transcript_exits_silently_with_no_log_entry() {
 }
 
 test_reviewer_ok_verdict_exits_zero() {
-  local dir fakebin payload rc
+  local dir fakebin payload rc prompt
   dir=$(new_case okverdict)
   fakebin=$(make_fake_claude "$dir")
   write_normal_transcript "$dir/transcript.jsonl"
   payload=$(jq -cn --arg tp "$dir/transcript.jsonl" '{stop_hook_active:false,transcript_path:$tp}')
 
-  run_hook "$dir" "$payload" PATH="$fakebin:$PATH" FM_FAKE_CLAUDE_RESULT="OK" >/dev/null 2>&1
+  printf 'Never change public return types.\n' > "$dir/BRIEF.md"
+
+  run_hook "$dir" "$payload" PATH="$fakebin:$PATH" FM_FAKE_CLAUDE_RESULT="OK" \
+    FM_FAKE_CLAUDE_PROMPT="$dir/prompt.txt" >/dev/null 2>&1
   rc=$?
   expect_code 0 "$rc" "an OK reviewer verdict must exit 0"
+  assert_present "$dir/prompt.txt" "the reviewer must receive its prompt as claude's positional -p argument"
+  prompt=$(cat "$dir/prompt.txt")
+  assert_contains "$prompt" "Never change public return types." "the task brief must reach the reviewer prompt"
+  assert_contains "$prompt" "updated the return type annotation" "the transcript window must reach the reviewer prompt"
+  assert_contains "$prompt" "[tool_use Edit]" "the transcript window must render the turn's tool_use blocks"
   [ "$(log_verdicts "$dir")" = ok ] || fail "an OK verdict must log verdict=ok, got: $(log_verdicts "$dir")"
   pass "a reviewer verdict of OK exits 0 and logs the ok verdict"
 }

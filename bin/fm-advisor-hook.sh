@@ -137,10 +137,10 @@ ${window_text:-<no transcript window available>}
 PROMPT
 )
 
-response=$(printf '%s' "$review_prompt" | fm_run_timed "$TIMEOUT_SECS" claude -p \
+response=$(fm_run_timed "$TIMEOUT_SECS" claude -p "$review_prompt" \
   --model "$ADVISOR_MODEL" --effort "$ADVISOR_EFFORT" --bare \
   --output-format json --tools "" --strict-mcp-config --permission-prompts none \
-  --no-session-persistence 2>/dev/null)
+  --no-session-persistence </dev/null 2>/dev/null)
 rc=$?
 if [ "$rc" -ne 0 ] || [ -z "$response" ]; then
   log_event fail-open 0 0 "advisor-call-rc:$rc"
