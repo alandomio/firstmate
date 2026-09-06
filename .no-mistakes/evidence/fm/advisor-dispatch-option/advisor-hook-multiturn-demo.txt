@@ -1,0 +1,44 @@
+# Manual multi-turn simulation of bin/fm-advisor-hook.sh (fake reviewer on PATH, FM_ADVISOR_MAX_CALLS=2)
+### turn 1: real work, reviewer flags a violated brief constraint
+exit=2 stderr=[- parse() return type changed to tuple; brief forbids changing its public return type] counter=1
+reviewer argv: -p You are a terse second-opinion reviewer for an autonomous coding agent's just-completed turn.
+Flag only a MATERIAL problem: a violated brief constraint, a wrong assumption, or a fragile
+design choice whose cost of discovering later clearly exceeds the cost of flagging it now.
+Do not flag nitpicks, style preferences, or anything you are not confident is a real defect.
+Do not restate what was done, do not praise, do not speculate about things
+you cannot see in the transcript below.
+
+Answer with EXACTLY ONE of:
+- the single word OK, and nothing else, if there is nothing material worth flagging
+- 1 to 3 short bullet points (each starts with "- ", one line, under 150
+  characters), total reply under 600 characters, no preamble or sign-off
+
+Task brief (may be empty):
+Constraint: never change the public return type of parse().
+
+Recent turns (most recent last, truncated):
+== USER ==
+do the task
+
+== ASSISTANT ==
+[tool_use Edit] {"file_path":"foo.py"}
+Implemented the requested change and changed the return type of parse() to a tuple. --model claude-opus-5 --effort low --bare --output-format json --tools  --strict-mcp-config --permission-prompts none --no-session-persi
+prompt reached reviewer: brief lines=1, transcript-window lines=1
+### turn 1 continuation (stop_hook_active=true): must skip, no reviewer call
+exit=0 stderr=[] counter=1
+reviewer called: no
+### turn 2: real work, reviewer says OK
+exit=0 stderr=[] counter=2
+### status-only turn: skipped without spending cap
+exit=0 stderr=[] counter=2
+reviewer called: no
+### turn 3: real work, cap (2) exhausted -> skip, no reviewer call
+exit=0 stderr=[] counter=3
+reviewer called: no
+
+## advisor-log.jsonl (measurement log)
+{"ts":"2026-09-06T09:35:06Z","verdict":"advise","cost_usd":0.0044,"duration_ms":1800,"note":"- parse() return type changed to tuple; brief forbids changing its public return type"}
+{"ts":"2026-09-06T09:35:06Z","verdict":"skip","cost_usd":0,"duration_ms":0,"note":"stop_hook_active"}
+{"ts":"2026-09-06T09:35:07Z","verdict":"ok","cost_usd":0.0044,"duration_ms":1800,"note":""}
+{"ts":"2026-09-06T09:35:07Z","verdict":"skip","cost_usd":0,"duration_ms":0,"note":"status-line-only-turn"}
+{"ts":"2026-09-06T09:35:07Z","verdict":"skip","cost_usd":0,"duration_ms":0,"note":"max-calls-exhausted:2"}

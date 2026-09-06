@@ -1,0 +1,32 @@
+# bin/fm-test-run.sh tests/fm-advisor-hook.test.sh tests/fm-spawn-advisor.test.sh tests/fm-control-relaunch.test.sh tests/fm-bootstrap.test.sh tests/fm-spawn-dispatch-profile.test.sh
+## tests/fm-advisor-hook.test.sh
+ok - the loop guard skips the continuation its own exit-2 caused, with no reviewer call
+ok - a turn that only appended a status line is skipped with no reviewer call spent
+ok - the per-worktree call cap skips further reviews once exhausted, with no reviewer call spent
+ok - an empty Stop-hook payload exits silently before any logging or reviewer call
+ok - a missing or empty transcript path exits silently with no log entry
+ok - a reviewer verdict of OK exits 0 and logs the ok verdict
+ok - material reviewer advice exits 2 with the advice on stderr and logs the advise verdict
+ok - a failed reviewer call fails open rather than blocking the crewmate's turn
+ok - a missing jq dependency fails open before any reviewer call, exactly like every other failure mode
+# all fm-advisor-hook tests passed
+## tests/fm-spawn-advisor.test.sh
+ok - no --advisor produces byte-identical meta and a single-entry Stop hook
+ok - advisor axis records meta and composes an additional Stop hook entry alongside the turn-end hook
+ok - advisor without an effort omits FM_ADVISOR_EFFORT from the installed hook command
+ok - --advisor is refused for a non-claude harness before any metadata is written
+ok - --advisor is refused for --secondmate spawns before any metadata is written
+ok - --advisor refuses an empty model or an unsupported effort before any metadata is written
+ok - batch dispatch forwards shared --advisor to every pair
+# all fm-spawn-advisor tests passed
+## tests/fm-control-relaunch.test.sh (advisor rows)
+ok - fm-control relaunch: a same-harness relaunch keeps the advisor axis it was running with
+ok - fm-control relaunch: a harness switch resets the advisor axis unless it is named too
+ok - fm-control relaunch: an explicit --advisor wins over the recorded one
+ok - fm-control relaunch: --advisor onto a non-claude harness refuses before the agent is stopped
+ok - fm-control relaunch: --advisor on a secondmate refuses before the agent is stopped
+## tests/fm-bootstrap.test.sh (schema rows incl. 10 advisor accept/reject rows)
+ok - bootstrap validates crew-dispatch.json and reports malformed or unverified configs
+## tests/fm-spawn-dispatch-profile.test.sh (pre-existing default-behavior regression)
+# all fm-spawn-dispatch-profile tests passed
+FM_TEST_SUMMARY total=5 failed=0 skipped_gate=0 duration_ms=3213455
