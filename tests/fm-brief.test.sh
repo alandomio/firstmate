@@ -339,10 +339,10 @@ test_faster_paths_use_configured_authority_without_stacked_review() {
   pass "fm-brief.sh: faster paths use configured authority without stacked review"
 }
 
-# The captain's standing instruction (2026-08-28) requires every generated MR/PR
-# description, including a review-fix revision, to go through the mr-description
-# skill. That only applies to the two modes that actually open one.
-test_mr_description_skill_required_for_pr_modes() {
+# No `mr-description` skill exists anywhere in this repo (verified 2026-09-06:
+# two workers independently hit the fake instruction on two different tasks).
+# No generated brief may reference it until such a skill is actually written.
+test_mr_description_skill_not_referenced() {
   local home id brief
   home="$TMP_ROOT/mrdesc-skill-home"
   mkdir -p "$home/data"
@@ -350,74 +350,28 @@ test_mr_description_skill_required_for_pr_modes() {
   id="brief-mr-desc-directpr"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode direct-PR >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep '`mr-description` skill' "$brief" \
-    "direct-PR brief did not require the mr-description skill"
-  assert_grep 'any later revision to it' "$brief" \
-    "direct-PR brief did not cover revising an existing PR description"
+  assert_no_grep 'mr-description' "$brief" \
+    "direct-PR brief must not order the non-existent mr-description skill"
 
   id="brief-mr-desc-nomistakes"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep '`mr-description` skill' "$brief" \
-    "no-mistakes brief did not require the mr-description skill"
-  assert_grep 'any later revision to it (including a review-fix revision)' "$brief" \
-    "no-mistakes brief did not cover a review-fix revision to the PR description"
-
-  # The requirement's wording must follow the project's actual forge, never a
-  # hardcoded "PR description": a GitLab project says "MR description" (the
-  # captain's standing GitLab vocabulary rule), a GitHub project says "PR
-  # description". The skill name itself (`mr-description`) stays fixed either
-  # way - only the surrounding prose is forge-aware.
-  write_project_clone "$home" gh-mrdesc-proj https://github.com/acme/gh-mrdesc-proj.git
-  write_project_clone "$home" gl-mrdesc-proj https://gitlab.com/peterpark/gl-mrdesc-proj.git
-
-  id="brief-mr-desc-directpr-gh"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" gh-mrdesc-proj --mode direct-PR >/dev/null 2>&1
-  brief="$home/data/$id/brief.md"
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'Write the PR description, and any later revision to it, with the `mr-description` skill.' "$brief" \
-    "direct-PR brief for a GitHub project did not require the PR-worded mr-description skill"
-
-  id="brief-mr-desc-directpr-gl"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" gl-mrdesc-proj --mode direct-PR >/dev/null 2>&1
-  brief="$home/data/$id/brief.md"
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'Write the MR description, and any later revision to it, with the `mr-description` skill.' "$brief" \
-    "direct-PR brief for a GitLab project did not require the MR-worded mr-description skill"
-  assert_no_grep 'Write the PR description' "$brief" \
-    "direct-PR brief for a GitLab project hardcoded PR description wording"
-
-  id="brief-mr-desc-nomistakes-gh"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" gh-mrdesc-proj --mode no-mistakes >/dev/null 2>&1
-  brief="$home/data/$id/brief.md"
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'Write the PR description, and any later revision to it (including a review-fix revision), with the `mr-description` skill.' "$brief" \
-    "no-mistakes brief for a GitHub project did not require the PR-worded mr-description skill"
-
-  id="brief-mr-desc-nomistakes-gl"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" gl-mrdesc-proj --mode no-mistakes >/dev/null 2>&1
-  brief="$home/data/$id/brief.md"
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'Write the MR description, and any later revision to it (including a review-fix revision), with the `mr-description` skill.' "$brief" \
-    "no-mistakes brief for a GitLab project did not require the MR-worded mr-description skill"
-  assert_no_grep 'Write the PR description' "$brief" \
-    "no-mistakes brief for a GitLab project hardcoded PR description wording"
+  assert_no_grep 'mr-description' "$brief" \
+    "no-mistakes brief must not order the non-existent mr-description skill"
 
   id="brief-mr-desc-localonly"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_no_grep 'mr-description' "$brief" \
-    "local-only brief must not require the mr-description skill (it never opens a PR)"
+    "local-only brief must not reference the mr-description skill (it never opens a PR)"
 
   id="brief-mr-desc-scout"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_no_grep 'mr-description' "$brief" \
-    "scout brief must not require the mr-description skill (it never opens a PR)"
+    "scout brief must not reference the mr-description skill (it never opens a PR)"
 
-  pass "fm-brief.sh: direct-PR and no-mistakes briefs require the mr-description skill; local-only and scout do not"
+  pass "fm-brief.sh: no generated brief orders the non-existent mr-description skill"
 }
 
 # Pin the specific line the bug lived on: the no-mistakes DOD's no-mistakes
@@ -455,6 +409,10 @@ test_no_mistakes_dod_wording() {
   pass "fm-brief.sh: no-mistakes DOD keeps its apostrophe prose, now parse-safe"
 }
 
+# The captain's standing rule (2026-09-06): workers must never write to a
+# project's AGENTS.md; only firstmate writes it, and only on the captain's
+# explicit confirmation. Durable findings instead go through the existing
+# note: CANDIDATE mechanism (Rule 4; AGENTS.md section 6).
 test_ship_project_memory_wording() {
   local home id brief
   home="$TMP_ROOT/project-memory-home"
@@ -463,13 +421,17 @@ test_ship_project_memory_wording() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
-  assert_grep "Record only project knowledge useful to almost every future session." "$brief" \
-    "project-memory contract lost the durable-knowledge bar"
-  assert_grep "prefer a pointer to the authoritative file, command, or doc over copying the detail" "$brief" \
-    "project-memory contract lost pointer-over-copy guidance"
-  assert_grep "lacks \`## Maintaining this file\`, add that short self-governance section" "$brief" \
-    "project-memory contract lost the self-governance add-in-same-pass rule"
-  pass "fm-brief.sh: ship project-memory wording carries the AGENTS.md authoring bar"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'Never write to this project'"'"'s `AGENTS.md` or `CLAUDE.md`' "$brief" \
+    "project-memory contract must forbid the worker from writing AGENTS.md or CLAUDE.md"
+  assert_grep "only on the captain's explicit confirmation" "$brief" \
+    "project-memory contract lost the captain-confirmation gate on who writes AGENTS.md"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'raise it as a `note: CANDIDATE - {finding}` status line' "$brief" \
+    "project-memory contract must route durable findings through the note: CANDIDATE mechanism instead of a direct write"
+  assert_no_grep "fm-ensure-agents-md.sh" "$brief" \
+    "project-memory contract must not send the worker to write AGENTS.md itself"
+  pass "fm-brief.sh: ship project-memory wording forbids the worker from writing AGENTS.md"
 }
 
 test_herdr_lab_contract_is_explicit_and_complete() {
@@ -1192,7 +1154,7 @@ test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
-test_mr_description_skill_required_for_pr_modes
+test_mr_description_skill_not_referenced
 test_no_mistakes_dod_wording
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
