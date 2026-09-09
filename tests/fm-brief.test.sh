@@ -800,6 +800,51 @@ test_grounding_section_requires_search_and_reporting() {
   pass "fm-brief.sh: ship and scout briefs require Brain/memory grounding with reported outcome; secondmate charter does not duplicate it"
 }
 
+# Firstmate briefs routinely prescribe a project-specific skill or procedure
+# (e.g. GOPlanner's implement-ticket) in the Task section, but no status log
+# has ever reported one being invoked. This lives in Rule 4's status-protocol
+# contract, not Grounding, because it is required content of the first
+# substantive status line the worker was already going to send, not a
+# separate search-report action. A secondmate charter omits it for the same
+# reason it omits Grounding: its own crewmates each get their own generated
+# ship/scout brief carrying this same contract.
+test_skill_declaration_required_in_first_status_line() {
+  local home id brief
+  home="$TMP_ROOT/skill-declaration-home"
+  mkdir -p "$home/data"
+
+  id="brief-skill-declaration-ship"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_grep "must also declare which of this task's prescribed project-specific" "$brief" \
+    "ship brief did not require declaring prescribed skills/procedures invoked"
+  assert_grep "which prescribed ones you did not and why" "$brief" \
+    "ship brief did not require declaring prescribed skills/procedures NOT invoked, and why"
+  assert_grep "none, say so explicitly" "$brief" \
+    "ship brief did not give an explicit legal answer for the no-skills-prescribed case"
+  # The requirement must attach to the existing mandatory first substantive
+  # line, not license a separate one.
+  assert_grep "Before the FIRST \`done:\` or \`failed:\` line you write, send at least one \`working:\` status" "$brief" \
+    "ship brief lost its existing first-substantive-working-line mandate"
+
+  id="brief-skill-declaration-scout"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_grep "The first status line you send, whatever its state, must also declare" "$brief" \
+    "scout brief did not require declaring prescribed skills/procedures in its first status line"
+  assert_grep "none, say so explicitly" "$brief" \
+    "scout brief did not give an explicit legal answer for the no-skills-prescribed case"
+
+  id="brief-skill-declaration-secondmate"
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='sample domain' \
+    "$ROOT/bin/fm-brief.sh" "$id" --secondmate --no-projects >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_no_grep "prescribed project-specific" "$brief" \
+    "secondmate charter should not duplicate the skill-declaration requirement its own crewmates already carry"
+
+  pass "fm-brief.sh: ship and scout briefs require declaring prescribed skills/procedures invoked and not invoked in the first status line; secondmate charter does not duplicate it"
+}
+
 # The worker-operating contracts added on 2026-09-02 are ship-only: they govern
 # the crewmate that performs the task itself. A scout produces a written report
 # and a secondmate charter routes work to its own crewmates, whose generated
@@ -1167,6 +1212,7 @@ test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_grounding_section_requires_search_and_reporting
+test_skill_declaration_required_in_first_status_line
 test_ship_worker_operating_contracts
 test_scout_and_secondmate_scaffold
 test_forge_detection_shapes_vocabulary

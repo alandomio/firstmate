@@ -76,6 +76,12 @@
 # A ship brief describes a wait on an open PR/MR as a colleague's approval, never the captain's
 # merge decision (the captain cannot approve their own), and requires at least one substantive
 # "working:" line before the first "done:"/"failed:" line the worker writes.
+# Ship and scout briefs also require that first status line to declare which of the task's
+# prescribed project-specific skills or procedures were invoked, and which were not and why, or
+# that none were prescribed - this lives in Rule 4's status-protocol contract rather than
+# Grounding, because it is required content of that line rather than a separate search-report
+# action, and a secondmate charter omits it for the same reason Grounding is omitted there: its
+# own crewmates each get their own generated brief carrying the same contract.
 # Refuses to overwrite an existing brief.
 set -eu
 
@@ -419,6 +425,10 @@ The report is the only thing that survives, so anything worth keeping must be in
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset):
    firstmate then leaves your idle pane alone and rechecks it on a long cadence instead of
    treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
+   The first status line you send, whatever its state, must also declare which of this task's
+   prescribed project-specific skills or procedures you invoked, and which prescribed ones you
+   did not and why; if the Task section prescribed none, say so explicitly - never leave that
+   line silent on which you actually used.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
@@ -561,6 +571,9 @@ $RULE1
    Before the FIRST \`done:\` or \`failed:\` line you write, send at least one \`working:\` status
    that carries real substance (a finding, a decision, a completed stage) - never end a task on
    a single \`done:\` line with nothing reported before it.
+   That first substantive line must also declare which of this task's prescribed project-specific
+   skills or procedures you invoked, and which prescribed ones you did not and why; if the Task
+   section prescribed none, say so explicitly - never leave that line silent on which you actually used.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
