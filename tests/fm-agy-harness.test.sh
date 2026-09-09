@@ -213,6 +213,35 @@ test_busy_fold_excludes_prior_conversation() {
   pass "agy busy fold excludes a conversation recorded as pre-existing at spawn time"
 }
 
+# Sibling worktrees are numbered pool slots, so slot 1's path occurs as a byte
+# prefix inside every path under slot 10. Binding must be anchored at a path
+# component boundary: slot 1 must NOT resolve to slot 10's conversation just
+# because that database is the only non-prior candidate present yet.
+test_busy_fold_ignores_sibling_slot_path_prefix() {
+  local case_dir root state ws sibling out status
+  case_dir="$TMP_ROOT/busy-sibling-slot"
+  root="$case_dir/conversations"
+  state="$case_dir/state"
+  ws="$case_dir/pool/1"
+  sibling="$case_dir/pool/10"
+  mkdir -p "$root" "$state" "$ws" "$sibling"
+  printf 'workspace=%s/src/main.go\n' "$sibling" > "$root/77777777-7777-7777-7777-777777777777.db"
+  {
+    printf 'conversations_root=%s\n' "$root"
+    printf 'workspace_root=%s\n' "$ws"
+  } > "$state/task5.agy-session"
+  out=$(
+    # shellcheck source=bin/fm-busy-lib.sh
+    . "$ROOT/bin/fm-busy-lib.sh"
+    fm_busy_agy_conversation "$state" task5
+  )
+  status=$?
+  [ "$status" -ne 0 ] || fail "slot 1 bound to sibling slot 10's conversation: '$out'"
+  [ ! -e "$state/task5.agy-session-current" ] \
+    || fail "a sibling slot's conversation was cached as this task's binding"
+  pass "agy busy fold never binds a task to a sibling pool slot's conversation"
+}
+
 # Zero or more than one currently-matching, non-prior conversation is a genuine
 # ambiguity and must resolve to failure (unknown at the classifier), never a
 # guess.
@@ -254,4 +283,5 @@ test_agy_trusts_no_record_source
 test_busy_fold_resolves_and_reads_status
 test_busy_fold_settled_reads_idle
 test_busy_fold_excludes_prior_conversation
+test_busy_fold_ignores_sibling_slot_path_prefix
 test_busy_fold_ambiguous_resolution_fails

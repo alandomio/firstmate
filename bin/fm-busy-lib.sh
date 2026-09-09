@@ -870,22 +870,29 @@ fm_busy_agy_binding_has_prior() {  # <state-dir> <id> <conversation-path>
 }
 
 # fm_busy_agy_matching_conversations: every conversation database directly
-# under <conversations-root> whose raw bytes contain <workspace-root>. agy's
-# workspace path is not exposed through any queryable column - each database
-# stores it somewhere inside an opaque protobuf blob (verified live, agy
-# 1.1.28: `grep -a` on the raw file found it) - so this is a byte-level
-# heuristic rather than a structured match, the same tradeoff muse's own flat
-# text scan makes over its JSONL metadata. Callers only ever use this to
-# snapshot the PRE-EXISTING set at spawn time or to resolve a genuinely NEW
-# file afterward, so an imprecise match only widens the prior-exclusion set;
-# it can never wrongly bind a task to another task's conversation, only fail
-# to resolve one (unknown), which is the safe direction.
+# under <conversations-root> that records <workspace-root> as a whole path.
+# agy's workspace path is not exposed through any queryable column - each
+# database stores it somewhere inside an opaque protobuf blob (verified live,
+# agy 1.1.28: `grep -a` on the raw file found it) - so the scan is byte-level
+# rather than structured, the same tradeoff muse's own flat text scan makes
+# over its JSONL metadata. The match is anchored at a path-component boundary,
+# never a bare substring: sibling worktrees are numbered pool slots, so
+# `.../proj/1` occurs inside every byte sequence naming `.../proj/10`, and an
+# unanchored hit would let slot 1 bind to slot 10's conversation and report
+# its busy state as its own. Requiring the next byte to be one that cannot
+# continue a path component keeps binding at most too narrow - failing to
+# resolve (unknown) is the safe direction, resolving to a sibling task's
+# conversation is not.
 fm_busy_agy_matching_conversations() {  # <conversations-root> <workspace-root>
-  local root=$1 ws=$2 f
+  local root=$1 ws=$2 f pattern
   [ -d "$root" ] || return 1
+  ws=${ws%/}
+  [ -n "$ws" ] || return 1
+  pattern=$(printf '%s' "$ws" | sed 's/[][\\.^$*+?(){}|]/\\&/g')
+  pattern="${pattern}([^A-Za-z0-9._-]|\$)"
   for f in "$root"/*.db; do
     [ -e "$f" ] || continue
-    grep -aqF -- "$ws" "$f" 2>/dev/null && printf '%s\n' "$f"
+    LC_ALL=C grep -aqE -- "$pattern" "$f" 2>/dev/null && printf '%s\n' "$f"
   done
   return 0
 }
