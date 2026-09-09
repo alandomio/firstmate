@@ -695,20 +695,23 @@ wait "$REPEAT_WORKER_PID" 2>/dev/null || true
 REPEAT_WORKER_PID=
 pass "a repeatedly signalled shutdown still releases ownership for the next worker"
 
-# Fake mktemp/date shadow the real ones on PATH to count calls, still exec'ing
-# through. Idle mktemp comes only from the heartbeat write; idle date comes
-# only from reap_stale - each isolates one cadence from the fast poll tick.
+# Fake mktemp/date/sleep shadow the real ones on PATH to count calls, still
+# exec'ing through. Idle mktemp comes only from heartbeat writes, idle date
+# only from reap_stale, and idle sleep only from the poll tick itself.
 IDLE_HOME="$TMP_ROOT/idle-cadence-account"
 IDLE_STATE="$TMP_ROOT/idle-cadence-jobs"
 IDLE_BIN="$TMP_ROOT/idle-cadence-bin"
 IDLE_MKTEMP_LOG="$TMP_ROOT/idle-cadence-mktemp.log"
 IDLE_DATE_LOG="$TMP_ROOT/idle-cadence-date.log"
+IDLE_SLEEP_LOG="$TMP_ROOT/idle-cadence-sleep.log"
 mkdir -p "$IDLE_HOME" "$IDLE_BIN"
 chmod 700 "$IDLE_HOME"
 : > "$IDLE_MKTEMP_LOG"
 : > "$IDLE_DATE_LOG"
+: > "$IDLE_SLEEP_LOG"
 REAL_MKTEMP=$(command -v mktemp)
 REAL_DATE=$(command -v date)
+REAL_SLEEP=$(command -v sleep)
 cat > "$IDLE_BIN/mktemp" <<SH
 #!/bin/bash
 printf 'call\n' >> "$IDLE_MKTEMP_LOG"
@@ -719,10 +722,15 @@ cat > "$IDLE_BIN/date" <<SH
 printf 'call\n' >> "$IDLE_DATE_LOG"
 exec "$REAL_DATE" "\$@"
 SH
-chmod +x "$IDLE_BIN/mktemp" "$IDLE_BIN/date"
+cat > "$IDLE_BIN/sleep" <<SH
+#!/bin/bash
+printf 'call\n' >> "$IDLE_SLEEP_LOG"
+exec "$REAL_SLEEP" "\$@"
+SH
+chmod +x "$IDLE_BIN/mktemp" "$IDLE_BIN/date" "$IDLE_BIN/sleep"
 HOME="$IDLE_HOME" PATH="$IDLE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
   FM_REMOTE_JOB_STATE_ROOT="$IDLE_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
-  FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=1 FM_REMOTE_JOB_REAP_INTERVAL_SECONDS=1 \
+  FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=2 FM_REMOTE_JOB_REAP_INTERVAL_SECONDS=2 \
   FM_REMOTE_JOB_POLL_SECONDS=0.02 \
   "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
   > "$TMP_ROOT/idle-cadence.out" 2> "$TMP_ROOT/idle-cadence.err" &
@@ -733,23 +741,27 @@ for _ in $(seq 1 300); do
 done
 assert_present "$IDLE_STATE/worker.ready" "the idle-cadence worker did not become ready"
 # Startup (lock acquisition, identity, pid, the first heartbeat) already forked
-# mktemp/date before this point; only counts from here measure the idle
-# cadence itself, not one-time startup cost.
+# these before this point; only counts from here measure the idle cadence
+# itself, not one-time startup cost.
 : > "$IDLE_MKTEMP_LOG"
 : > "$IDLE_DATE_LOG"
-sleep 3
+: > "$IDLE_SLEEP_LOG"
+sleep 6
 kill -TERM "$IDLE_WORKER_PID"
 wait "$IDLE_WORKER_PID" 2>/dev/null || true
 IDLE_WORKER_PID=
 MKTEMP_CALLS=$(wc -l < "$IDLE_MKTEMP_LOG" | tr -d ' ')
 DATE_CALLS=$(wc -l < "$IDLE_DATE_LOG" | tr -d ' ')
-# A 20ms poll tick over 3 idle seconds would fork each of these roughly 150
-# times if the heartbeat or reap ran on every tick instead of its own ~1s
-# cadence; a real ~1s cadence forks each only a handful of times.
-[ "$MKTEMP_CALLS" -ge 2 ] && [ "$MKTEMP_CALLS" -le 10 ] \
-  || fail "idle heartbeat forked mktemp $MKTEMP_CALLS times in 3s at a 1s interval; expected the write gated to its own cadence"
-[ "$DATE_CALLS" -ge 2 ] && [ "$DATE_CALLS" -le 10 ] \
-  || fail "idle reap forked date $DATE_CALLS times in 3s at a 1s interval; the dead reap throttle regressed to running every poll tick"
+# The poll tick is the only per-iteration sleep while idle, so counting it
+# measures the cadence as a ratio instead of an absolute fork count that a
+# loaded runner (or the regression's own forking) would silently rescale.
+TICK_CALLS=$(wc -l < "$IDLE_SLEEP_LOG" | tr -d ' ')
+[ "$TICK_CALLS" -ge 20 ] \
+  || fail "the idle worker polled only $TICK_CALLS times; the cadence window is too short to measure"
+[ "$DATE_CALLS" -ge 2 ] && [ $((DATE_CALLS * 3)) -le "$TICK_CALLS" ] \
+  || fail "idle reap forked date $DATE_CALLS times across $TICK_CALLS poll ticks; the dead reap throttle regressed to running every poll tick"
+[ "$MKTEMP_CALLS" -ge 2 ] && [ $((MKTEMP_CALLS * 3)) -le "$TICK_CALLS" ] \
+  || fail "idle heartbeat forked mktemp $MKTEMP_CALLS times across $TICK_CALLS poll ticks; expected the write gated to its own cadence"
 pass "idle heartbeat and reap run on their own cadence, not on every poll tick"
 
 TRIPWIRE_HOME="$TMP_ROOT/tripwire-home"
