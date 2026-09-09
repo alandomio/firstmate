@@ -454,6 +454,9 @@ case "$MODE" in
 Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the $FORGE_NOUN yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
+Write the $FORGE_NOUN description with the mr-description skill (\`~/.claude/skills/mr-description\`), never by hand.
+That skill ends by offering the text to a human; you are that human here, so create the $FORGE_NOUN yourself and never wait for confirmation on a step this brief already authorizes.
+Do not include a "Generated with Claude Code" trailer or other orchestration vocabulary in the description.
 When it is implemented and committed, push your branch and open a $FORGE_NOUN with $FORGE_TOOL, then append \`done: $FORGE_ABBR {url}\` to the status file and stop.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the $FORGE_NOUN; firstmate relays the outcome.
 EOF
@@ -493,6 +496,10 @@ Two firstmate-specific rules layer on top of that guidance:
   Firstmate applies \`ask-user-authority\` and obtains any required captain decision.
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - Avoid \`--yes\`: it would silently bypass firstmate's authority check and any required captain escalation.
+
+Write the $FORGE_NOUN description with the mr-description skill (\`~/.claude/skills/mr-description\`), never by hand.
+That skill ends by offering the text to a human; you are that human here, so create or update the $FORGE_NOUN yourself and never wait for confirmation on a step this brief already authorizes.
+Do not include a "Generated with Claude Code" trailer or other orchestration vocabulary in the description.
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: $FORGE_ABBR {url} checks green\` and stop. You are finished.
 EOF
