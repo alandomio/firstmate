@@ -725,7 +725,7 @@ HOME="$IDLE_HOME" PATH="$IDLE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" FM_ROOT_OVERRID
   "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
   > "$TMP_ROOT/idle-cadence.out" 2> "$TMP_ROOT/idle-cadence.err" &
 IDLE_WORKER_PID=$!
-for _ in $(seq 1 100); do
+for _ in $(seq 1 300); do
   [ -f "$IDLE_STATE/worker.ready" ] && break
   sleep 0.05
 done
