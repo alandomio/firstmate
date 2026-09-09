@@ -75,6 +75,11 @@ worker_write_heartbeat() {
   mv -f -- "$tmp" "$ready"
 }
 
+worker_refresh_heartbeat() {
+  worker_write_heartbeat || { worker_error "cannot update worker heartbeat"; exit 1; }
+  next_heartbeat=$((SECONDS + FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS))
+}
+
 worker_publish_pid() {
   local pid_file tmp
   pid_file=$(fm_remote_job_worker_pid_path)
@@ -695,26 +700,24 @@ main() {
   trap worker_shutdown HUP INT TERM
   worker_publish_identity "$account_home" || { worker_error "cannot publish worker code identity"; exit 1; }
   worker_publish_pid || { worker_error "cannot publish worker pid"; exit 1; }
-  worker_write_heartbeat || { worker_error "cannot update worker heartbeat"; exit 1; }
-  next_heartbeat=$((SECONDS + FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS))
+  worker_refresh_heartbeat
   next_reap=$SECONDS
   while :; do
     if [ "$SECONDS" -ge "$next_heartbeat" ]; then
-      worker_write_heartbeat || { worker_error "cannot update worker heartbeat"; exit 1; }
-      next_heartbeat=$((SECONDS + FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS))
+      worker_refresh_heartbeat
     fi
     if ! fm_remote_job_root_is_live "$FM_ROOT"; then
       # A prober's freshness window must not lapse during the abandoned-root
       # grace check below, which can block for seconds confirming a transient
       # disappearance instead of a real one.
-      worker_write_heartbeat || { worker_error "cannot update worker heartbeat"; exit 1; }
-      next_heartbeat=$((SECONDS + FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS))
+      worker_refresh_heartbeat
       if worker_code_root_abandoned; then
         worker_error "configured FM_ROOT $FM_ROOT no longer exists; stopping the abandoned worker"
         exit 0
       fi
     fi
     if [ "$SECONDS" -ge "$next_reap" ]; then
+      worker_refresh_heartbeat
       fm_remote_job_reap_stale "$account_home" || true
       next_reap=$((SECONDS + FM_REMOTE_JOB_REAP_INTERVAL_SECONDS))
     fi

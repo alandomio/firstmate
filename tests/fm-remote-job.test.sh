@@ -20,6 +20,7 @@ OTHER_PID=
 RECOVERY_WORKER_PID=
 REPEAT_WORKER_PID=
 IDLE_WORKER_PID=
+TRIPWIRE_WORKER_PID=
 mkdir -p "$REMOTE_ROOT/bin" "$REMOTE_HOME" "$ACCOUNT_HOME" "$RUNTIME_BIN"
 # worker.pid records the serving child, not its restart supervisor, so stopping
 # that pid alone leaves the supervisor to respawn - the leak
@@ -29,6 +30,7 @@ cleanup_remote_job_fixture() {
   [ -z "$RECOVERY_WORKER_PID" ] || kill "$RECOVERY_WORKER_PID" 2>/dev/null || true
   [ -z "$REPEAT_WORKER_PID" ] || kill "$REPEAT_WORKER_PID" 2>/dev/null || true
   [ -z "$IDLE_WORKER_PID" ] || kill "$IDLE_WORKER_PID" 2>/dev/null || true
+  [ -z "$TRIPWIRE_WORKER_PID" ] || kill "$TRIPWIRE_WORKER_PID" 2>/dev/null || true
   if [ -f "$STATE_ROOT/worker.pid" ]; then
     fm_remote_job_stop_worker_tree "$(cat "$STATE_ROOT/worker.pid")" || true
   fi
@@ -749,5 +751,43 @@ DATE_CALLS=$(wc -l < "$IDLE_DATE_LOG" | tr -d ' ')
 [ "$DATE_CALLS" -ge 2 ] && [ "$DATE_CALLS" -le 10 ] \
   || fail "idle reap forked date $DATE_CALLS times in 3s at a 1s interval; the dead reap throttle regressed to running every poll tick"
 pass "idle heartbeat and reap run on their own cadence, not on every poll tick"
+
+TRIPWIRE_HOME="$TMP_ROOT/tripwire-home"
+TRIPWIRE_STATE="$TMP_ROOT/tripwire-jobs"
+mkdir -p "$TRIPWIRE_HOME"
+chmod 700 "$TRIPWIRE_HOME"
+HOME="$TRIPWIRE_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+  FM_REMOTE_JOB_STATE_ROOT="$TRIPWIRE_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=9 FM_REMOTE_JOB_REAP_INTERVAL_SECONDS=1 \
+  FM_REMOTE_JOB_POLL_SECONDS=0.02 \
+  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
+  > "$TMP_ROOT/tripwire.out" 2> "$TMP_ROOT/tripwire.err" &
+TRIPWIRE_WORKER_PID=$!
+for _ in $(seq 1 300); do
+  [ -f "$TRIPWIRE_STATE/worker.ready" ] && break
+  sleep 0.05
+done
+assert_present "$TRIPWIRE_STATE/worker.ready" "the state-root tripwire worker did not become ready"
+# The reap sweep re-prepares the state tree, so a worker whose root is deleted
+# must fail fast on its heartbeat before that sweep can silently recreate an
+# unowned tree and leave two workers serving one queue.
+rm -rf -- "$TRIPWIRE_STATE"
+for _ in $(seq 1 200); do
+  kill -0 "$TRIPWIRE_WORKER_PID" 2>/dev/null || break
+  sleep 0.05
+done
+if kill -0 "$TRIPWIRE_WORKER_PID" 2>/dev/null; then
+  kill -KILL "$TRIPWIRE_WORKER_PID" 2>/dev/null || true
+  wait "$TRIPWIRE_WORKER_PID" 2>/dev/null || true
+  TRIPWIRE_WORKER_PID=
+  fail "the worker kept serving after its state root was deleted"
+fi
+TRIPWIRE_STATUS=0
+wait "$TRIPWIRE_WORKER_PID" 2>/dev/null || TRIPWIRE_STATUS=$?
+TRIPWIRE_WORKER_PID=
+[ "$TRIPWIRE_STATUS" -ne 0 ] \
+  || fail "a worker whose state root vanished exited cleanly instead of failing for its supervisor to restart"
+assert_absent "$TRIPWIRE_STATE" "the reap sweep recreated the deleted worker state root behind an unowned worker"
+pass "a deleted state root fails the worker fast instead of being recreated by the reap sweep"
 
 echo "ALL TESTS PASSED"
