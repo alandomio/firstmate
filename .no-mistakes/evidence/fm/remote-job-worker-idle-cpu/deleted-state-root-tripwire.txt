@@ -1,0 +1,8 @@
+Deleted state root: fail-fast tripwire (review round-2 fix e114497)
+Reproduces the reported failure against the pre-fix worker and shows it gone after the fix.
+
+heartbeat=9s reap=1s; state root deleted right after the worker reports ready
+pre-fix(d5062fc)       worker still serving: yes | state root recreated: yes | recreated tree owned (lock/pid): no  | exit: killed
+   worker stderr: 
+fixed(2621c0f)         worker still serving: no  | state root recreated: no  | recreated tree owned (lock/pid): no  | exit: 1
+   worker stderr: remote-job-worker: cannot update worker heartbeat

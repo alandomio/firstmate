@@ -1,0 +1,18 @@
+Idle cost of 'fm-remote-job-worker.sh --serve' on an otherwise empty queue
+base = 55db226 (pre-fix)   fixed = 2621c0f (this branch), shipped defaults
+host: macOS (darwin 25.6.0); the Linux target forks far more cheaply, so the
+call-frequency rows below are the environment-independent measure.
+
+window=30s  defaults: poll=0.05s heartbeat=3s reap=60s
+
+=== fork counts over a 30s idle window (shimmed mktemp/chmod/mv/date) ===
+tool             base      fixed  reduction           
+mktemp             98         11         9x
+chmod             389         14        28x
+mv                 98         11         9x
+date               98          1        98x
+TOTAL             683         37        18x
+
+=== idle CPU time over a 30s window (no shims, ps -o time=) ===
+base  :  1.10s CPU over 30s wall = 3.67% of one core
+fixed :  0.23s CPU over 30s wall = 0.77% of one core

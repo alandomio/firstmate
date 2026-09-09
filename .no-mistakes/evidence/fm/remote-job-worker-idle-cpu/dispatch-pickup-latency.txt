@@ -1,0 +1,6 @@
+Dispatch pickup latency is unaffected by the cadence change
+10 trivial fm-touch-job.sh dispatches per variant, FM_REMOTE_JOB_POLL_SECONDS unchanged (0.05s)
+
+dispatch pickup latency, 10 trivial jobs per variant (defaults: poll=0.05s)
+base   n=10  pickup(queued->running) mean  511.9ms  min  280.5  max  972.7   |  end-to-end(stage->done) mean 1371.2ms  min  826.7  max 2689.1
+new    n=10  pickup(queued->running) mean  482.0ms  min  270.2  max 1678.3   |  end-to-end(stage->done) mean 1179.2ms  min  871.7  max 2564.9

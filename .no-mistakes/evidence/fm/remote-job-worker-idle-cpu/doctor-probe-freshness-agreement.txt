@@ -1,0 +1,8 @@
+fm-remote-doctor vs fm_remote_job_probe agree on the heartbeat freshness window
+Simulates the drift the review finding named: FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS
+reconfigured 10 -> 30 in the lib, same live worker, heartbeat backdated 15s.
+Only the doctor script differs between the two rows.
+
+worker.ready heartbeat aged 15s; FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS reconfigured to 30
+base-doctor(55db226)   fm_remote_job_probe: READY     | doctor: fixable: the remote job worker has not reported a fresh probe
+fixed-doctor(2621c0f)  fm_remote_job_probe: READY     | doctor: ok: the remote job worker completed the required-tool probe

@@ -1,0 +1,18 @@
+Cadence regression test: fail-before / pass-after
+
+$ bash tests/fm-remote-job.test.sh   # HEAD tests against the PRE-FIX worker (55db226)
+ok - a repeatedly signalled shutdown still releases ownership for the next worker
+not ok - idle reap forked date 24 times across 24 poll ticks; the dead reap throttle regressed to running every poll tick
+
+$ bash tests/fm-remote-job.test.sh   # this branch (2621c0f + new cadence-bound test)
+ok - idle heartbeat and reap run on their own cadence, not on every poll tick
+ok - a deleted state root fails the worker fast instead of being recreated by the reap sweep
+ok - a heartbeat cadence outside the probe freshness window is refused before the worker serves
+ALL TESTS PASSED
+
+$ bash tests/fm-remote-job.test.sh   # HEAD tests against the round-2 PRE-FIX worker (d5062fc)
+ok - idle heartbeat and reap run on their own cadence, not on every poll tick
+not ok - the worker kept serving after its state root was deleted
+
+Mutation check on the new cadence-bound test (heartbeat<freshness bound removed from the lib):
+not ok - a heartbeat interval of '10' was accepted
