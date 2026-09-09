@@ -914,3 +914,69 @@ Refresh this harness-dependent proof before accepting a cursor upgrade:
 ```sh
 FM_HARNESS_LIVENESS_DRIFT=1 bin/fm-test-run.sh tests/fm-harness-liveness-drift-live-e2e.test.sh
 ```
+
+## Antigravity CLI (agy)
+
+Verified 2026-09-10 against Antigravity CLI (agy) 1.1.28 on Linux, tmux 3.4, crewmate/scout only (the harness-adapters skill "agy" owns the full fact table and operational notes; this section is the dated command/output evidence backing them).
+
+Environment markers, read from a tool subprocess launched under a claude primary:
+
+```sh
+$ agy --dangerously-skip-permissions --model gemini-3.8-flash-low --effort low
+# tool call: env | grep -E 'ANTIGRAVITY|AI_AGENT|CLAUDECODE|GEMINI_API_KEY'
+AI_AGENT=<redacted>
+GEMINI_API_KEY=<redacted>
+CLAUDECODE=<redacted>
+ANTIGRAVITY_AGENTAPI_EXE=<redacted>
+ANTIGRAVITY_AGENT=<redacted>
+```
+
+`ANTIGRAVITY_AGENT=1` and `ANTIGRAVITY_AGENTAPI_EXE=<path>` are the identity markers; `CLAUDECODE` and Claude Code's own `AI_AGENT` leak through unchanged, confirming agy does not clear a foreign primary's markers (`bin/fm-harness.sh` tests the Antigravity markers first for the same reason it tests Cursor's first).
+
+Process identity: `#{pane_current_command}` and `ps -o comm=` on the live agent process both report the literal, unwrapped `agy` - no node-wrapper obfuscation to resolve, unlike cursor-agent.
+
+Busy-state fold, read directly from the conversation database while a turn ran and after it settled:
+
+```sh
+$ sqlite3 ~/.gemini/antigravity-cli/conversations/<uuid>.db \
+    "SELECT idx, step_type, status FROM steps ORDER BY idx;"
+0|14|3
+1|15|3
+2|14|3
+3|15|8   # <- captured mid-turn: status 8 while this step is running
+...
+3|15|3   # <- same row, captured again after the turn settled
+```
+
+A single Escape mid-turn settled the interrupted row to status `3` as well (the same value a normal completion settles to), within the same live capture - confirmed by re-reading the table immediately after sending Escape.
+
+Composer capture, idle, styled (`tmux capture-pane -e -p -S 0 -E -`), showing the bare rule-bounded shape and the plain ASCII `>` glyph:
+
+```
+[38;5;238m────────────────────────────────────────────────────────────
+[38;5;111m>[39m
+[38;5;238m────────────────────────────────────────────────────────────
+[38;5;109m? for shortcuts[39m                                          [38;5;109mGemini 3.8 Flash · low
+```
+
+End-to-end composer classifier result against the real pane (`fm_tmux_composer_state`, `bin/fm-tmux-lib.sh`):
+
+```sh
+idle (no unsent text):        empty
+typed, not submitted:         pending
+mid-turn (Generating...):     empty   # correct - no PENDING TEXT, distinct from the task busy-state fold above
+```
+
+Skill discovery (`/skills` command output, agy 1.1.28):
+
+```
+Create new skills
+  Workspace: <worktree>/.agents/skills/{skill_name}/SKILL.md
+  Global:    ~/.gemini/antigravity-cli/skills/{skill_name}/SKILL.md
+  Shared:    ~/.gemini/skills/{skill_name}/SKILL.md
+```
+
+`/harness-adapters` autocompleted correctly when agy was launched inside firstmate's own worktree (which tracks `.agents/skills/harness-adapters/SKILL.md`); `/no-mistakes` returned `No matches` in an ordinary scratch workspace with no `.agents/skills/no-mistakes/`.
+
+Regression coverage: the composer fix is pinned by the full existing `tests/fm-composer-lib.test.sh` suite (in particular "matrix: pi's separated composer needs identity + structure" and "absent identity cannot prove blank pi pair", both of which the naive structure-only version of this fix broke before the identity-based version was written); `tests/fm-tmux-agent-liveness.test.sh` and `tests/fm-tmux-submit-busy.test.sh` were re-run for regressions on the tmux liveness and delivery-busy changes.
+No dedicated agy-specific portable test exists yet; the live evidence above is the current verification record until one is added.

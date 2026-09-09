@@ -112,7 +112,7 @@
 #   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
-#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|muse)
+#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|muse|agy)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
 #   new adapters. For pi and pi-signed, fm-spawn resolves the selected executable
@@ -1086,7 +1086,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   }
 elif [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
-    ''|claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|muse)
+    ''|claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|muse|agy)
       ARG3=${POS[1]:-}
       ;;
     *' '*)
@@ -1216,6 +1216,27 @@ launch_template() {
     # written below. Nothing to place in the template for it.
     # codex, opencode, and kimi are also markerless and share this inherited-marker hazard; changing their verified launch boundaries belongs in follow-up work.
     muse) printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS XDG_CONFIG_HOME=__MUSECONFIG__ XDG_DATA_HOME=__MUSEDATA__ MUSE_EXPERIMENTAL_FOREIGN_PERSONAL_CONTEXT_KILL=on __MUSEBIN__ --yolo __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    # agy (Antigravity CLI): -i delivers the initial prompt and starts the
+    # interactive session in one shot (verified live, agy 1.1.28; the bare
+    # positional argument shape other adapters use is NOT accepted - agy's
+    # own -i/--prompt-interactive flag is required). --dangerously-skip-
+    # permissions is the CLI's own documented "auto-approve all tool
+    # permission requests without prompting" flag, matching the operator's
+    # own alias; ordinary tool calls (Bash, ReadURL, file Create) were
+    # observed to proceed with no visible approval prompt in the interactive
+    # TUI even without it on this account, and no narrower prompt-vs-skip
+    # flag exists (--mode only toggles plan-vs-execute, never a permission
+    # gate), so the documented flag is kept for its stated guarantee and to
+    # match the fleet-wide explicit-autonomy-flag pattern every other adapter
+    # uses. The credential (GEMINI_API_KEY, or an OAuth login under
+    # ~/.gemini) is read entirely from the ambient environment agy's own
+    # process inherits; nothing here manages or stores it. Foreign markers
+    # are cleared because agy does not clear them itself (see
+    # bin/fm-harness.sh's ordering fix for the same hazard); AI_AGENT is
+    # Claude Code's own subprocess marker, observed leaking through
+    # alongside CLAUDECODE. CURSOR_AGENT/CURSOR_INVOKED_AS are cleared by the
+    # generic per-harness sanitization step below rather than repeated here.
+    agy) printf '%s' 'env -u CLAUDECODE -u AI_AGENT -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS agy --dangerously-skip-permissions __MODELFLAG____EFFORTFLAG__-i "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     *) return 1 ;;
   esac
 }
@@ -1264,6 +1285,17 @@ esac
 # secondmate whose supervision cycle could never be armed.
 if [ "$KIND" = secondmate ] && [ "$HARNESS" = muse ]; then
   echo "error: muse is a verified crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
+  exit 1
+fi
+
+# agy (Antigravity CLI) is likewise crewmate/scout only, for the same reason:
+# a secondmate needs a primary supervision protocol, and agy's own CLI surface
+# has no hook, plugin lifecycle, notify flag, or app-server surface of any
+# kind to build a turn-end guard on (verified against the full `agy --help`
+# and `agy plugin --help` command tree, agy 1.1.28 - its `plugin` subcommand
+# is marketplace import/enable only, not a lifecycle hook registry).
+if [ "$KIND" = secondmate ] && [ "$HARNESS" = agy ]; then
+  echo "error: agy is a verified crewmate/scout adapter only and cannot run a secondmate; it has no hook or lifecycle surface to build a primary supervision protocol on. Select a harness verified for secondmates." >&2
   exit 1
 fi
 
@@ -1414,7 +1446,7 @@ model_flag_for_harness() {
   local harness=$1 model=$2
   [ -n "$model" ] && [ "$model" != default ] || return 0
   case "$harness" in
-    claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|muse)
+    claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|muse|agy)
       printf -- '--model %s ' "$(shell_quote "$model")"
       ;;
   esac
@@ -1474,6 +1506,13 @@ effort_flag_for_harness() {
     # task metadata but never reaches the launch command. Cursor encodes effort
     # in model ids such as cursor-grok-4.5-high, so it also receives no separate
     # effort flag.
+    agy)
+      # agy 1.1.28 --effort accepts only low|medium|high; no xhigh or max
+      # exist in the CLI's own --help. Omit rather than pass a known-bad value.
+      case "$effort" in
+        low|medium|high) printf -- '--effort %s ' "$(shell_quote "$effort")" ;;
+      esac
+      ;;
   esac
 }
 
@@ -2624,6 +2663,32 @@ EOF
         fi
       } > "$STATE/$ID.cursor-session"
       ;;
+    agy*)
+      # agy's turn lifecycle is neither a hook nor a launch flag: it has no
+      # hook or plugin surface of any kind (not even a disabled one, unlike
+      # muse), so firstmate reads its own durable per-conversation SQLite
+      # database instead (bin/fm-busy-lib.sh owns the fold). Like muse and
+      # cursor that is a PULL source with no writer, so nothing is armed and
+      # no record is seeded. This sidecar is the whole binding: it pins the
+      # conversations root and the exact workspace path this task's worktree
+      # is, plus every conversation database that already matches that path
+      # before this pane exists, so a relaunch into a reused worktree folds
+      # its OWN conversation instead of its predecessor's. The classifier
+      # then accepts only one remaining conversation and never guesses
+      # between incarnations.
+      AGY_CONVERSATIONS_ROOT="${AGY_CONVERSATIONS_ROOT_OVERRIDE:-$HOME/.gemini/antigravity-cli/conversations}"
+      rm -f "$STATE/$ID.agy-session-current"
+      {
+        printf 'conversations_root=%s\n' "$AGY_CONVERSATIONS_ROOT"
+        printf 'workspace_root=%s\n' "$WT"
+        while IFS= read -r AGY_PRIOR_CONVERSATION; do
+          [ -n "$AGY_PRIOR_CONVERSATION" ] \
+            && printf 'prior_conversation=%s\n' "$(basename -- "$AGY_PRIOR_CONVERSATION")"
+        done <<EOF
+$(fm_busy_agy_matching_conversations "$AGY_CONVERSATIONS_ROOT" "$WT" || true)
+EOF
+      } > "$STATE/$ID.agy-session"
+      ;;
     kimi*)
       # Kimi's Stop hook is global, but it is inert unless cwd contains this
       # task's token pointer and the token resolves through Firstmate's private
@@ -2799,7 +2864,7 @@ case "$HARNESS" in
 esac
 LAUNCH=${LAUNCH//__WORKTREE__/$sq_worktree}
 case "$HARNESS" in
-  claude|codex|opencode|pi|pi-signed|grok|kimi|muse)
+  claude|codex|opencode|pi|pi-signed|grok|kimi|muse|agy)
     LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS $LAUNCH"
     ;;
 esac

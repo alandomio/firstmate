@@ -311,7 +311,9 @@ fm_composer_strip_ghost() {
 # part of that union for the same reason the others are: without it a cursor
 # submit could never be acknowledged, because cursor parks its terminal cursor
 # outside its composer and the composer verdict is therefore always `unknown`.
-FM_DELIVERY_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working\.\.\.|Ctrl\+c:cancel|ctrl\+c to stop'
+# agy's `esc to cancel` is part of it too, verified live, agy 1.1.28: present
+# in the footer for the whole active turn and absent the instant it settles.
+FM_DELIVERY_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working\.\.\.|Ctrl\+c:cancel|ctrl\+c to stop|esc to cancel'
 FM_DELIVERY_CLAUDE_BUSY_REGEX_DEFAULT='esc to interrupt|…[[:space:]]+\([0-9]+[smh]'
 FM_DELIVERY_CODEX_BUSY_REGEX_DEFAULT='esc to interrupt'
 FM_DELIVERY_OPENCODE_BUSY_REGEX_DEFAULT='esc interrupt'
@@ -326,6 +328,11 @@ FM_DELIVERY_GROK_BUSY_REGEX_DEFAULT='Ctrl\+c:cancel'
 # bin/fm-busy-lib.sh, never from this row.
 FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT='ctrl\+c to stop'
 FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT='^[[:space:]]*(🌑|🌒|🌓|🌔|🌕|🌖|🌗|🌘)[[:space:]]+·[[:space:]]+'
+# agy's busy footer, verified live (agy 1.1.28): present for the whole active
+# turn beside its braille spinner and gone the instant the turn settles. This
+# is a DELIVERY guard only, same caveat as cursor's above; agy's recorded
+# worker state comes from its own semantic fold in bin/fm-busy-lib.sh.
+FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT='esc to cancel'
 
 fm_busy_lines_match() {  # [harness]
   local harness=${1:-} lines regex
@@ -341,6 +348,7 @@ fm_busy_lines_match() {  # [harness]
       grok) regex=$FM_DELIVERY_GROK_BUSY_REGEX_DEFAULT ;;
       kimi) regex=$FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT ;;
       cursor) regex=$FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT ;;
+      agy) regex=$FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT ;;
       '') regex=$FM_DELIVERY_BUSY_REGEX_DEFAULT ;;
       *)
         # A supplied harness must never borrow another harness's signature.
@@ -1384,6 +1392,27 @@ _fm_composer_classify_bare_pi_overlap() {  # <screen> <styled> <has-identity> <i
 # is drawn above the separator pair, so the composer region looks free while the
 # keys would answer the prompt instead of composing (issue #2797). Structure
 # cannot disprove that, so a blocked pi defers rather than claiming empty.
+# A blank single row between two rules is NOT on its own proof of anything - an
+# ordinary shell pane whose unrelated content happens to draw two divider-like
+# lines around a blank one is a real, previously-live counterexample (see
+# "sleep-pane counterexample" and "absent identity cannot prove blank pi pair"
+# below) - so identity is REQUIRED, never inferred from structure alone, for
+# every agent this shape is asked about, agy included.
+#
+# agy (Antigravity CLI) draws the identical separator-bounded shape but has no
+# hook, plugin, session, or app-server surface to source identity from
+# (harness-adapters skill, "agy"). Its per-backend identity instead comes from
+# a real foreground-process check equivalent to pi's own (tmux: comm == agy,
+# no node-wrapper ambiguity to resolve, unlike cursor-agent) and is reported
+# through the same tuple shape as pi's, "agy<TAB>idle|working". Structure
+# still narrows it further: agy's own composer is always exactly ONE content
+# row (verified live, agy 1.1.28), unlike pi's up-to-eight-row box, and it
+# carries none of pi's blocked-menu-above-the-pair hazard (no such overlay was
+# observed to leave the pair intact; agy's own slash-command popup redraws the
+# closing rule away entirely, so the pair never matches at all and this branch
+# is never reached for it) - so once identity has proven the pane IS agy, a
+# single-row pair is classified directly from its content with no separate
+# idle/working distinction needed.
 _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
   local screen=$1 styled=$2 has_identity=$3 identity=$4 agent agent_status state
   if [ "$has_identity" != 1 ]; then
@@ -1400,6 +1429,16 @@ _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
   fi
   agent=${identity%%$'\t'*}
   agent_status=${identity#*$'\t'}
+  if [ "$agent" = agy ]; then
+    if [ "$FM_COMPOSER_SCAN_PI_PAIR_VALID" = 1 ] \
+       && [ "$((FM_COMPOSER_SCAN_PI_CLOSE - FM_COMPOSER_SCAN_PI_OPEN))" -eq 2 ]; then
+      _fm_composer_classify_rows "$screen" "$styled" 0 \
+        "$((FM_COMPOSER_SCAN_PI_OPEN + 1))" "$((FM_COMPOSER_SCAN_PI_CLOSE - 1))"
+    else
+      printf 'unknown'
+    fi
+    return 0
+  fi
   if [ "$agent" != pi ] || [ "$FM_COMPOSER_SCAN_PI_PAIR_VALID" != 1 ]; then
     printf 'unknown'
     return 0

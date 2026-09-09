@@ -76,6 +76,16 @@
 # cleared. See fm_busy_cursor_turn_state for the fold. Cursor's rendered
 # `ctrl+c to stop` footer is deliberately not a state source here.
 #
+# The agy (Antigravity CLI) pull source folds its own durable per-conversation
+# SQLite database (agy has no hook or plugin surface at all - not even a
+# disabled one - so unlike muse there is nothing to gate on a future build).
+# Its `steps` table's `status` column live-verified (agy 1.1.28): 8 while a
+# step is actually running, settling to 3 once it completes OR is
+# interrupted, which covers interruption the same way cursor's transcript
+# does and Claude's Stop hook does not. See fm_busy_agy_run_state for the
+# fold. agy's rendered `esc to cancel` footer is deliberately not a state
+# source here, same caveat as cursor's footer above.
+#
 # Codex negotiation (fm_busy_codex_appserver_observable,
 # fm_busy_codex_hooks_verified): the approved contract prefers Codex's
 # app-server turn lifecycle with capability negotiation, and sanctions its
@@ -822,6 +832,140 @@ fm_busy_cursor_turn_state() {  # <transcript>
   '
 }
 
+fm_busy_agy_binding_path() {  # <state-dir> <id>
+  printf '%s/%s.agy-session' "$1" "$2"
+}
+
+fm_busy_agy_cache_path() {  # <state-dir> <id>
+  printf '%s/%s.agy-session-current' "$1" "$2"
+}
+
+# fm_busy_agy_binding_field: read one field from the sidecar, or fail.
+fm_busy_agy_binding_field() {  # <state-dir> <id> <key>
+  local path line key=$3
+  path=$(fm_busy_agy_binding_path "$1" "$2")
+  [ -f "$path" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "$key="*)
+        line=${line#"$key="}
+        [ -n "$line" ] || return 1
+        printf '%s' "$line"
+        return 0
+        ;;
+    esac
+  done < "$path"
+  return 1
+}
+
+fm_busy_agy_binding_has_prior() {  # <state-dir> <id> <conversation-path>
+  local path line base
+  path=$(fm_busy_agy_binding_path "$1" "$2")
+  [ -f "$path" ] || return 1
+  base=$(basename -- "$3")
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ "$line" = "prior_conversation=$base" ] && return 0
+  done < "$path"
+  return 1
+}
+
+# fm_busy_agy_matching_conversations: every conversation database directly
+# under <conversations-root> whose raw bytes contain <workspace-root>. agy's
+# workspace path is not exposed through any queryable column - each database
+# stores it somewhere inside an opaque protobuf blob (verified live, agy
+# 1.1.28: `grep -a` on the raw file found it) - so this is a byte-level
+# heuristic rather than a structured match, the same tradeoff muse's own flat
+# text scan makes over its JSONL metadata. Callers only ever use this to
+# snapshot the PRE-EXISTING set at spawn time or to resolve a genuinely NEW
+# file afterward, so an imprecise match only widens the prior-exclusion set;
+# it can never wrongly bind a task to another task's conversation, only fail
+# to resolve one (unknown), which is the safe direction.
+fm_busy_agy_matching_conversations() {  # <conversations-root> <workspace-root>
+  local root=$1 ws=$2 f
+  [ -d "$root" ] || return 1
+  for f in "$root"/*.db; do
+    [ -e "$f" ] || continue
+    grep -aqF -- "$ws" "$f" 2>/dev/null && printf '%s\n' "$f"
+  done
+  return 0
+}
+
+fm_busy_agy_cache_field() {  # <state-dir> <id> <key>
+  local path line key=$3
+  path=$(fm_busy_agy_cache_path "$1" "$2")
+  [ -f "$path" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "$key="*)
+        line=${line#"$key="}
+        [ -n "$line" ] || return 1
+        printf '%s' "$line"
+        return 0
+        ;;
+    esac
+  done < "$path"
+  return 1
+}
+
+fm_busy_agy_cache_conversation() {  # <state-dir> <id> <conversation-path>
+  printf 'conversation=%s\n' "$3" > "$(fm_busy_agy_cache_path "$1" "$2")"
+}
+
+# fm_busy_agy_conversation: the ONE conversation database this pane owns, or
+# failure. A cached resolution is trusted as long as the file it names still
+# exists - agy's conversations directory is flat with no day-boundary
+# rotation to invalidate against, unlike muse's sessions tree - which keeps a
+# repeat fold from re-scanning every conversation database (some run several
+# MB) on every poll. Otherwise resolve fresh: every currently matching
+# conversation minus every one the binding recorded as already existing at
+# spawn time must leave exactly one candidate; zero or more than one is a
+# genuine ambiguity (no conversation started yet, or two tasks racing to
+# create their first conversation against the same workspace path in the same
+# window) and stays unresolved rather than guessing.
+fm_busy_agy_conversation() {  # <state-dir> <id>
+  local state=$1 id=$2 cached root ws candidate matched=0 result=
+  cached=$(fm_busy_agy_cache_field "$state" "$id" conversation 2>/dev/null || true)
+  if [ -n "$cached" ] && [ -f "$cached" ]; then
+    printf '%s' "$cached"
+    return 0
+  fi
+  root=$(fm_busy_agy_binding_field "$state" "$id" conversations_root 2>/dev/null) || return 1
+  ws=$(fm_busy_agy_binding_field "$state" "$id" workspace_root 2>/dev/null) || return 1
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    fm_busy_agy_binding_has_prior "$state" "$id" "$candidate" && continue
+    matched=$((matched + 1))
+    result=$candidate
+  done <<EOF
+$(fm_busy_agy_matching_conversations "$root" "$ws" || true)
+EOF
+  [ "$matched" -eq 1 ] || return 1
+  fm_busy_agy_cache_conversation "$state" "$id" "$result"
+  printf '%s' "$result"
+}
+
+# fm_busy_agy_run_state: busy when the LAST step recorded in <conversation-db>
+# is still running, idle when it has settled, unknown otherwise. Live-verified
+# (agy 1.1.28): the steps table's status column reads 8 for a step actually
+# executing and settles to 3 once it completes OR is interrupted - a single
+# Escape settled the last row to 3 within the same turn in a live capture, so
+# this covers interruption the same way cursor's transcript does and Claude's
+# Stop hook does not. No other status value has been observed, so anything
+# else - including no rows at all - is unknown rather than guessed. Read with
+# sqlite3 -readonly, which shares the live WAL-mode file safely with agy's own
+# writer without needing a lock.
+fm_busy_agy_run_state() {  # <conversation-db>
+  local db=$1 status
+  [ -f "$db" ] || return 1
+  command -v sqlite3 >/dev/null 2>&1 || return 1
+  status=$(sqlite3 -readonly "$db" 'SELECT status FROM steps ORDER BY idx DESC LIMIT 1;' 2>/dev/null) || return 1
+  case "$status" in
+    8) printf 'busy' ;;
+    3) printf 'idle' ;;
+    *) return 1 ;;
+  esac
+}
+
 # fm_busy_grok_tail_busy: the Grok-only temporary rendered-tail fallback.
 # Consumes the tail on stdin; 0 when Grok's verified busy signature matches.
 # FM_BUSY_REGEX still globally overrides the signature, mirroring the
@@ -839,7 +983,7 @@ fm_busy_grok_tail_busy() {
 # if available, else reports unknown capture-failed.
 fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
   local backend=$1 target=$2 harness=$3 id=$4 state=$5 tail40=${6-}
-  local out rc r_state r_source native log
+  local out rc r_state r_source native log db
   case "$harness" in
     kimi*)
       if ! fm_busy_kimi_verified; then
@@ -868,6 +1012,21 @@ fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
         busy) printf 'busy cursor-transcript' ;;
         settled) printf 'idle cursor-transcript' ;;
         *) printf 'unknown cursor-transcript' ;;
+      esac
+      return 0
+      ;;
+    agy*)
+      # Semantic, on demand: fold this task's bound conversation database.
+      # See fm_busy_agy_run_state above for the verified status mapping. The
+      # rendered `esc to cancel` footer is deliberately NOT consulted here.
+      if ! db=$(fm_busy_agy_conversation "$state" "$id"); then
+        printf 'unknown agy-conversation'
+        return 0
+      fi
+      case "$(fm_busy_agy_run_state "$db" 2>/dev/null)" in
+        busy) printf 'busy agy-conversation' ;;
+        idle) printf 'idle agy-conversation' ;;
+        *) printf 'unknown agy-conversation' ;;
       esac
       return 0
       ;;

@@ -327,6 +327,45 @@ test_matrix_pi_separated_needs_identity() {
   pass "matrix: pi's separated composer needs identity + structure; the blank row alone never proves it"
 }
 
+# agy (Antigravity CLI) draws the identical separator-bounded shape but has no
+# blocked-menu-above-the-pair hazard of its own and its composer is always
+# exactly one content row, unlike pi's up-to-eight-row box (verified live,
+# agy 1.1.28). Its identity comes from a real per-backend process probe
+# (bin/fm-tmux-lib.sh's fm_tmux_composer_identity, extended from pi-only),
+# never from structure alone - the same blank-row counterexample that refuses
+# pi above must also refuse a generic `none` identity here, and only an
+# actual `agy` identity tuple may classify the single-row pair.
+test_matrix_agy_separated_needs_identity() {
+  local screen typed wide agy_idle agy_working none
+  screen=$'transcript\n────────────────────────\n\n────────────────────────\n footer'
+  agy_idle=$(printf 'agy\tidle'); agy_working=$(printf 'agy\tworking')
+  none=$(printf 'zsh\t')
+  assert_screen "agy idle with identity" empty "$CAPS_STYLED" "$screen" '' "$agy_idle"
+  assert_screen "agy idle on tmux with identity" empty "$CAPS_TMUX" "$screen" 2 "$agy_idle"
+  assert_screen "agy pair without identity capability" unknown "$CAPS_STYLED_NOID" "$screen"
+  # The same live counterexample pi's own test pins: a plain shell's unrelated
+  # content drawing two divider-like lines around a blank one must never read
+  # empty just because a probe ran and found no pi - it must also find no agy.
+  assert_screen "sleep-pane counterexample stays unknown for agy too" unknown \
+    "$CAPS_TMUX" "$screen" 2 "$none"
+  assert_screen "probe-absent alone cannot prove blank pi-shaped pair" unknown \
+    "$CAPS_TMUX" "$screen" 2 probe-absent
+  typed=$'────────────────────────\nfix the flaky test\n────────────────────────'
+  assert_screen "agy typed" pending "$CAPS_STYLED" "$typed" '' "$agy_idle"
+  assert_screen "agy typed on tmux" pending "$CAPS_TMUX" "$typed" 1 "$agy_idle"
+  # An agy identity offers no proof for a busy turn's own composer row; the
+  # content itself still settles it (blank here), same as pi's working state
+  # would for content that happens to be genuinely blank.
+  assert_screen "agy working, composer content still classifies" empty \
+    "$CAPS_STYLED" "$screen" '' "$agy_working"
+  # A wider pair (more than one content row) is not agy's own shape; without a
+  # genuine pi identity it stays unknown rather than guessed from structure.
+  wide=$'────────────────────────\n\n\n────────────────────────'
+  assert_screen "a wider blank pair with agy identity stays unknown" unknown \
+    "$CAPS_STYLED" "$wide" '' "$agy_idle"
+  pass "matrix: agy's separated composer needs a real identity, not structure alone"
+}
+
 test_matrix_opencode_leftbar_signals() {
   # Real idle opencode: `┃`-prefixed rows holding the "Ask anything..." hint,
   # blanks, and a Build-mode footer. Two independent idle signals: the shared
@@ -618,6 +657,7 @@ test_matrix_muse_truecolor_glyph_survives_signal_loss
 test_matrix_cursor_reverse_video_placeholder_remnant
 test_matrix_herdr_halfblock_rule_bounds_bare_wrap
 test_matrix_pi_separated_needs_identity
+test_matrix_agy_separated_needs_identity
 test_matrix_opencode_leftbar_signals
 test_matrix_grok_titled_bottom_border
 test_matrix_kimi_bordered_shell_glyph_box
