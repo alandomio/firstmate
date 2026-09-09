@@ -19,6 +19,7 @@ REAL_GIT=$(command -v git)
 OTHER_PID=
 RECOVERY_WORKER_PID=
 REPEAT_WORKER_PID=
+IDLE_WORKER_PID=
 mkdir -p "$REMOTE_ROOT/bin" "$REMOTE_HOME" "$ACCOUNT_HOME" "$RUNTIME_BIN"
 # worker.pid records the serving child, not its restart supervisor, so stopping
 # that pid alone leaves the supervisor to respawn - the leak
@@ -27,6 +28,7 @@ cleanup_remote_job_fixture() {
   [ -z "$OTHER_PID" ] || kill "$OTHER_PID" 2>/dev/null || true
   [ -z "$RECOVERY_WORKER_PID" ] || kill "$RECOVERY_WORKER_PID" 2>/dev/null || true
   [ -z "$REPEAT_WORKER_PID" ] || kill "$REPEAT_WORKER_PID" 2>/dev/null || true
+  [ -z "$IDLE_WORKER_PID" ] || kill "$IDLE_WORKER_PID" 2>/dev/null || true
   if [ -f "$STATE_ROOT/worker.pid" ]; then
     fm_remote_job_stop_worker_tree "$(cat "$STATE_ROOT/worker.pid")" || true
   fi
@@ -690,5 +692,62 @@ kill -TERM "$REPEAT_WORKER_PID"
 wait "$REPEAT_WORKER_PID" 2>/dev/null || true
 REPEAT_WORKER_PID=
 pass "a repeatedly signalled shutdown still releases ownership for the next worker"
+
+# Fake mktemp/date shadow the real ones on PATH to count calls, still exec'ing
+# through. Idle mktemp comes only from the heartbeat write; idle date comes
+# only from reap_stale - each isolates one cadence from the fast poll tick.
+IDLE_HOME="$TMP_ROOT/idle-cadence-account"
+IDLE_STATE="$TMP_ROOT/idle-cadence-jobs"
+IDLE_BIN="$TMP_ROOT/idle-cadence-bin"
+IDLE_MKTEMP_LOG="$TMP_ROOT/idle-cadence-mktemp.log"
+IDLE_DATE_LOG="$TMP_ROOT/idle-cadence-date.log"
+mkdir -p "$IDLE_HOME" "$IDLE_BIN"
+chmod 700 "$IDLE_HOME"
+: > "$IDLE_MKTEMP_LOG"
+: > "$IDLE_DATE_LOG"
+REAL_MKTEMP=$(command -v mktemp)
+REAL_DATE=$(command -v date)
+cat > "$IDLE_BIN/mktemp" <<SH
+#!/bin/bash
+printf 'call\n' >> "$IDLE_MKTEMP_LOG"
+exec "$REAL_MKTEMP" "\$@"
+SH
+cat > "$IDLE_BIN/date" <<SH
+#!/bin/bash
+printf 'call\n' >> "$IDLE_DATE_LOG"
+exec "$REAL_DATE" "\$@"
+SH
+chmod +x "$IDLE_BIN/mktemp" "$IDLE_BIN/date"
+HOME="$IDLE_HOME" PATH="$IDLE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+  FM_REMOTE_JOB_STATE_ROOT="$IDLE_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=1 FM_REMOTE_JOB_REAP_INTERVAL_SECONDS=1 \
+  FM_REMOTE_JOB_POLL_SECONDS=0.02 \
+  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
+  > "$TMP_ROOT/idle-cadence.out" 2> "$TMP_ROOT/idle-cadence.err" &
+IDLE_WORKER_PID=$!
+for _ in $(seq 1 100); do
+  [ -f "$IDLE_STATE/worker.ready" ] && break
+  sleep 0.05
+done
+assert_present "$IDLE_STATE/worker.ready" "the idle-cadence worker did not become ready"
+# Startup (lock acquisition, identity, pid, the first heartbeat) already forked
+# mktemp/date before this point; only counts from here measure the idle
+# cadence itself, not one-time startup cost.
+: > "$IDLE_MKTEMP_LOG"
+: > "$IDLE_DATE_LOG"
+sleep 3
+kill -TERM "$IDLE_WORKER_PID"
+wait "$IDLE_WORKER_PID" 2>/dev/null || true
+IDLE_WORKER_PID=
+MKTEMP_CALLS=$(wc -l < "$IDLE_MKTEMP_LOG" | tr -d ' ')
+DATE_CALLS=$(wc -l < "$IDLE_DATE_LOG" | tr -d ' ')
+# A 20ms poll tick over 3 idle seconds would fork each of these roughly 150
+# times if the heartbeat or reap ran on every tick instead of its own ~1s
+# cadence; a real ~1s cadence forks each only a handful of times.
+[ "$MKTEMP_CALLS" -ge 2 ] && [ "$MKTEMP_CALLS" -le 10 ] \
+  || fail "idle heartbeat forked mktemp $MKTEMP_CALLS times in 3s at a 1s interval; expected the write gated to its own cadence"
+[ "$DATE_CALLS" -ge 2 ] && [ "$DATE_CALLS" -le 10 ] \
+  || fail "idle reap forked date $DATE_CALLS times in 3s at a 1s interval; the dead reap throttle regressed to running every poll tick"
+pass "idle heartbeat and reap run on their own cadence, not on every poll tick"
 
 echo "ALL TESTS PASSED"
