@@ -15,6 +15,15 @@
 # have been committed. The library header owns the exact record fields and
 # lifecycle.
 #
+# Job pickup stays on the fast FM_REMOTE_JOB_POLL_SECONDS tick, while the two
+# loop-maintenance duties run on their own cadence so an idle worker does not
+# fork a heartbeat write and a full queue rescan every tick: worker.ready is
+# refreshed every FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS and stale done
+# records are swept every FM_REMOTE_JOB_REAP_INTERVAL_SECONDS. That heartbeat
+# interval is validated strictly below FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS,
+# the window the library's probe tolerates, so a healthy worker between writes
+# never reads as unready.
+#
 # The worker is abandoned when its configured FM_ROOT stops being a genuine
 # Firstmate checkout - the state a pruned no-mistakes gate worktree, a returned
 # pooled worktree, or a removed test fixture root leaves behind. It can never
@@ -717,6 +726,9 @@ main() {
       fi
     fi
     if [ "$SECONDS" -ge "$next_reap" ]; then
+      # The sweep re-prepares the state tree, so refresh first: a deleted state
+      # root must fail this write and stop the worker for its supervisor rather
+      # than be silently recreated behind an owner that holds no lock.
       worker_refresh_heartbeat
       fm_remote_job_reap_stale "$account_home" || true
       next_reap=$((SECONDS + FM_REMOTE_JOB_REAP_INTERVAL_SECONDS))

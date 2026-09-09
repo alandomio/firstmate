@@ -802,4 +802,38 @@ TRIPWIRE_WORKER_PID=
 assert_absent "$TRIPWIRE_STATE" "the reap sweep recreated the deleted worker state root behind an unowned worker"
 pass "a deleted state root fails the worker fast instead of being recreated by the reap sweep"
 
+# A prober reads worker.ready as fresh for FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS,
+# so a heartbeat cadence at or past that window would let a healthy worker read
+# as unready between writes. Settings validation refuses it before any state.
+for BAD_HEARTBEAT in '' abc 0 "$FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS" \
+  "$((FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS + 1))"; do
+  ( FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=$BAD_HEARTBEAT
+    fm_remote_job_validate_settings ) \
+    && fail "a heartbeat interval of '$BAD_HEARTBEAT' was accepted"
+done
+( FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=$((FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS - 1))
+  fm_remote_job_validate_settings ) \
+  || fail "the widest heartbeat interval still inside the freshness window was rejected"
+for BAD_REAP in '' abc 0; do
+  ( FM_REMOTE_JOB_REAP_INTERVAL_SECONDS=$BAD_REAP
+    fm_remote_job_validate_settings ) \
+    && fail "a reap interval of '$BAD_REAP' was accepted"
+done
+BOUNDS_HOME="$TMP_ROOT/bounds-home"
+BOUNDS_STATE="$TMP_ROOT/bounds-jobs"
+mkdir -p "$BOUNDS_HOME"
+chmod 700 "$BOUNDS_HOME"
+BOUNDS_STATUS=0
+HOME="$BOUNDS_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+  FM_REMOTE_JOB_STATE_ROOT="$BOUNDS_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS="$FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS" \
+  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
+  > "$TMP_ROOT/bounds.out" 2> "$TMP_ROOT/bounds.err" || BOUNDS_STATUS=$?
+[ "$BOUNDS_STATUS" -ne 0 ] \
+  || fail "the worker served with a heartbeat cadence outside the probe freshness window"
+grep -q 'bounds or timeout are invalid' "$TMP_ROOT/bounds.err" \
+  || fail "the refused worker did not report invalid bounds: $(cat "$TMP_ROOT/bounds.err")"
+assert_absent "$BOUNDS_STATE/worker.ready" "a worker with a refused heartbeat cadence still published a heartbeat"
+pass "a heartbeat cadence outside the probe freshness window is refused before the worker serves"
+
 echo "ALL TESTS PASSED"
