@@ -50,8 +50,9 @@
 # Verdicts - a closed set, first match wins:
 #   UNKNOWN         landing could not be established: no meta, no worktree=
 #                   key, an unreadable worktree or a path that is not itself
-#                   a checkout root, unpushed commits whose remote branch is
-#                   gone with no proof the work landed, or untracked files
+#                   a checkout root, unpushed commits of a branch pushed once
+#                   (its upstream is gone, or a pr= is recorded) with no
+#                   proof the work landed, or untracked files
 #                   with no identical untracked copy in a sibling worktree.
 #                   A real outcome with its reason in the notes - never a guess.
 #   NO-WORKTREE     the meta names a worktree path that no longer exists;
@@ -62,7 +63,7 @@
 #   PR-OPEN         no local work at risk; the PR/MR is open without
 #                   conflicts (its merge status is in the pr: field).
 #   PR-UNCHECKED    no local work at risk; a pr= is recorded but its state
-#                   was not read (a sweep without --remote, or a failed lookup).
+#                   was not read (lookups off, or a failed lookup).
 #   LEFTOVERS-ONLY  no local work at risk and no open PR; untracked files
 #                   remain, every file also untracked and identical in a
 #                   sibling worktree (what fm-teardown.sh refuses on as
