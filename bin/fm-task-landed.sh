@@ -237,7 +237,7 @@ EOF
     fi
     theirs=$(GIT_LITERAL_PATHSPECS=1 git -C "$sib" ls-files -o --exclude-standard -- "${specs[@]}" 2>/dev/null) || continue
     cand=$(tl_filter_lines in "$pending" "$theirs" | while IFS= read -r p; do
-      case "$p" in '"'*) continue ;; esac
+      case "$p" in ('"'*) continue ;; esac
       [ -f "$WT/$p" ] && [ -r "$WT/$p" ] && [ -f "$sib/$p" ] && [ -r "$sib/$p" ] && printf '%s\n' "$p"
     done)
     [ -n "$cand" ] || continue
@@ -441,8 +441,8 @@ EOF
   ON_REMOTE=$(tl_git for-each-ref --contains HEAD --format='%(refname)' refs/remotes/ 2>/dev/null |
     while IFS= read -r r; do
       case "$r" in
-        refs/remotes/"$GATE_REMOTE"/*|refs/remotes/*/HEAD) ;;
-        *) printf '%s\n' "${r#refs/remotes/}" ;;
+        (refs/remotes/"$GATE_REMOTE"/*|refs/remotes/*/HEAD) ;;
+        (*) printf '%s\n' "${r#refs/remotes/}" ;;
       esac
     done)
   gate_holds=$(tl_git for-each-ref --contains HEAD --count=1 --format=x "refs/remotes/$GATE_REMOTE/" 2>/dev/null)
