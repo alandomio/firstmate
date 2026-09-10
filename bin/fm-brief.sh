@@ -82,6 +82,16 @@
 # Grounding, because it is required content of that line rather than a separate search-report
 # action, and a secondmate charter omits it for the same reason Grounding is omitted there: its
 # own crewmates each get their own generated brief carrying the same contract.
+# Ship and scout briefs also carry a firstmate-authored recall section between
+# Task and Grounding, with {RECALL_FOUND} and {RECALL_CHANGED} placeholders that
+# firstmate fills before dispatch: what its recall returned, quoted, and the shape
+# decision (project, base branch, delivery mode, scope) it changed, where "Nothing"
+# is a first-class answer. It exists because the worker's own Grounding runs after
+# those decisions are fixed, and a worker cannot correct a decision made before it
+# existed. bin/fm-spawn.sh refuses a fresh ship or scout spawn while either
+# placeholder remains; it checks only that each was replaced, never with what, so
+# an honest "Nothing" stays the cheapest way past it. A secondmate charter omits
+# the section for the same reason it omits Grounding.
 # Refuses to overwrite an existing brief.
 set -eu
 
@@ -391,12 +401,31 @@ EOF
 HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
 
+# Firstmate-authored recall, filled before dispatch. The {RECALL_FOUND} and
+# {RECALL_CHANGED} tokens are what bin/fm-spawn.sh refuses to launch with, so a
+# rename here must change that check too.
+IFS= read -r -d '' RECALL_SECTION <<'EOF' || true
+# Firstmate recall - written by firstmate before dispatch
+Firstmate filled this section, not you, while choosing this task's shape - project, base branch, delivery mode, and scope - before you existed.
+It is separate from your own `# Grounding` below: that is your search, this is the record of firstmate's, and if yours contradicts it, say so in the status line Grounding asks for.
+"Nothing" in either part is an honest answer, not an omission.
+
+What firstmate already knows:
+{RECALL_FOUND: firstmate - quote verbatim, never summarise, what your recall returned on this subject, or write "Nothing relevant" and name what you searched.}
+
+What it changed about this brief:
+{RECALL_CHANGED: firstmate - one sentence naming the shape decision it changed, such as "for this reason the base branch is `release`, the one that deploys, and not `develop`", or write "Nothing". Nothing is a first-class answer: never invent a change to fill this line, because a fabricated grounding line launders a guess as evidence.}
+EOF
+RECALL_SECTION=${RECALL_SECTION%$'\n'}
+
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
 # Task
 {TASK}
+
+$RECALL_SECTION
 
 # Grounding
 Before your first substantive action, search PP Brain (\`search_knowledge\` with both \`query\` and \`prompt\` populated - one alone kills two of six retrieval paths) and the local memory store for prior decisions, refuted approaches, and known traps on this subject.
@@ -446,7 +475,7 @@ Before reporting done, read and follow \`$FM_ROOT/.agents/skills/captain-hold-li
 When the report is complete, append \`done: {one-line conclusion}\` to the status file and stop.
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; firstmate may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
 EOF
-echo "scaffolded: $BRIEF (scout; replace {TASK})"
+echo "scaffolded: $BRIEF (scout; replace {TASK}, {RECALL_FOUND}, {RECALL_CHANGED})"
 exit 0
 fi
 
@@ -523,6 +552,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 # Task
 {TASK}
 
+$RECALL_SECTION
+
 # Grounding
 Before your first substantive action, search PP Brain (\`search_knowledge\` with both \`query\` and \`prompt\` populated - one alone kills two of six retrieval paths) and the local memory store for prior decisions, refuted approaches, and known traps on this subject.
 Treat the \`# Task\` section above as firstmate's assembly of that context, a starting point rather than a substitute.
@@ -589,4 +620,4 @@ If this task produced durable project-intrinsic knowledge, raise it as a \`note:
 
 $DOD
 EOF
-echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK})"
+echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK}, {RECALL_FOUND}, {RECALL_CHANGED})"

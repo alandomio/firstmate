@@ -8,6 +8,7 @@
 # when the brief it is about to hand the worker records a different mode. Scout
 # spawns carry no delivery posture at all. The registry keeps only the captain's
 # standing posture, for the mechanical consumers and for one advisory notice.
+# The spawn also refuses a brief whose firstmate recall section was never filled.
 #
 # Every spawn case here stops before any endpoint exists: the delivery checks run
 # ahead of backend creation, and a fake `tmux` that exits non-zero backstops the
@@ -146,6 +147,53 @@ EOF
   pass "fm-spawn: the brief's recorded mode and the spawn's explicit mode must agree"
 }
 
+# fm-brief.sh scaffolds a firstmate recall section whose placeholders firstmate
+# fills while fixing the task's shape, before any worker exists. A spawn that
+# would hand a worker a brief with that step skipped refuses and names the
+# placeholder. Only replacement is checked, so an honest "Nothing" clears it.
+test_spawn_refuses_an_unfilled_recall_section() {
+  local rec home proj fakebin out status brief
+  rec=$(make_home recall)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" recall-ship-d1 proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "could not scaffold the recall ship brief"
+  brief="$home/data/recall-ship-d1/brief.md"
+  perl -0pi -e 's/\{TASK\}/Fix the sample./' "$brief"
+
+  out=$(run_spawn "$home" "$fakebin" recall-ship-d1 "$proj" claude --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a ship brief with an unfilled recall section should not launch"
+  assert_contains "$out" "still carries its unfilled {RECALL_FOUND} placeholder" \
+    "the refusal did not name the unfilled recall placeholder"
+  assert_contains "$out" '"Nothing" is a valid answer' \
+    "the refusal did not say that Nothing is an acceptable fill"
+  assert_absent "$home/state/recall-ship-d1.meta" "an unfilled-recall spawn wrote task metadata"
+
+  perl -0pi -e 's/\{RECALL_FOUND:[^}]*\}/Nothing relevant; searched the learnings file./' "$brief"
+  out=$(run_spawn "$home" "$fakebin" recall-ship-d1 "$proj" claude --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a ship brief with half its recall section filled should not launch"
+  assert_contains "$out" "still carries its unfilled {RECALL_CHANGED} placeholder" \
+    "the refusal did not name the remaining recall placeholder"
+
+  # "Nothing" clears the check; this spawn then fails only later, at the refusing tmux.
+  perl -0pi -e 's/\{RECALL_CHANGED:[^}]*\}/Nothing./' "$brief"
+  out=$(run_spawn "$home" "$fakebin" recall-ship-d1 "$proj" claude --mode no-mistakes --yolo off)
+  assert_not_contains "$out" "unfilled {RECALL_" "a recall section answered with Nothing was refused"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" recall-scout-d2 proj --scout >/dev/null 2>&1 \
+    || fail "could not scaffold the recall scout brief"
+  out=$(run_spawn "$home" "$fakebin" recall-scout-d2 "$proj" claude --scout)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a scout brief with an unfilled recall section should not launch"
+  assert_contains "$out" "still carries its unfilled {RECALL_FOUND} placeholder" \
+    "a scout spawn did not check its recall section"
+  assert_absent "$home/state/recall-scout-d2.meta" "an unfilled-recall scout spawn wrote task metadata"
+  pass "fm-spawn: a ship or scout spawn refuses an unfilled recall section, and Nothing is an acceptable fill"
+}
+
 # The registry is the captain's standing posture, so dropping below its rigor is
 # allowed but never silent, while matching or exceeding it stays quiet. An
 # unregistered project resolves to the same no-mistakes standing default
@@ -275,6 +323,7 @@ EOF
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
+test_spawn_refuses_an_unfilled_recall_section
 test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract
