@@ -401,9 +401,10 @@ EOF
 HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
 
-# Firstmate-authored recall, filled before dispatch. The {RECALL_FOUND} and
-# {RECALL_CHANGED} tokens are what bin/fm-spawn.sh refuses to launch with, so a
-# rename here must change that check too.
+# Firstmate-authored recall, filled before dispatch. The unfilled prefixes
+# "{RECALL_FOUND: firstmate - " and "{RECALL_CHANGED: firstmate - " are what
+# bin/fm-spawn.sh refuses to launch with, so a rename or rewording of either
+# prefix here must change that check too.
 IFS= read -r -d '' RECALL_SECTION <<'EOF' || true
 # Firstmate recall - written by firstmate before dispatch
 Firstmate filled this section, not you, while choosing this task's shape - project, base branch, delivery mode, and scope - before you existed.

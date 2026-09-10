@@ -183,6 +183,17 @@ EOF
   out=$(run_spawn "$home" "$fakebin" recall-ship-d1 "$proj" claude --mode no-mistakes --yolo off)
   assert_not_contains "$out" "unfilled {RECALL_" "a recall section answered with Nothing was refused"
 
+  # A filled brief that merely names the bare tokens, as a task about this very
+  # section would, is not mistaken for one still carrying its placeholders.
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" recall-mention-d3 proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "could not scaffold the recall-mention ship brief"
+  brief="$home/data/recall-mention-d3/brief.md"
+  perl -0pi -e 's/\{RECALL_FOUND:[^}]*\}/Nothing relevant; searched the learnings file./; s/\{RECALL_CHANGED:[^}]*\}/Nothing./' "$brief"
+  perl -0pi -e 's/\{TASK\}/Rename the {RECALL_FOUND} and {RECALL_CHANGED} placeholders in bin\/fm-brief.sh./' "$brief"
+  out=$(run_spawn "$home" "$fakebin" recall-mention-d3 "$proj" claude --mode no-mistakes --yolo off)
+  assert_not_contains "$out" "unfilled {RECALL_" \
+    "a filled brief whose Task mentions the bare recall tokens was refused"
+
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" recall-scout-d2 proj --scout >/dev/null 2>&1 \
     || fail "could not scaffold the recall scout brief"
   out=$(run_spawn "$home" "$fakebin" recall-scout-d2 "$proj" claude --scout)
