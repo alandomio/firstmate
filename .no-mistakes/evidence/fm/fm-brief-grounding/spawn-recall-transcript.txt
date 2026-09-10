@@ -1,0 +1,46 @@
+# fm-brief.sh -> fm-spawn.sh recall enforcement transcript
+# sandbox FM_HOME, fake tmux that exits 1 (so nothing is ever launched), FM_GATE_REFUSE_BYPASS=1 exactly as tests/lib.sh sets for the suite
+
+$ fm-brief.sh demo-ship proj --mode no-mistakes
+scaffolded: $TMP/home/data/demo-ship/brief.md (ship, mode=no-mistakes; replace {TASK}, {RECALL_FOUND}, {RECALL_CHANGED})
+
+$ fm-spawn.sh demo-ship $PROJ claude --mode no-mistakes --yolo off   # only {TASK} filled
+error: $TMP/home/data/demo-ship/brief.md still carries its unfilled {RECALL_FOUND} placeholder; fill the firstmate recall section with what you consulted before fixing this task's shape and what it changed ("Nothing" is a valid answer), then spawn again
+[exit=1]
+[task meta written: no]
+
+$ fm-spawn.sh demo-ship ...   # RECALL_FOUND filled, RECALL_CHANGED still unfilled
+error: $TMP/home/data/demo-ship/brief.md still carries its unfilled {RECALL_CHANGED} placeholder; fill the firstmate recall section with what you consulted before fixing this task's shape and what it changed ("Nothing" is a valid answer), then spawn again
+[exit=1]
+[task meta written: no]
+
+$ fm-spawn.sh demo-ship ...   # both parts answered with Nothing: clears the recall check, then stops later at the refusing fake tmux
+
+[exit=1]
+
+--- filled recall section as the worker receives it:
+# Firstmate recall - written by firstmate before dispatch
+Firstmate filled this section, not you, while choosing this task's shape - project, base branch, delivery mode, and scope - before you existed.
+It is separate from your own `# Grounding` below: that is your search, this is the record of firstmate's, and if yours contradicts it, say so in the status line Grounding asks for.
+"Nothing" in either part is an honest answer, not an omission.
+
+What firstmate already knows:
+Nothing relevant; searched data/learnings.md for "sample".
+
+What it changed about this brief:
+Nothing.
+
+# Grounding
+
+$ fm-spawn.sh demo-mention ...   # both parts filled; Task text mentions the bare {RECALL_FOUND}/{RECALL_CHANGED} tokens
+
+[exit=1]
+
+$ fm-spawn.sh demo-scout $PROJ claude --scout   # scout brief, recall unfilled
+error: $TMP/home/data/demo-scout/brief.md still carries its unfilled {RECALL_FOUND} placeholder; fill the firstmate recall section with what you consulted before fixing this task's shape and what it changed ("Nothing" is a valid answer), then spawn again
+[exit=1]
+[task meta written: no]
+
+$ fm-spawn.sh demo-scout --relaunch   # same unfilled brief; relaunch is not held by the recall check
+error: --relaunch needs an existing task record; no $TMP/home/state/demo-scout.meta
+[exit=1]

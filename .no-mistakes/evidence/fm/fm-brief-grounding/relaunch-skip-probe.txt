@@ -1,0 +1,4 @@
+--- fm-spawn.sh rl90 --relaunch --harness claude (brief still carries both unfilled recall placeholders)
+spawned rl90 harness=claude kind=ship mode=no-mistakes yolo=off window=fmses:fm-rl90 worktree=$TMP/recallprobe-27297/wt
+[exit=0]
+ok - probe: fm-spawn --relaunch is not held by an unfilled firstmate recall section
