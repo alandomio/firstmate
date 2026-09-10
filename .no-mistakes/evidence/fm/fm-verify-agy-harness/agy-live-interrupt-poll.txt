@@ -1,0 +1,40 @@
+05:12:27  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:28  busy=idle agy-conversation    identity=agy/idle     footer=
+05:12:29  busy=idle agy-conversation    identity=agy/idle     footer=
+05:12:30  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:32  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:33  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:34  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:35  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:36  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:37  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:38  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:39  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:40  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:42  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:43  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:44  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:45  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:46  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:47  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:48  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:49  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:50  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:51  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:52  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:53  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:54  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:55  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:56  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:58  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:59  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:13:00  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:13:01  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:13:02  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:13:03  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:13:04  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:13:05  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:13:06  busy=idle agy-conversation    identity=agy/working  footer=esc to cancel
+05:13:07  busy=idle agy-conversation    identity=agy/idle     footer=
+05:13:08  busy=idle agy-conversation    identity=             footer=
+05:13:09  busy=idle agy-conversation    identity=             footer=

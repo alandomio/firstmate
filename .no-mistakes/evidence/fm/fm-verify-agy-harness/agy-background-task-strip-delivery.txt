@@ -1,0 +1,33 @@
+### CONFIRMATION RUN 2 - agy background-task strip vs firstmate delivery
+
+[1] pane with NO background task; composer verdict:
+    fm_tmux_composer_state = empty
+    | ────────────────────────────────────────────────────────────────────────────────
+    | >
+    | ────────────────────────────────────────────────────────────────────────────────
+    | ? for shortcuts                                        Gemini 3.7 Flash · medium
+
+[2] arm a background task (a crewmate running a long build/test does this)
+    fm_tmux_submit_core verdict = empty   <- delivery confirmed
+    pane now:
+    | >
+    | ────────────────────────────────────────────────────────────────────────────────
+    |   ● [04:47:31] sleep 90 running
+    | ────────────────────────────────────────────────────────────────────────────────
+    | ? for shortcuts                   Gemini 3.7 Flash · medium · 1 task(s) · /tasks
+    fm_tmux_composer_state = unknown
+    fm_busy_classify       = idle agy-conversation
+
+[3] deliver a captain steer while that strip is on screen
+    fm_tmux_submit_core verdict = unknown
+    (bin/fm-send.sh maps this verdict: empty->delivered, pending->exit 3 'delivered, unconfirmed',
+     anything else -> 'error: text not submitted ... delivery unconfirmed' + exit 1 + pending-reply discarded)
+    but did agy actually get it?
+    | > Reply with exactly the word CHERRY and nothing else.
+    |   CHERRY
+    | ────────────────────────────────────────────────────────────────────────────────
+    | >
+    | ────────────────────────────────────────────────────────────────────────────────
+    |   ● [04:47:31] sleep 90 running
+    | ────────────────────────────────────────────────────────────────────────────────
+    | ? for shortcuts                   Gemini 3.7 Flash · medium · 1 task(s) · /tasks

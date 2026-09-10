@@ -1,0 +1,19 @@
+workspace_root = /tmp/agy-wal-repro.ILY8qh/workspace
+
+1. a live agy session: rows written, WAL not yet checkpointed (what firstmate polls during turn 1)
+0
+    while the session holds its writes in the WAL:
+      <id>.db      bytes=4096  workspace-path occurrences=0
+      <id>.db-wal  bytes=32992  workspace-path occurrences=1
+      fm_busy_agy_matching_conversations -> []
+      fm_busy_classify tmux none agy      -> [unknown agy-conversation]
+
+2. the same database after SQLite checkpoints the WAL into <id>.db (agy exit, or an automatic checkpoint)
+    after the checkpoint:
+      <id>.db      bytes=16384  workspace-path occurrences=1
+      <id>.db-wal  absent (checkpointed away)
+      fm_busy_agy_matching_conversations -> [/tmp/agy-wal-repro.ILY8qh/conversations/dddddddd-dddd-dddd-dddd-dddddddddddd.db]
+      fm_busy_classify tmux none agy      -> [busy agy-conversation]
+
+3. the steps table itself was readable all along - only the BINDING is blind to the WAL
+idx=0 step_type=15 status=8

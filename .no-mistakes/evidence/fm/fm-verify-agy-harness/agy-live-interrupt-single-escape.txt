@@ -1,0 +1,41 @@
+t(+s)   | fm_busy_classify         | identity    | composer  | agy pane footer
+--------+--------------------------+-------------+-----------+-------------------------------
++0.0    | idle agy-conversation    | agy/idle    | pending   | esc to cancel
++0.9    | busy agy-conversation    | agy/working | empty     | esc to cancel
++1.7    | busy agy-conversation    | agy/working | empty     | esc to cancel
++2.6    | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++3.9    | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++5.3    | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++6.7    | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++8.1    | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++9.4    | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++10.9   | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++12.3   | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++13.8   | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
+>>> sending ONE Escape (no clear key) <<<
++15.4   | busy agy-conversation    | agy/working | unknown   | ? for shortcuts                   Gemini 3
++16.6   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++17.8   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++19.1   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++20.3   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++21.5   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++22.7   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++23.9   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++25.1   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++26.3   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++27.5   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++28.7   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++29.9   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++31.1   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
+
+--- pane after interrupt ---
+  | ● ManageTask(status 29bc93fa-.../ta...) (ctrl+o to
+  | expand)
+  |
+  |   ⎿  Interrupted · What should Antigravity CLI do instead?
+  | ────────────────────────────────────────────────────────────────────────────────
+  | >
+  | ────────────────────────────────────────────────────────────────────────────────
+  |   ● [04:42:38] sleep 45 running
+  | ────────────────────────────────────────────────────────────────────────────────
+  | ? for shortcuts                   Gemini 3.7 Flash · medium · 1 task(s) · /tasks

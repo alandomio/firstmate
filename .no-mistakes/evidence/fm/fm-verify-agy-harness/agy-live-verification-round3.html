@@ -1,0 +1,213 @@
+<!doctype html><meta charset="utf-8"><style>
+body{background:#12131a;color:#e6e6e6;font-family:system-ui,sans-serif;margin:24px}
+h1{font-size:20px;margin:0 0 4px} p.sub{color:#9aa0b4;margin:0 0 20px;font-size:13px}
+h2{font-size:14px;font-weight:600;color:#c8ccd8;margin:22px 0 4px}
+p.v{margin:0 0 6px;font-size:12.5px;color:#8fd6a0}
+pre.term{background:#000;padding:12px 14px;border-radius:6px;overflow-x:auto;
+ font-family:"DejaVu Sans Mono",Menlo,monospace;font-size:11.5px;line-height:1.25;white-space:pre}
+</style>
+<h1>agy (Antigravity CLI) adapter &mdash; live tmux panes, agy 1.2.0</h1>
+<p class="sub">Real agy session in a real tmux pane, launched with the exact command bin/fm-spawn.sh emits. Every verdict below is what firstmate&rsquo;s own bin/fm-tmux-lib.sh, bin/fm-composer-lib.sh, bin/fm-busy-lib.sh and bin/fm-control-lib.sh returned for that exact pane on the target commit.</p>
+<section><h2>Background task strip on screen, composer empty</h2><p class="v">fm_tmux_composer_state = <b>empty</b> &nbsp;(pre-fix lib returned <b>unknown</b>) &nbsp;· identity probe: agy/idle</p><pre class="term">      ▄▀▀▄        Antigravity CLI 1.2.0
+     ▀▀▀▀▀▀       &lt;captain-account-redacted&gt; (Google AI Pro)
+    ▀▀▀▀▀▀▀▀      Gemini 3.7 Flash (Medium)
+   ▄▀▀    ▀▀▄     /tmp/agy-e2e-551412/ws
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+&gt; Read the file /tmp/agy-e2e-551412/ws/fixture.txt with your file-read tool and tell me the MARKER_WORD value. Then run the shell command: sleep 12; echo TURN_DONE  and report its output.
+
+● Read(/tmp/agy-e2e-551412/ws/fixture.txt)
+● Bash(sleep 12; echo TURN_DONE) (ctrl+o to expand)
+
+  I have read the file and launched the command in the background. Waiting for it to finish...
+
+  The MARKER_WORD value from fixture.txt is PERSIMMON.
+
+  ### Command Output
+
+    TURN_DONE
+
+────────────────────────────────────────────────────────────
+&gt; Run the shell command: sleep 45 &amp;&amp; echo LATE_TASK_DONE . Run it in the background and do not wait for it; just tell me you started it.
+
+● Bash(sleep 45 &amp;&amp; echo LATE_TASK_DONE) (ctrl+o to expand)
+
+  I have started the command sleep 45 &amp;&amp; echo LATE_TASK_DONE in the background (task ID: task-10).
+
+────────────────────────────────────────────────────────────
+&gt;
+────────────────────────────────────────────────────────────
+  ● [05:10:05] sleep 45 &amp;&amp; echo LATE_TASK_DONE running
+────────────────────────────────────────────────────────────
+? for shortcuts                                                                                                                                           Gemini 3.7 Flash · medium · 1 task(s) · /tasks</pre></section>
+<section><h2>Same strip, text typed but not sent</h2><p class="v">fm_tmux_composer_state = <b>pending</b> &nbsp;(pre-fix lib returned <b>unknown</b>) &nbsp;· identity probe: agy/idle</p><pre class="term">      ▄▀▀▄        Antigravity CLI 1.2.0
+     ▀▀▀▀▀▀       &lt;captain-account-redacted&gt; (Google AI Pro)
+    ▀▀▀▀▀▀▀▀      Gemini 3.7 Flash (Medium)
+   ▄▀▀    ▀▀▄     /tmp/agy-e2e-551412/ws
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+&gt; Read the file /tmp/agy-e2e-551412/ws/fixture.txt with your file-read tool and tell me the MARKER_WORD value. Then run the shell command: sleep 12; echo TURN_DONE  and report its output.
+
+● Read(/tmp/agy-e2e-551412/ws/fixture.txt)
+● Bash(sleep 12; echo TURN_DONE) (ctrl+o to expand)
+
+  I have read the file and launched the command in the background. Waiting for it to finish...
+
+  The MARKER_WORD value from fixture.txt is PERSIMMON.
+
+  ### Command Output
+
+    TURN_DONE
+
+────────────────────────────────────────────────────────────
+&gt; Run the shell command: sleep 45 &amp;&amp; echo LATE_TASK_DONE . Run it in the background and do not wait for it; just tell me you started it.
+
+● Bash(sleep 45 &amp;&amp; echo LATE_TASK_DONE) (ctrl+o to expand)
+
+  I have started the command sleep 45 &amp;&amp; echo LATE_TASK_DONE in the background (task ID: task-10).
+
+────────────────────────────────────────────────────────────
+&gt; unsent draft text
+────────────────────────────────────────────────────────────
+  ● [05:10:05] sleep 45 &amp;&amp; echo LATE_TASK_DONE running
+────────────────────────────────────────────────────────────
+                                                                                                                                                          Gemini 3.7 Flash · medium · 1 task(s) · /tasks</pre></section>
+<section><h2>bin/fm-harness.sh run by agy's own shell tool</h2><p class="v">agy reports its own harness identity end to end</p><pre class="term">      ▄▀▀▄        Antigravity CLI 1.2.0
+     ▀▀▀▀▀▀       &lt;captain-account-redacted&gt; (Google AI Pro)
+    ▀▀▀▀▀▀▀▀      Gemini 3.7 Flash (Medium)
+   ▄▀▀    ▀▀▄     /tmp/agy-e2e-551412/ws
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+&gt; Read the file /tmp/agy-e2e-551412/ws/fixture.txt with your file-read tool and tell me the MARKER_WORD value. Then run the shell command: sleep 12; echo TURN_DONE  and report its output.
+
+● Read(/tmp/agy-e2e-551412/ws/fixture.txt)
+● Bash(sleep 12; echo TURN_DONE) (ctrl+o to expand)
+
+  I have read the file and launched the command in the background. Waiting for it to finish...
+
+  The MARKER_WORD value from fixture.txt is PERSIMMON.
+
+  ### Command Output
+
+    TURN_DONE
+
+────────────────────────────────────────────────────────────
+&gt; Run the shell command: sleep 45 &amp;&amp; echo LATE_TASK_DONE . Run it in the background and do not wait for it; just tell me you started it.
+
+● Bash(sleep 45 &amp;&amp; echo LATE_TASK_DONE) (ctrl+o to expand)
+
+  I have started the command sleep 45 &amp;&amp; echo LATE_TASK_DONE in the background (task ID: task-10).
+
+  The background task has completed successfully with output:
+
+    LATE_TASK_DONE
+
+────────────────────────────────────────────────────────────
+&gt; Run this shell command and report its exact stdout: /home/alan/.no-mistakes/worktrees/34c874d3722d/01M246G8JH3YJP5XZ6WEHTED9Q/bin/fm-harness.sh . Then sleep 20 and say STEER_TURN_DONE.
+
+● Bash(/home/alan/.no-mistakes/worktrees/34c874d3722d/01M246G8JH3YJP5XZ6WEHTED9Q/bin/fm-harness.sh)
+● Bash(sleep 20) (ctrl+o to expand)
+
+  Exact stdout:
+
+    agy
+
+  Sleeping for 20 seconds...
+⣻  Working...
+└ Tip: Use /fork to branch the conversation from an earlier point.
+────────────────────────────────────────────────────────────
+&gt;
+
+────────────────────────────────────────────────────────────
+esc to cancel                                                                                                                                                                  Gemini 3.7 Flash · medium</pre></section>
+<section><h2>A single Escape from fm_control_interrupt_key cancels a running turn</h2><p class="v">busy → idle within 1s of the Escape; composer left empty, no clear key</p><pre class="term">  regions such as Sangju in North Gyeongsang Province, which historically provided dried persimmons to the royal Joseon court.
+
+  The persimmon is deeply embedded in Korean folklore, most famously in the beloved tale of &quot;The Tiger and the Dried Persimmon&quot; (Horangi-wa Gotgam). In this fable, a ferocious tiger creeps into a
+  village at night, intending to snatch a human meal. Outside a cottage, he overhears a mother trying to quiet her crying child. She warns the child that a bear, then a fox, and finally a tiger is
+  coming, yet the child cries on. The tiger is amazed by the child&#x27;s courage. Then the mother says, &quot;Here, look! A dried persimmon (gotgam)!&quot; and the baby immediately ceases crying. The tiger,
+  terrified, concludes that the mysterious gotgam must be a beast far more terrifying and formidable than himself, and flees into the mountains. This fable illustrates the unparalleled soothing and
+  desirable status the sweet dried persimmon held in traditional Korean households.
+
+  Furthermore, Korean cuisine developed sujeonggwa, an elegant, traditional dessert punch made by simmering cinnamon bark and ginger root, sweetened with honey or sugar, and served chilled with
+  rehydrated dried persimmon and pine nuts. The spicy warmth of ginger and cinnamon paired with the rich sweetness of the softened persimmon represents one of East Asia&#x27;s most sophisticated winter
+  comfort beverages.
+  ──────
+  ### The New World Relative: Diospyros virginiana and Indigenous Heritage
+
+  While Diospyros kaki was flourishing across East Asia, a distinct native cousin was thriving across the eastern and central woodlands of North America: Diospyros virginiana, the American
+  persimmon.
+
+  Native American nations—including the Algonquian, Cherokee, Creek, Choctaw, and Shawnee—had utilized the wild persimmon for generations before European arrival. The very English word &quot;persimmon&quot;
+  derives from the Algonquian (Powhatan) language word pessamin, putchamin, or pasiminan, which translates loosely to &quot;a dry fruit&quot; or &quot;fruit dried by hand.&quot;
+
+  Indigenous peoples harvested the small, plum-sized fruits in late autumn, typically after the first heavy frosts when the sharp tannins had broken down into a rich, custard-like pulp. The fruit
+  was mashed, seeded, and formed into dense, nutritious loaves or cakes that were sun-dried or baked over slow coals. These persimmon cakes possessed remarkable keeping qualities, serving as vital
+  energy reserves and travel rations through the barren winter months. The pulp was also blended into cornmeal porridges and stews.
+
+  When English colonists established the Jamestown settlement in Virginia in 1607, they quickly encountered the native persimmon. Captain John Smith recorded one of the most vivid and humorous
+  botanical descriptions in colonial literature in his 1612 account:
+
+  │ &quot;The fruit like a Medler it is first greene, then yellow, and red when it is ripe: if it be not ripe it will drawe a mans mouth awrie with much torment, but when it is ripe, it is as delicious
+  │ as an Apricocke.&quot;
+
+  Smith’s cautionary note reflected the universal human experience of encountering an underripe astringent persimmon. The extreme concentration of soluble tannins binds instantly to salivary
+  proline-rich proteins, causing them to aggregate and precipitate, stripping the oral cavity of its natural lubrication and producing an instantaneous, overwhelming sensation of dryness and
+  contraction.
+
+  Throughout the 18th and 19th centuries in the American South and Midwest, the persimmon became a beloved staple of rural folk foodways. The annual ripening of &quot;possum apples&quot; (so named because
+  opossums eagerly sought the fallen fruit) signaled the time for baking persimmon puddings, persimmon breads, and churning persimmon fudge. In Mitchell, Indiana, the annual Persimmon Festival,
+  established in 1947, continues to draw bakers from across the region to compete in the prestigious Persimmon Pudding Contest, celebrating an unbroken American culinary tradition rooted in
+  indigenous foraging.
+  ──────
+  ### The Old World&#x27;s Ancient Lotus: Diospyros lotus
+
+  Across Western Asia, the Caucasus, and the Mediterranean basin grew a third notable species: Diospyros lotus,
+
+  ⎿  Interrupted · What should Antigravity CLI do instead?
+────────────────────────────────────────────────────────────
+&gt;
+────────────────────────────────────────────────────────────
+? for shortcuts                                                                                                                                                                Gemini 3.7 Flash · medium</pre></section>
+<section><h2>Interrupt timing: fm_busy_classify polled at 1&nbsp;Hz across the Escape</h2><p class="v">Escape x1 sent at 05:12:43</p><pre class="term">05:12:27  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:28  busy=idle agy-conversation    identity=agy/idle     footer=
+05:12:29  busy=idle agy-conversation    identity=agy/idle     footer=
+05:12:30  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:32  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:33  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:34  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:35  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:36  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:37  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:38  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:39  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:40  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:42  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:43  busy=busy agy-conversation    identity=agy/working  footer=esc to cancel
+05:12:44  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:45  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:46  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:47  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:48  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:49  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:50  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:51  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:52  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:53  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:54  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:55  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:56  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:58  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:12:59  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:13:00  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:13:01  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:13:02  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:13:03  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:13:04  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:13:05  busy=idle agy-conversation    identity=agy/idle     footer=? for shortcuts
+05:13:06  busy=idle agy-conversation    identity=agy/working  footer=esc to cancel
+05:13:07  busy=idle agy-conversation    identity=agy/idle     footer=
+05:13:08  busy=idle agy-conversation    identity=             footer=
+05:13:09  busy=idle agy-conversation    identity=             footer=</pre></section>

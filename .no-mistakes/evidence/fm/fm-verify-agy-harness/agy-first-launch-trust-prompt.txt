@@ -1,0 +1,45 @@
+Accessing workspace:
+
+/home/alan/.cache/fm-agy-e2e.tAl8qV/workspace
+
+Do you trust the contents of this project?
+
+Antigravity CLI requires permission to read, edit, and execute files here.
+
+> Yes, I trust this folder
+  No, exit
+
+  ↑/↓ Navigate · enter Confirm
+                                                                                                                                          Gemini 3.7 Flash · low
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,18 @@
+identity = agy/idle, tmux caps
+empty composer, no task strip                  cursor_row=2 -> empty
+typed composer, no task strip                  cursor_row=2 -> pending
+empty composer + agy task strip                cursor_row=2 -> unknown
+typed composer + agy task strip                cursor_row=2 -> unknown
+
+fixture (the "+ agy task strip" screens) - agy 1.2.0 draws a third rule and a
+task row BELOW the composer whenever an async shell task is running:
+
+  transcript
+  ────────────────────────
+  > <composer content>
+  ────────────────────────
+    ● [04:47:31] sleep 90 running
+  ────────────────────────
+  ? for shortcuts · 1 task(s) · /tasks
+
+expected: empty / pending, as without the strip. actual: unknown for both.

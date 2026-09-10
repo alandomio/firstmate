@@ -1,0 +1,52 @@
+
+=== A. idle agy composer, nothing typed (expect empty) ===
+fm_tmux_composer_identity : agy/idle
+fm_tmux_composer_state    : unknown
+pane (last 8 rows, 80 cols):
+  |   CHERRY
+  | 
+  | ────────────────────────────────────────────────────────────────────────────────
+  | >
+  | ────────────────────────────────────────────────────────────────────────────────
+  |   ● [04:47:31] sleep 90 running
+  | ────────────────────────────────────────────────────────────────────────────────
+  | ? for shortcuts                   Gemini 3.7 Flash · medium · 1 task(s) · /tasks
+
+=== B. short unsent text, one composer row (expect pending) ===
+fm_tmux_composer_identity : agy/idle
+fm_tmux_composer_state    : unknown
+pane (last 8 rows, 80 cols):
+  |   CHERRY
+  | 
+  | ────────────────────────────────────────────────────────────────────────────────
+  | > short typed line
+  | ────────────────────────────────────────────────────────────────────────────────
+  |   ● [04:47:31] sleep 90 running
+  | ────────────────────────────────────────────────────────────────────────────────
+  |                                   Gemini 3.7 Flash · medium · 1 task(s) · /tasks
+
+=== C. long unsent text WRAPPED across two composer rows (expect pending) ===
+fm_tmux_composer_identity : agy/idle
+fm_tmux_composer_state    : unknown
+pane (last 8 rows, 80 cols):
+  | 
+  | ────────────────────────────────────────────────────────────────────────────────
+  | > this is a deliberately long unsent composer line that must wrap onto a
+  |   second row inside the 80 column pane
+  | ────────────────────────────────────────────────────────────────────────────────
+  |   ● [04:47:31] sleep 90 running
+  | ────────────────────────────────────────────────────────────────────────────────
+  |                                   Gemini 3.7 Flash · medium · 1 task(s) · /tasks
+
+=== D. cleared again (expect empty) ===
+fm_tmux_composer_identity : agy/idle
+fm_tmux_composer_state    : unknown
+pane (last 8 rows, 80 cols):
+  |   CHERRY
+  | 
+  | ────────────────────────────────────────────────────────────────────────────────
+  | >
+  | ────────────────────────────────────────────────────────────────────────────────
+  |   ● [04:47:31] sleep 90 running
+  | ────────────────────────────────────────────────────────────────────────────────
+  | ? for shortcuts                   Gemini 3.7 Flash · medium · 1 task(s) · /tasks

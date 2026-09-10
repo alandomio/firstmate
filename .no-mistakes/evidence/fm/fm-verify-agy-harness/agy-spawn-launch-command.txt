@@ -1,0 +1,6 @@
+--- launch command fm-spawn types into the agy crewmate's pane ---
+env -u CURSOR_AGENT -u CURSOR_INVOKED_AS env -u CLAUDECODE -u AI_AGENT -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS agy --dangerously-skip-permissions --model 'gemini-3.7-flash' --effort 'high' -i "$('/home/alan/.no-mistakes/worktrees/34c874d3722d/01M246G8JH3YJP5XZ6WEHTED9Q/bin/fm-operational-input.sh' encode launch-brief < '/tmp/fm-agy-launch-dump.XwlZn5/c/home/data/agy-demo-x1/brief.md')"
+
+--- state/agy-demo-x1.agy-session (busy-state binding sidecar) ---
+conversations_root=/tmp/fm-agy-launch-dump.XwlZn5/c/conversations
+workspace_root=/tmp/fm-agy-launch-dump.XwlZn5/c/wt

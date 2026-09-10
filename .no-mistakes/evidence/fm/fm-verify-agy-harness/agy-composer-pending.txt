@@ -1,0 +1,45 @@
+
+
+      ▄▀▀▄        Antigravity CLI 1.2.0
+     ▀▀▀▀▀▀       <captain-account-redacted> (Google AI Pro)
+    ▀▀▀▀▀▀▀▀      Gemini 3.7 Flash (Low)
+   ▄▀▀    ▀▀▄     ~/.cache/fm-agy-e2e.tAl8qV/workspace
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+> Use your shell tool to run exactly: sleep 6; echo hello-from-agy . Then reply with exactly DONE. Do not create or modify any files.
+
+● Bash(sleep 6; echo hello-from-agy) (ctrl+o to expand)
+
+  DONE
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+> rewrite the flaky delivery test so it stops depending on wall-clock ordering
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                                          Gemini 3.7 Flash · low
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

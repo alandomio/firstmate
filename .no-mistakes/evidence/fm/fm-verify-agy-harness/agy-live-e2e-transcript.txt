@@ -1,0 +1,143 @@
+agy (Antigravity CLI 1.1.28) crewmate adapter - live end-to-end transcript
+host: linux, tmux, real agy binary, real ~/.gemini/antigravity-cli/conversations (84 databases)
+workspace: a fresh scratch directory, bound exactly the way bin/fm-spawn.sh writes <id>.agy-session
+
+########## RUN 1 - launch, first turn ##########
+02:15:10  === PHASE A: launch (fm-spawn's agy template shape) ===
+02:15:10  launch: env -u CLAUDECODE -u AI_AGENT -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS -u CURSOR_AGENT -u CURSOR_INVOKED_AS agy --dangerously-skip-permissions --effort low -i "<brief>"
+02:15:12  pane process comm: agy
+02:15:12  OBSERVED: agy's first-launch workspace trust prompt is blocking the brief
+02:15:13    while blocked: fm_busy_classify=[unknown agy-conversation]  composer=unknown  identity=agy/idle
+02:15:15    answered the trust prompt with Enter; continuing
+02:15:15  === PHASE B: busy from agy's own conversation database ===
+02:15:15  fm_busy_classify=[unknown agy-conversation]  pane-footer=busy  composer=empty  identity=agy/working
+02:15:17  fm_busy_classify=[unknown agy-conversation]  pane-footer=busy  composer=empty  identity=agy/working
+02:15:18  fm_busy_classify=[unknown agy-conversation]  pane-footer=busy  composer=empty  identity=agy/working
+02:15:19  fm_busy_classify=[unknown agy-conversation]  pane-footer=busy  composer=empty  identity=agy/working
+02:15:20  fm_busy_classify=[unknown agy-conversation]  pane-footer=busy  composer=empty  identity=agy/working
+02:15:22  fm_busy_classify=[unknown agy-conversation]  pane-footer=busy  composer=empty  identity=agy/working
+02:15:23  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:24  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:26  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:27  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:28  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:30  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:31  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:32  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:33  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:35  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:36  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:37  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:39  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:40  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:41  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:43  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:44  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:45  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:46  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:48  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:49  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:50  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:52  fm_busy_classify=[unknown agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:53  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:54  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:55  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:57  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:58  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:15:59  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:00  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:01  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:03  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:04  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:05  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:06  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:07  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:08  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:10  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:11  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:12  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:13  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:14  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:16  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:17  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:18  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:19  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:20  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:22  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:23  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:24  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:25  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:26  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:28  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:29  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:30  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:31  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:32  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:34  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:35  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:36  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:37  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:38  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:40  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:41  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:42  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:43  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:44  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:46  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:47  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:48  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:49  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:50  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:52  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:53  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:54  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:55  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:56  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:58  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:16:59  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:17:00  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:17:01  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:17:02  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:17:04  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:17:05  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:17:06  FAIL: never observed busy
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+exit=1
+
+########## RUN 2 - composer, second turn, interrupt, exit (same live pane) ##########
+02:17:08  === PHASE D: composer classification on the live agy pane ===
+02:17:08  composer with nothing typed: empty   identity=agy/idle
+02:17:09  composer with unsent typed text: pending
+02:17:11  composer after clearing: empty
+02:17:11  === PHASE E: second turn with the binding already cached ===
+02:17:11  cached binding: conversation=/home/alan/.gemini/antigravity-cli/conversations/0fa1062f-c9dd-4d5f-be76-4925e2626106.db
+02:17:11  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=pending  identity=agy/idle
+02:17:12  fm_busy_classify=[busy agy-conversation]  pane-footer=busy  composer=empty  identity=agy/working
+02:17:12  PASS: the semantic fold reported BUSY for the second turn
+02:17:12  === PHASE F: interrupt = a single Escape, no clear key ===
+02:17:12  sending Escape (fm_control_interrupt_key agy)
+02:17:15  post-interrupt composer: empty  (no clear key sent)
+02:17:16  fm_busy_classify=[idle agy-conversation]  pane-footer=idle  composer=empty  identity=agy/idle
+02:17:16  post-interrupt classify: idle agy-conversation
+02:17:16  === PHASE G: exit = /exit ===
+02:17:23  /exit closed the agy session (tmux session gone)
+02:17:23  === DONE ===

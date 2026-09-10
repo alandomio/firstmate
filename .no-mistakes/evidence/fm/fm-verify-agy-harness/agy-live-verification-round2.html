@@ -1,0 +1,292 @@
+<!doctype html><meta charset="utf-8"><style>
+body{background:#12131a;color:#e6e6e6;font-family:system-ui,sans-serif;margin:24px;max-width:1180px}
+h1{font-size:20px;margin:0 0 4px} p.head{color:#9aa0b4;margin:0 0 18px;font-size:13px}
+h2{font-size:14px;font-weight:600;color:#c8ccd8;margin:24px 0 4px}
+p.sub{color:#8d93a6;font-size:12px;margin:0 0 8px}
+pre.term{background:#000;padding:12px 14px;border-radius:6px;overflow-x:auto;
+ font-family:"DejaVu Sans Mono",monospace;font-size:11.5px;line-height:1.25;white-space:pre}
+</style>
+<h1>agy (Antigravity CLI) adapter &mdash; live verification, target commit 69e61e3</h1>
+<p class=head>Real agy 1.2.0 session in a real tmux pane. Every verdict is what this branch's own
+bin/fm-busy-lib.sh / bin/fm-tmux-lib.sh / bin/fm-composer-lib.sh returned for that exact live pane.</p>
+<section><h2>1. The WAL binding fix, measured live against the pre-fix commit on the SAME session</h2><p class=sub>Left = target 69e61e3 (scans &lt;uuid&gt;.db-wal too). Middle = f6f4b79 (scans only &lt;uuid&gt;.db). Right = agy's own footer, the ground truth. The fixed fold tracks the turn (busy +3.1s..+18.8s, idle from +19.5s); the pre-fix fold says unknown for the whole turn and only resolves at +50.0s, when SQLite checkpoints the -wal back to 0 bytes.</p><pre class=term>t(+s)   | FIXED (target, scans -wal) | PRE-FIX (.db only)         | live -wal (bytes)      | agy pane (ground truth)
+--------+----------------------------+----------------------------+------------------------+------------------------------
++0.0    | unknown agy-conversation   | unknown agy-conversation   | 5c0adba1.db-wal:0      | ? for shortcuts                               
++0.8    | unknown agy-conversation   | unknown agy-conversation   | 5c0adba1.db-wal:0      | ? for shortcuts                               
++1.5    | unknown agy-conversation   | unknown agy-conversation   | 5c0adba1.db-wal:0      |                                               
++2.3    | unknown agy-conversation   | unknown agy-conversation   | 5c0adba1.db-wal:0      |                                               
++3.1    | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:32992  | esc to cancel                                 
++4.0    | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:32992  | esc to cancel                                 
++4.6    | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:32992  | esc to cancel                                 
++5.3    | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:370832  | esc to cancel                                 
++6.0    | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:370832  | esc to cancel                                 
++6.7    | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:370832  | esc to cancel                                 
++7.4    | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++8.0    | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++8.7    | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++9.3    | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++9.9    | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++10.6   | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++11.2   | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++11.8   | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++12.5   | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++13.1   | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++13.7   | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++14.3   | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++15.0   | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++15.6   | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++16.3   | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++16.9   | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:519152  | esc to cancel                                 
++17.5   | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:741632  | esc to cancel                                 
++18.2   | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:741632  | esc to cancel                                 
++18.8   | busy agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1128912  | esc to cancel                                 
++19.5   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++20.1   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++20.8   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++21.4   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++22.0   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++22.6   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++23.3   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++23.9   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++24.5   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++25.2   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++25.8   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++26.4   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++27.1   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++27.7   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++28.3   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++29.0   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++29.6   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++30.3   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++30.9   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++31.5   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++32.2   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++32.8   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++33.5   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++34.1   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++34.7   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++35.4   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++36.0   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++36.7   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++37.3   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++38.0   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++38.6   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++39.2   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++39.9   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++40.5   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++41.1   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++41.8   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++42.4   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++43.0   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++43.7   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++44.3   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++44.9   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++45.6   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++46.2   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++46.8   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++47.5   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++48.1   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++48.7   | idle agy-conversation      | unknown agy-conversation   | 5c0adba1.db-wal:1380232  | ? for shortcuts                               
++49.3   | idle agy-conversation      | unknown agy-conversation   | (none)                 | ? for shortcuts                               
++50.0   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++50.6   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++51.2   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++51.7   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++52.2   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++52.7   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++53.3   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++53.8   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++54.3   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++54.9   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++55.4   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++55.9   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++56.4   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++57.0   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++57.5   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++58.0   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++58.5   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++59.1   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
++59.6   | idle agy-conversation      | idle agy-conversation      | 5c0adba1.db-wal:0      | ? for shortcuts                               
+</pre></section>
+<section><h2>2. Composer classification on the live agy pane (80 columns)</h2><p class=sub>Idle, one typed row, a typed line WRAPPED across two composer rows, cleared again.</p><pre class=term>
+=== A. idle agy composer, nothing typed (expect empty) ===
+fm_tmux_composer_identity : agy/idle
+fm_tmux_composer_state    : empty
+pane (last 8 rows, 80 cols):
+  | 
+  |   The background task (sleep 90) has completed.
+  | 
+  | ────────────────────────────────────────────────────────────────────────────────
+  | &gt;
+  | ────────────────────────────────────────────────────────────────────────────────
+  | ? for shortcuts                                        Gemini 3.7 Flash · medium
+  | 
+
+=== B. short unsent text, one composer row (expect pending) ===
+fm_tmux_composer_identity : agy/idle
+fm_tmux_composer_state    : pending
+pane (last 8 rows, 80 cols):
+  | 
+  |   The background task (sleep 90) has completed.
+  | 
+  | ────────────────────────────────────────────────────────────────────────────────
+  | &gt; short typed line
+  | ────────────────────────────────────────────────────────────────────────────────
+  |                                                        Gemini 3.7 Flash · medium
+  | 
+
+=== C. long unsent text WRAPPED across two composer rows (expect pending) ===
+fm_tmux_composer_identity : agy/idle
+fm_tmux_composer_state    : pending
+pane (last 8 rows, 80 cols):
+  | 
+  |   The background task (sleep 90) has completed.
+  | 
+  | ────────────────────────────────────────────────────────────────────────────────
+  | &gt; this is a deliberately long unsent composer line that must wrap onto a
+  |   second row inside the 80 column pane
+  | ────────────────────────────────────────────────────────────────────────────────
+  |                                                        Gemini 3.7 Flash · medium
+
+=== D. cleared again (expect empty) ===
+fm_tmux_composer_identity : agy/idle
+fm_tmux_composer_state    : empty
+pane (last 8 rows, 80 cols):
+  | 
+  |   The background task (sleep 90) has completed.
+  | 
+  | ────────────────────────────────────────────────────────────────────────────────
+  | &gt;
+  | ────────────────────────────────────────────────────────────────────────────────
+  | ? for shortcuts                                        Gemini 3.7 Flash · medium
+  | 
+</pre></section>
+<section><h2>3. Interrupt: a single Escape, no clear key</h2><p class=sub>The busy fold flips to idle ~1.2s after one Escape, the pane shows 'Interrupted', and the composer is left empty - no clear key needed.</p><pre class=term>t(+s)   | fm_busy_classify         | identity    | composer  | agy pane footer
+--------+--------------------------+-------------+-----------+-------------------------------
++0.0    | idle agy-conversation    | agy/idle    | pending   | esc to cancel
++0.9    | busy agy-conversation    | agy/working | empty     | esc to cancel
++1.7    | busy agy-conversation    | agy/working | empty     | esc to cancel
++2.6    | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++3.9    | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++5.3    | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++6.7    | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++8.1    | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++9.4    | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++10.9   | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++12.3   | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
++13.8   | busy agy-conversation    | agy/working | unknown   | esc to cancel                     Gemini 3
+&gt;&gt;&gt; sending ONE Escape (no clear key) &lt;&lt;&lt;
++15.4   | busy agy-conversation    | agy/working | unknown   | ? for shortcuts                   Gemini 3
++16.6   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++17.8   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++19.1   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++20.3   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++21.5   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++22.7   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++23.9   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++25.1   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++26.3   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++27.5   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++28.7   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++29.9   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
++31.1   | idle agy-conversation    | agy/idle    | unknown   | ? for shortcuts                   Gemini 3
+
+--- pane after interrupt ---
+  | ● ManageTask(status 29bc93fa-.../ta...) (ctrl+o to
+  | expand)
+  |
+  |   ⎿  Interrupted · What should Antigravity CLI do instead?
+  | ────────────────────────────────────────────────────────────────────────────────
+  | &gt;
+  | ────────────────────────────────────────────────────────────────────────────────
+  |   ● [04:42:38] sleep 45 running
+  | ────────────────────────────────────────────────────────────────────────────────
+  | ? for shortcuts                   Gemini 3.7 Flash · medium · 1 task(s) · /tasks
+</pre></section>
+<section><h2>4. DEFECT: agy&#x27;s background-task strip makes firstmate report a delivered steer as NOT submitted</h2><p class=sub>Reproduced twice. The steer lands and agy answers it (CHERRY), but the submit core returns 'unknown', which bin/fm-send.sh:644 maps to exit 1 'text not submitted ... delivery unconfirmed' and discards the pending-reply expectation.</p><pre class=term>### CONFIRMATION RUN 2 - agy background-task strip vs firstmate delivery
+
+[1] pane with NO background task; composer verdict:
+    fm_tmux_composer_state = empty
+    | ────────────────────────────────────────────────────────────────────────────────
+    | &gt;
+    | ────────────────────────────────────────────────────────────────────────────────
+    | ? for shortcuts                                        Gemini 3.7 Flash · medium
+
+[2] arm a background task (a crewmate running a long build/test does this)
+    fm_tmux_submit_core verdict = empty   &lt;- delivery confirmed
+    pane now:
+    | &gt;
+    | ────────────────────────────────────────────────────────────────────────────────
+    |   ● [04:47:31] sleep 90 running
+    | ────────────────────────────────────────────────────────────────────────────────
+    | ? for shortcuts                   Gemini 3.7 Flash · medium · 1 task(s) · /tasks
+    fm_tmux_composer_state = unknown
+    fm_busy_classify       = idle agy-conversation
+
+[3] deliver a captain steer while that strip is on screen
+    fm_tmux_submit_core verdict = unknown
+    (bin/fm-send.sh maps this verdict: empty-&gt;delivered, pending-&gt;exit 3 &#x27;delivered, unconfirmed&#x27;,
+     anything else -&gt; &#x27;error: text not submitted ... delivery unconfirmed&#x27; + exit 1 + pending-reply discarded)
+    but did agy actually get it?
+    | &gt; Reply with exactly the word CHERRY and nothing else.
+    |   CHERRY
+    | ────────────────────────────────────────────────────────────────────────────────
+    | &gt;
+    | ────────────────────────────────────────────────────────────────────────────────
+    |   ● [04:47:31] sleep 90 running
+    | ────────────────────────────────────────────────────────────────────────────────
+    | ? for shortcuts                   Gemini 3.7 Flash · medium · 1 task(s) · /tasks
+</pre></section>
+<section><h2>4b. The same four composer probes as section 2, with the background-task strip on screen</h2><p class=sub>Every verdict degrades to unknown, including the genuinely empty composer.</p><pre class=term>
+=== A. idle agy composer, nothing typed (expect empty) ===
+fm_tmux_composer_identity : agy/idle
+fm_tmux_composer_state    : unknown
+pane (last 8 rows, 80 cols):
+  |   CHERRY
+  | 
+  | ────────────────────────────────────────────────────────────────────────────────
+  | &gt;
+  | ────────────────────────────────────────────────────────────────────────────────
+  |   ● [04:47:31] sleep 90 running
+  | ────────────────────────────────────────────────────────────────────────────────
+  | ? for shortcuts                   Gemini 3.7 Flash · medium · 1 task(s) · /tasks
+
+=== B. short unsent text, one composer row (expect pending) ===
+fm_tmux_composer_identity : agy/idle
+fm_tmux_composer_state    : unknown
+pane (last 8 rows, 80 cols):
+  |   CHERRY
+  | 
+  | ────────────────────────────────────────────────────────────────────────────────
+  | &gt; short typed line
+  | ────────────────────────────────────────────────────────────────────────────────
+  |   ● [04:47:31] sleep 90 running
+  | ────────────────────────────────────────────────────────────────────────────────
+  |                                   Gemini 3.7 Flash · medium · 1 task(s) · /tasks
+
+=== C. long unsent text WRAPPED across two composer rows (expect pending) ===
+fm_tmux_composer_identity : agy/idle
+fm_tmux_composer_state    : unknown
+pane (last 8 rows, 80 cols):
+  | 
+  | ────────────────────────────────────────────────────────────────────────────────
+  | &gt; this is a deliberately long unsent composer line that must wrap onto a
+  |   second row inside the 80 column pane
+  | ────────────────────────────────────────────────────────────────────────────────
+  |   ● [04:47:31] sleep 90 running
+  | ────────────────────────────────────────────────────────────────────────────────
+  |                                   Gemini 3.7 Flash · medium · 1 task(s) · /tasks
+
+=== D. cleared again (expect empty) ===
+fm_tmux_composer_identity : agy/idle
+fm_tmux_composer_state    : unknown
+pane (last 8 rows, 80 cols):
+  |   CHERRY
+  | 
+  | ────────────────────────────────────────────────────────────────────────────────
+  | &gt;
+  | ────────────────────────────────────────────────────────────────────────────────
+  |   ● [04:47:31] sleep 90 running
+  | ────────────────────────────────────────────────────────────────────────────────
+  | ? for shortcuts                   Gemini 3.7 Flash · medium · 1 task(s) · /tasks
+</pre></section>
