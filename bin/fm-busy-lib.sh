@@ -907,6 +907,15 @@ fm_busy_agy_binding_has_prior() {  # <state-dir> <id> <conversation-path>
 # accepted). node is already this file's decoder for muse's fold and degrades
 # the same way when absent: no match, so the fold reports unknown rather than
 # guessing.
+#
+# Both `<uuid>.db` and its sibling `<uuid>.db-wal` are scanned, and either hit
+# reports the plain `<uuid>.db`. SQLite in WAL mode leaves a live session's
+# freshly written pages in the -wal until a checkpoint, so scanning only *.db
+# left the binding unresolvable for exactly as long as the first turn ran -
+# measured on a real agy 1.1.28 session as `unknown agy-conversation` for a
+# whole ~7s working window, with the binding landing ~30s later when the WAL
+# was checkpointed. Widening the glob does not weaken the anchoring above: a
+# match is still verified the same way, only in more files.
 fm_busy_agy_matching_conversations() {  # <conversations-root> <workspace-root>
   local root=$1 ws=$2
   [ -d "$root" ] || return 1
@@ -961,10 +970,23 @@ try {
 } catch {
   entries = [];
 }
+// A live session's freshly written pages sit in the sibling `<uuid>.db-wal`
+// until SQLite checkpoints them, so both forms are scanned and a hit in
+// either names the SAME conversation: the reported path is always the plain
+// `<uuid>.db`, which sqlite3 reads through the WAL anyway. Emitting the
+// conversation once keeps the caller's one-candidate rule intact when both
+// forms match, and keeps prior-conversation exclusion keyed on one basename.
+const reported = new Set();
 for (const entry of entries) {
-  if (!entry.isFile() || !entry.name.endsWith(".db")) continue;
+  if (!entry.isFile()) continue;
+  const wal = entry.name.endsWith(".db-wal");
+  if (!wal && !entry.name.endsWith(".db")) continue;
   const file = path.join(root, entry.name);
-  if (recordsWorkspace(file)) process.stdout.write(`${file}\n`);
+  const conversation = wal ? file.slice(0, -"-wal".length) : file;
+  if (reported.has(conversation)) continue;
+  if (!recordsWorkspace(file)) continue;
+  reported.add(conversation);
+  process.stdout.write(`${conversation}\n`);
 }
 NODE
 }

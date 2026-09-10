@@ -629,6 +629,21 @@ The length alone is not enough - a coincidental equal-valued byte (an ASCII spac
 That guarantee was measured, not assumed - see `docs/verification/runtime-backends.md` for the collision test (0 of 18 sibling-prefix occurrences accepted, 4 of 18 own occurrences accepted).
 Within that predicate the failure direction stays safe: a missed occurrence only widens the prior-exclusion set at spawn time or leaves a conversation unresolved (`unknown`) at fold time, never binding a task to another task's conversation.
 
+### Scan the `-wal` sibling too, or the binding is blind for the whole first turn
+
+The scan must cover BOTH `<uuid>.db` and `<uuid>.db-wal`, reporting the plain `.db` path for a hit in either.
+SQLite in WAL mode leaves a live session's freshly written pages in the `-wal` until a checkpoint, so a scan restricted to `*.db` cannot see a conversation that has only just been created - which is exactly the window a crewmate's brief-consuming first turn occupies.
+The fold itself never had this problem: `sqlite3 -readonly` reads through the WAL, so only the matching scan was blind.
+
+Two measurements DISAGREED here, and resolving which one was "right" was not necessary to act:
+
+- The no-mistakes test step launched a real agy session and polled the actual `fm_busy_classify` path: `unknown agy-conversation` for a full ~7-second window in which the pane was genuinely working (02:15:15-02:15:22, footer `esc to cancel`, identity `agy/working`), with the binding resolving only at 02:15:53 - about 30 seconds AFTER that turn had already settled - when the WAL was checkpointed (`<uuid>.db` 49152 -> 196608 bytes, 0 -> 24 occurrences of the workspace path; `-wal` 589192 -> 0). `busy agy-conversation` was never once reported for turn 1.
+- A quicker manual check in a different fresh workspace did NOT reproduce the gap, because a checkpoint had already landed by the time it looked.
+
+Record both, not just the one that motivated the fix: the gap is timing-dependent, so a single lucky observation proves nothing about its absence.
+Widening the glob is correct and safe under either timing, because it only enlarges the set of FILES searched - a match is still verified by the same protobuf-framing predicate above.
+Two consequences follow from mapping a `-wal` hit back to its `.db`, and both matter: the same conversation matching in both files must be reported ONCE (a checkpointed session still writing has its path in both, and double-counting would trip the one-candidate rule and leave the task permanently unresolvable), and prior-conversation exclusion stays keyed on the single `.db` basename the spawn-time snapshot recorded, so a predecessor that is live again is still excluded.
+
 ### Composer classification required extending the shared Pi-pair mechanism, not a new shape
 
 agy's composer - a single content row bounded by two solid horizontal rules - structurally collides with Pi's own separator-bounded composer shape in `bin/fm-composer-lib.sh` (a genuinely idle Pi composer also collapses to one blank row between two rules), so a live regression test already exists precisely to keep structure-without-identity from resurrecting a documented incident: an ordinary shell pane whose unrelated content happened to draw two divider-like lines around a blank one was once misread as an empty Pi composer (`tests/fm-composer-lib.test.sh`, "absent identity cannot prove blank pi pair").

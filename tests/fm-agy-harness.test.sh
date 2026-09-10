@@ -502,6 +502,188 @@ test_busy_fold_ambiguous_resolution_fails() {
   pass "agy busy fold refuses to guess between two ambiguous conversations"
 }
 
+# --- live WAL binding ---------------------------------------------------
+#
+# SQLite in WAL mode keeps a running session's freshly written pages in the
+# sibling `<uuid>.db-wal` until a checkpoint, so for the whole of an agy
+# session's first turn the workspace bytes exist ONLY there. The fixtures
+# below reproduce that state honestly: the schema is created and checkpointed
+# first, then the workspace blob and step row are written through a
+# connection that STAYS OPEN.
+
+LIVE_PID=
+LIVE_LOG=
+
+# make_wal_conversation_db <path>: an agy-shaped conversation database in WAL
+# journal mode, with no workspace blob written yet.
+make_wal_conversation_db() {  # <path>
+  sqlite3 "$1" "PRAGMA journal_mode=WAL;
+    CREATE TABLE steps (idx integer, step_type integer, status integer, PRIMARY KEY (idx));
+    CREATE TABLE workspace_marker (blob blob);" >/dev/null
+}
+
+# open_live_conversation <db> <workspace-root> <step-type> <status>: write the
+# workspace blob and one step row through a connection left open, leaving
+# those pages uncheckpointed in `<db>-wal`. Returns once sqlite3 has
+# acknowledged the writes; close_live_conversation ends the session.
+open_live_conversation() {
+  local db=$1 ws=$2 type=$3 status=$4 scratch fifo i
+  scratch=$(mktemp -d "$TMP_ROOT/live-writer.XXXXXX") || return 1
+  fifo="$scratch/sql"
+  LIVE_LOG="$scratch/out"
+  mkfifo "$fifo" || return 1
+  sqlite3 "$db" < "$fifo" > "$LIVE_LOG" 2>&1 &
+  LIVE_PID=$!
+  exec 9> "$fifo"
+  {
+    printf 'PRAGMA journal_mode=WAL;\n'
+    printf 'PRAGMA wal_autocheckpoint=0;\n'
+    printf "INSERT INTO workspace_marker (blob) VALUES (X'%s');\n" "$(agy_workspace_field_hex "$ws")"
+    printf 'INSERT INTO steps (idx, step_type, status) VALUES ((SELECT count(*) FROM steps), %s, %s);\n' \
+      "$type" "$status"
+    printf "SELECT 'live-writer-ready';\n"
+  } >&9
+  i=0
+  while [ "$i" -lt 200 ]; do
+    grep -q live-writer-ready "$LIVE_LOG" 2>/dev/null && return 0
+    sleep 0.05
+    i=$((i + 1))
+  done
+  return 1
+}
+
+close_live_conversation() {
+  exec 9>&-
+  wait "$LIVE_PID" 2>/dev/null || true
+  LIVE_PID=
+}
+
+# The first-turn blind spot: while the session is live its workspace bytes are
+# in the -wal only, so a scan restricted to *.db resolves nothing and the whole
+# first turn - the one that consumes a crewmate's brief - reports unknown. The
+# fold itself is unaffected (sqlite3 reads through the WAL), so the resolver
+# must find the conversation via the -wal and report the plain .db path.
+test_busy_fold_resolves_a_conversation_still_writing_to_its_wal() {
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    pass "agy busy fold (live WAL): sqlite3 not installed in this environment, skipped"
+    return 0
+  fi
+  local case_dir root state ws db in_db in_wal out folded
+  case_dir="$TMP_ROOT/busy-live-wal"
+  root="$case_dir/conversations"
+  state="$case_dir/state"
+  ws="$case_dir/workspace"
+  mkdir -p "$root" "$state" "$ws"
+  db="$root/cccccccc-cccc-cccc-cccc-cccccccccccc.db"
+  make_wal_conversation_db "$db" || fail "could not build the sqlite3 fixture"
+  {
+    printf 'conversations_root=%s\n' "$root"
+    printf 'workspace_root=%s\n' "$ws"
+  } > "$state/taskwal.agy-session"
+  open_live_conversation "$db" "$ws" 15 8 || fail "the live sqlite3 writer never acknowledged its writes"
+  in_db=$(grep -acF -- "$ws" "$db" 2>/dev/null || true)
+  in_wal=$(grep -acF -- "$ws" "$db-wal" 2>/dev/null || true)
+  out=$(
+    # shellcheck source=bin/fm-busy-lib.sh
+    . "$ROOT/bin/fm-busy-lib.sh"
+    resolved=$(fm_busy_agy_conversation "$state" taskwal) || exit 0
+    printf '%s\n' "$resolved"
+    fm_busy_agy_run_state "$resolved"
+  )
+  close_live_conversation
+  [ "${in_db:-0}" -eq 0 ] \
+    || fail "fixture does not reproduce a live session: the workspace bytes already reached the .db"
+  [ "${in_wal:-0}" -gt 0 ] \
+    || fail "fixture does not reproduce a live session: no workspace bytes in the -wal"
+  folded=${out#*$'\n'}
+  out=${out%%$'\n'*}
+  [ "$out" = "$db" ] \
+    || fail "a conversation whose workspace bytes are still in its -wal did not resolve to '$db', got '$out'"
+  [ "$folded" = busy ] \
+    || fail "the resolved path must be the readable .db, folding the running step to busy, got '$folded'"
+  pass "agy busy fold resolves a live conversation whose workspace bytes are still in its -wal"
+}
+
+# Once a checkpoint has landed the workspace bytes are in BOTH files, and both
+# name the same conversation. Counting them separately would push the
+# candidate count to two and make the task permanently unresolvable - the
+# ambiguity refusal firing on a single conversation.
+test_busy_fold_counts_a_db_and_wal_match_as_one_conversation() {
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    pass "agy busy fold (db+wal dedupe): sqlite3 not installed in this environment, skipped"
+    return 0
+  fi
+  local case_dir root state ws db in_db in_wal out
+  case_dir="$TMP_ROOT/busy-db-and-wal"
+  root="$case_dir/conversations"
+  state="$case_dir/state"
+  ws="$case_dir/workspace"
+  mkdir -p "$root" "$state" "$ws"
+  db="$root/dddddddd-dddd-dddd-dddd-dddddddddddd.db"
+  make_wal_conversation_db "$db" || fail "could not build the sqlite3 fixture"
+  # a first turn, checkpointed into the .db when its connection closed
+  sqlite3 "$db" "INSERT INTO workspace_marker (blob) VALUES (X'$(agy_workspace_field_hex "$ws")');
+    INSERT INTO steps (idx, step_type, status) VALUES (0, 15, 3);" >/dev/null
+  {
+    printf 'conversations_root=%s\n' "$root"
+    printf 'workspace_root=%s\n' "$ws"
+  } > "$state/taskboth.agy-session"
+  # a second turn still in flight, its pages only in the -wal
+  open_live_conversation "$db" "$ws" 132 2 || fail "the live sqlite3 writer never acknowledged its writes"
+  in_db=$(grep -acF -- "$ws" "$db" 2>/dev/null || true)
+  in_wal=$(grep -acF -- "$ws" "$db-wal" 2>/dev/null || true)
+  out=$(
+    # shellcheck source=bin/fm-busy-lib.sh
+    . "$ROOT/bin/fm-busy-lib.sh"
+    fm_busy_agy_conversation "$state" taskboth
+  )
+  close_live_conversation
+  [ "${in_db:-0}" -gt 0 ] && [ "${in_wal:-0}" -gt 0 ] \
+    || fail "fixture does not reproduce the overlap: .db=$in_db -wal=$in_wal occurrences"
+  [ "$out" = "$db" ] \
+    || fail "one conversation matching in both its .db and its -wal must resolve once, got '$out'"
+  pass "agy busy fold counts a conversation matching in both its .db and its -wal only once"
+}
+
+# Prior-conversation exclusion is keyed on the .db basename the spawn-time
+# snapshot recorded. A predecessor that is live again - matching only through
+# its -wal - is still the same conversation and must stay excluded, or a
+# relaunch into a reused worktree would fold its predecessor's state.
+test_busy_fold_excludes_a_prior_conversation_matching_only_in_its_wal() {
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    pass "agy busy fold (prior via -wal): sqlite3 not installed in this environment, skipped"
+    return 0
+  fi
+  local case_dir root state ws prior_db new_db in_db out
+  case_dir="$TMP_ROOT/busy-prior-wal"
+  root="$case_dir/conversations"
+  state="$case_dir/state"
+  ws="$case_dir/workspace"
+  mkdir -p "$root" "$state" "$ws"
+  prior_db="$root/eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee.db"
+  new_db="$root/ffffffff-ffff-ffff-ffff-ffffffffffff.db"
+  make_wal_conversation_db "$prior_db" || fail "could not build the prior sqlite3 fixture"
+  make_conversation_db "$new_db" "$ws" 8 || fail "could not build the new sqlite3 fixture"
+  {
+    printf 'conversations_root=%s\n' "$root"
+    printf 'workspace_root=%s\n' "$ws"
+    printf 'prior_conversation=%s\n' "$(basename -- "$prior_db")"
+  } > "$state/taskpw.agy-session"
+  open_live_conversation "$prior_db" "$ws" 15 8 || fail "the live sqlite3 writer never acknowledged its writes"
+  in_db=$(grep -acF -- "$ws" "$prior_db" 2>/dev/null || true)
+  out=$(
+    # shellcheck source=bin/fm-busy-lib.sh
+    . "$ROOT/bin/fm-busy-lib.sh"
+    fm_busy_agy_conversation "$state" taskpw
+  )
+  close_live_conversation
+  [ "${in_db:-0}" -eq 0 ] \
+    || fail "fixture does not reproduce a live predecessor: its bytes already reached the .db"
+  [ "$out" = "$new_db" ] \
+    || fail "expected this task's own conversation '$new_db', resolved '$out'"
+  pass "agy busy fold keeps excluding a prior conversation that now matches only through its -wal"
+}
+
 test_env_marker_wins_over_inherited_claude_markers
 test_no_marker_falls_back_to_claude
 test_detects_agy_process_ancestor
@@ -510,6 +692,9 @@ test_control_lib_wiring_paths
 test_agy_trusts_no_record_source
 test_busy_fold_resolves_and_reads_status
 test_busy_fold_settled_reads_idle
+test_busy_fold_resolves_a_conversation_still_writing_to_its_wal
+test_busy_fold_counts_a_db_and_wal_match_as_one_conversation
+test_busy_fold_excludes_a_prior_conversation_matching_only_in_its_wal
 test_busy_fold_excludes_prior_conversation
 test_busy_fold_ignores_sibling_slot_path_prefix
 test_busy_fold_resolves_across_an_alphanumeric_successor_byte
