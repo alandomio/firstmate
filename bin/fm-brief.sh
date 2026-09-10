@@ -73,8 +73,8 @@
 # a genuinely failing live call becomes the fixed
 # "blocked: <server> unreachable (confirmed by a live call, not the startup banner)" line,
 # reusing an existing classifier verb rather than inventing one.
-# Ship briefs route a durable finding through a "note: CANDIDATE - {finding}" line the worker
-# records and only firstmate promotes, never a direct write to PP Brain or any shared memory.
+# A ship brief additionally widens the Grounding CANDIDATE channel above from an undocumented
+# gotcha to every durable finding the worker records and only firstmate promotes.
 # The brief treats "note:" as nonterminal like "working:", and discloses that the supervisor's
 # wedge guards do not yet do the same.
 # A ship brief describes a wait on an open PR/MR as a colleague's approval, never the captain's
