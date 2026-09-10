@@ -719,8 +719,8 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
     esac
     brief="$home/data/$id/brief.md"
     case "$kind" in
-      ship) states="States: working, note, needs-decision, blocked, awaiting, done, failed." ;;
-      *)    states="States: working, needs-decision, blocked, awaiting, done, failed." ;;
+      ship|scout) states="States: working, note, needs-decision, blocked, awaiting, done, failed." ;;
+      *)          states="States: working, needs-decision, blocked, awaiting, done, failed." ;;
     esac
     assert_grep "$states" "$brief" \
       "$kind brief did not render the configured pause verb in its states list"
@@ -787,6 +787,8 @@ test_grounding_section_requires_search_and_reporting() {
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
   assert_grep 'check PP Brain before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not' "$brief" \
     "ship brief Grounding section did not require checking PP Brain for gotchas before working around them"
+  assert_grep "never write to PP Brain or any shared memory directly, only firstmate promotes candidates" "$brief" \
+    "ship brief Grounding section invited a gotcha candidate without forbidding a direct shared-store write"
 
   id="brief-grounding-scout"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1
@@ -799,6 +801,10 @@ test_grounding_section_requires_search_and_reporting() {
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
   assert_grep 'check PP Brain before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not' "$brief" \
     "scout brief Grounding section did not require checking PP Brain for gotchas before working around them"
+  assert_grep "never write to PP Brain or any shared memory directly, only firstmate promotes candidates" "$brief" \
+    "scout brief Grounding section invited a gotcha candidate without forbidding a direct shared-store write"
+  assert_grep "States: working, note, needs-decision, blocked, paused, done, failed." "$brief" \
+    "scout brief Grounding section instructs a note: line but Rule 4 omits note from its states enumeration"
 
   id="brief-grounding-secondmate"
   FM_HOME="$home" FM_SECONDMATE_CHARTER='sample domain' \
@@ -1004,6 +1010,8 @@ test_ship_worker_operating_contracts() {
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
   assert_no_grep 'raise it as a `note: CANDIDATE - {finding}` status line' "$brief" \
     "scout brief duplicated the ship-only project-memory CANDIDATE findings contract"
+  assert_no_grep "you record candidates, only firstmate promotes them" "$brief" \
+    "scout brief duplicated the ship-only Rule 4 CANDIDATE durable-findings paragraph"
   assert_no_grep "unreachable (confirmed by a live call" "$brief" \
     "scout brief duplicated the ship-only degraded-mode template"
   assert_no_grep "colleague's approval" "$brief" \
