@@ -950,6 +950,23 @@ $ sqlite3 ~/.gemini/antigravity-cli/conversations/<uuid>.db \
 
 A single Escape mid-turn settled the interrupted row to status `3` as well (the same value a normal completion settles to), within the same live capture - confirmed by re-reading the table immediately after sending Escape.
 
+Conversation binding, prefix-collision measurement (2026-09-10): the fold has to decide which conversation database belongs to this task, and agy stores the workspace path only inside an opaque protobuf blob, so the decision is made on raw bytes.
+Two live agy workspaces were created whose paths form a genuine prefix collision - one path a strict prefix of the other, the shape treehouse's numbered pool slots produce - and a real conversation database was generated for the LONGER workspace only.
+
+```sh
+# occurrences of the SHORTER (prefix) workspace path inside the longer
+# workspace's own conversation database
+raw substring occurrences:                                18
+accepted by a preceding varint == shorter path's length:   0   # never mis-binds
+
+# occurrences of the database's OWN (longer) workspace path in the same file
+raw substring occurrences:                                18
+accepted by a preceding varint == its own length:          4   # resolves correctly
+```
+
+This is why `fm_busy_agy_matching_conversations` decodes protobuf's length prefix instead of testing the byte that follows the path: a trailing-byte-class anchor was measured against the same real data and rejected, because a genuine occurrence was followed by an ordinary alphanumeric (`0x7a`, ASCII `z`), which such an anchor would refuse.
+A length-delimited protobuf field's payload is preceded by a base-128 varint carrying its exact byte length, so requiring a valid varint ending immediately before an occurrence to decode to exactly the path's byte length is a property of agy's own encoding rather than an assumption about delimiters.
+
 Composer capture, idle, styled (`tmux capture-pane -e -p -S 0 -E -`), showing the bare rule-bounded shape and the plain ASCII `>` glyph:
 
 ```

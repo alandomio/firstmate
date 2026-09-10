@@ -595,11 +595,18 @@ Firstmate's own prior observation that a permission-needing tool call is silentl
 `bin/fm-busy-lib.sh`'s agy fold shells out to the `sqlite3` CLI in read-only mode to read the conversation database's `steps` table; it degrades to `unknown` when `sqlite3` is absent rather than erroring, but a fleet machine without it loses agy's busy-state signal entirely.
 On this machine the only installed `sqlite3` came from the Android SDK's `platform-tools` bundle, not a general-purpose system package (`libsqlite3-0` is the shared library, not the CLI) - treat this as a real, unguaranteed external dependency rather than an assumed-present tool, and confirm `command -v sqlite3` on any machine this adapter is dispatched from.
 
-### Conversation binding is a byte-level heuristic, not a structured match
+### Conversation binding decodes protobuf framing, not a delimiter character
 
 agy's workspace path is not exposed through any queryable column in its conversation database - it is embedded somewhere inside an opaque protobuf blob (confirmed live: `grep -a` on the raw `.db` file found the workspace path as plain bytes).
-`fm-spawn`'s sidecar (`state/<id>.agy-session`) and the busy fold's resolver therefore match on a raw byte-level `grep` for the workspace path rather than a parsed field, the same tradeoff muse's own flat JSONL metadata scan makes for a different reason.
-An imprecise match only widens the prior-exclusion set at spawn time or fails to resolve a conversation (`unknown`) at fold time; it can never bind a task to another task's conversation.
+`fm-spawn`'s sidecar (`state/<id>.agy-session`) and the busy fold's resolver therefore match at the byte level rather than on a parsed field, the same tradeoff muse's own flat JSONL metadata scan makes for a different reason.
+
+An UNANCHORED byte match is unsafe here, so do not copy one into a new adapter.
+Sibling worktrees are numbered pool slots, so `.../proj/1` is a strict byte prefix of every path under `.../proj/10`: a raw substring hit lets slot 1 bind to slot 10's conversation and report slot 10's busy state as its own for the rest of its life, since the resolution is then cached in `state/<id>.agy-session-current`.
+A trailing-byte-class anchor is not a fix either - it was measured against a real database and rejected, because the byte immediately following a genuine occurrence was an ordinary alphanumeric (`0x7a`).
+
+What the resolver actually requires is protobuf's own framing: a length-delimited field's payload is preceded by a base-128 varint carrying its exact byte length, so an occurrence counts only when some valid varint ending immediately before it decodes to exactly the workspace path's byte length.
+That guarantee was measured, not assumed - see `docs/verification/runtime-backends.md` for the collision test (0 of 18 sibling-prefix occurrences accepted, 4 of 18 own occurrences accepted).
+Within that predicate the failure direction stays safe: a missed occurrence only widens the prior-exclusion set at spawn time or leaves a conversation unresolved (`unknown`) at fold time, never binding a task to another task's conversation.
 
 ### Composer classification required extending the shared Pi-pair mechanism, not a new shape
 

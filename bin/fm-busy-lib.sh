@@ -40,8 +40,9 @@
 #   fm-recovery      a documented recovery reset after relaunch
 # Classifier-only sources (never written into a record):
 #   endpoint-gone, herdr-native, grok-regex, muse-session-log,
-#   cursor-transcript, missing, malformed, gen-mismatch, source-mismatch,
-#   kimi-unverified, codex-unverified, capture-failed, no-target
+#   cursor-transcript, agy-conversation, missing, malformed, gen-mismatch,
+#   source-mismatch, kimi-unverified, codex-unverified, capture-failed,
+#   no-target
 #
 # Classification (fm_busy_classify): busy | idle | unknown | dead, always
 # with the producing source as the second token. Precedence:
@@ -870,31 +871,86 @@ fm_busy_agy_binding_has_prior() {  # <state-dir> <id> <conversation-path>
 }
 
 # fm_busy_agy_matching_conversations: every conversation database directly
-# under <conversations-root> that records <workspace-root> as a whole path.
-# agy's workspace path is not exposed through any queryable column - each
-# database stores it somewhere inside an opaque protobuf blob (verified live,
-# agy 1.1.28: `grep -a` on the raw file found it) - so the scan is byte-level
-# rather than structured, the same tradeoff muse's own flat text scan makes
-# over its JSONL metadata. The match is anchored at a path-component boundary,
-# never a bare substring: sibling worktrees are numbered pool slots, so
-# `.../proj/1` occurs inside every byte sequence naming `.../proj/10`, and an
-# unanchored hit would let slot 1 bind to slot 10's conversation and report
-# its busy state as its own. Requiring the next byte to be one that cannot
-# continue a path component keeps binding at most too narrow - failing to
-# resolve (unknown) is the safe direction, resolving to a sibling task's
-# conversation is not.
+# under <conversations-root> that stores <workspace-root> as a COMPLETE
+# protobuf string field. agy's workspace path is not exposed through any
+# queryable column - each database embeds it inside an opaque protobuf blob
+# (verified live, agy 1.1.28) - so the scan is byte-level rather than
+# structured, the same tradeoff muse's own flat text scan makes over its JSONL
+# metadata. A raw substring hit is NOT sufficient: sibling worktrees are
+# numbered pool slots, so `.../proj/1` occurs inside every byte sequence
+# naming `.../proj/10`, and an unanchored hit would let slot 1 bind to slot
+# 10's conversation and report its busy state as its own.
+#
+# The boundary is taken from protobuf's own framing rather than assumed from a
+# delimiter character. A length-delimited field's payload is preceded by a
+# base-128 varint holding its exact byte length, so an occurrence is this
+# task's workspace only when some valid varint ending immediately before the
+# occurrence decodes to exactly the path's byte length. A byte-class boundary
+# was measured and rejected: in a real database the byte following a genuine
+# occurrence was observed to be an ordinary alphanumeric (0x7a). See
+# docs/verification/runtime-backends.md for the dated collision measurement
+# (0 of 18 sibling-prefix occurrences accepted, 4 of 18 own occurrences
+# accepted). node is already this file's decoder for muse's fold and degrades
+# the same way when absent: no match, so the fold reports unknown rather than
+# guessing.
 fm_busy_agy_matching_conversations() {  # <conversations-root> <workspace-root>
-  local root=$1 ws=$2 f pattern
+  local root=$1 ws=$2
   [ -d "$root" ] || return 1
   ws=${ws%/}
   [ -n "$ws" ] || return 1
-  pattern=$(printf '%s' "$ws" | sed 's/[][\\.^$*+?(){}|]/\\&/g')
-  pattern="${pattern}([^A-Za-z0-9._-]|\$)"
-  for f in "$root"/*.db; do
-    [ -e "$f" ] || continue
-    LC_ALL=C grep -aqE -- "$pattern" "$f" 2>/dev/null && printf '%s\n' "$f"
-  done
-  return 0
+  command -v node >/dev/null 2>&1 || return 1
+  node - "$root" "$ws" <<'NODE'
+const fs = require("fs");
+const path = require("path");
+const [root, workspace] = process.argv.slice(2);
+const needle = Buffer.from(workspace, "utf8");
+
+// True when a valid protobuf varint ends at buffer[offset - 1] and decodes to
+// exactly `length`. Varint bytes are little-endian base-128: every byte but
+// the last carries a set continuation bit.
+function lengthPrefixed(buffer, offset, length) {
+  if (offset < 1 || (buffer[offset - 1] & 0x80) !== 0) return false;
+  for (let width = 1; width <= 5; width += 1) {
+    const start = offset - width;
+    if (start < 0) return false;
+    if (width > 1 && (buffer[start] & 0x80) === 0) return false;
+    let value = 0;
+    for (let i = 0; i < width; i += 1) {
+      value += (buffer[start + i] & 0x7f) * Math.pow(128, i);
+    }
+    if (value === length) return true;
+  }
+  return false;
+}
+
+function recordsWorkspace(file) {
+  let buffer;
+  try {
+    buffer = fs.readFileSync(file);
+  } catch {
+    return false;
+  }
+  let from = 0;
+  for (;;) {
+    const at = buffer.indexOf(needle, from);
+    if (at < 0) return false;
+    if (lengthPrefixed(buffer, at, needle.length)) return true;
+    from = at + 1;
+  }
+}
+
+let entries;
+try {
+  entries = fs.readdirSync(root, { withFileTypes: true });
+} catch {
+  entries = [];
+}
+for (const entry of entries) {
+  if (!entry.isFile() || !entry.name.endsWith(".db")) continue;
+  const file = path.join(root, entry.name);
+  if (recordsWorkspace(file)) process.stdout.write(`${file}\n`);
+}
+NODE
 }
 
 fm_busy_agy_cache_field() {  # <state-dir> <id> <key>
