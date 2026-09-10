@@ -1,0 +1,88 @@
+$ FM_HOME=/home/alan/firstmate bin/fm-task-landed.sh -v
+android                          LANDED-CLEAN    secondmate  work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: -
+    worktree: /home/alan/.treehouse/firstmate-753674/1/firstmate (present)
+    branch: detached HEAD; own remote ref: absent
+    HEAD on forge refs: origin/fm/brief-ppbrain-grounding, origin/fm/fm-agents-skill-pointers, origin/fm/fm-brief-mr-description-rule, ...
+fm-agents-skill-pointers         PR-UNCHECKED    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: not-checked
+    worktree: /home/alan/.treehouse/firstmate-753674/3/firstmate (present)
+    branch: fm/fm-agents-skill-pointers; own remote ref: origin/fm/fm-agents-skill-pointers present
+    HEAD on forge refs: origin/fm/fm-agents-skill-pointers
+    pr: https://github.com/alandomio/firstmate/pull/21 (state not read)
+fm-brief-grounding               UNLANDED-WORK   ship        work:  1 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: - - HEAD is on the no-mistakes gate only, which is not a landing
+    worktree: /home/alan/.treehouse/firstmate-753674/5/firstmate (present)
+    branch: fm/fm-brief-grounding; own remote ref: absent
+    HEAD on forge refs: none
+fm-merge-no-ci                   UNKNOWN         ship        work:  1 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: not-checked - HEAD is on the no-mistakes gate only, which is not a landing; commits on no forge remote; the branch was pushed once but landing is unproven - run with the PR lookup or let fm-teardown.sh decide
+    worktree: /home/alan/.treehouse/firstmate-753674/2/firstmate (present)
+    branch: fm/fm-task-landed; own remote ref: absent
+    HEAD on forge refs: none
+    pr: https://github.com/alandomio/firstmate/pull/18 (state not read)
+fm-task-landed                   UNLANDED-WORK   ship        work:  1 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: - - HEAD is on the no-mistakes gate only, which is not a landing
+    worktree: /home/alan/.treehouse/firstmate-753674/2/firstmate (present)
+    branch: fm/fm-task-landed; own remote ref: absent
+    HEAD on forge refs: none
+fm-verify-agy-harness            UNKNOWN         ship        work:  1 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: not-checked - HEAD is on the no-mistakes gate only, which is not a landing; commits on no forge remote; the branch was pushed once but landing is unproven - run with the PR lookup or let fm-teardown.sh decide
+    worktree: /home/alan/.treehouse/firstmate-753674/4/firstmate (present)
+    branch: fm/fm-verify-agy-harness; own remote ref: origin/fm/fm-verify-agy-harness present
+    HEAD on forge refs: none
+    pr: https://github.com/alandomio/firstmate/pull/23 (state not read)
+gop217-conflitti-mr61            LANDED-CLEAN    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: -
+    worktree: /home/alan/.treehouse/GOPlanner-a587ec/8/GOPlanner (present)
+    branch: fm/gop217-advsearch-i18n; own remote ref: gone (upstream origin/fm/gop217-advsearch-i18n was deleted)
+    HEAD on forge refs: origin/php8
+gop242-ingressi-non-protetti     PR-UNCHECKED    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: not-checked
+    worktree: /home/alan/.treehouse/GOPlanner-a587ec/2/GOPlanner (present)
+    branch: fm/gop242-ingressi-non-protetti; own remote ref: gone (upstream origin/fm/gop242-ingressi-non-protetti was deleted)
+    HEAD on forge refs: origin/php8
+    pr: https://gitlab.com/alandomio/GOPlannerWeb/-/merge_requests/94 (state not read)
+gop242-review                    LANDED-CLEAN    scout       work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: -
+    worktree: /home/alan/.treehouse/GOPlanner-a587ec/4/GOPlanner (present)
+    branch: detached HEAD; own remote ref: absent
+    HEAD on forge refs: origin/php8
+gop269-review                    UNKNOWN         scout       work:  ? unpushed,  ? tracked  |  leftovers:  ? untracked,  ? only here  |  pr: - - not a readable git checkout with a commit (fatal: not a git repository: /home/alan/firstmate/projects/GOPlanner/.git/worktrees/GOPlanner5)
+    worktree: /home/alan/.treehouse/GOPlanner-a587ec/6/GOPlanner (present)
+gop270-pipeline-immagine         LANDED-CLEAN    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: -
+    worktree: /home/alan/.treehouse/GOPlanner-a587ec/1/GOPlanner (present)
+    branch: fm/gop270-pipeline-immagine; own remote ref: gone (upstream origin/fm/gop270-pipeline-immagine was deleted)
+    HEAD on forge refs: origin/php8
+gop274-voiceai-slots             UNKNOWN         ship        work:  0 unpushed,  0 tracked  |  leftovers:  2 untracked,  2 only here  |  pr: not-checked - 2 untracked entr(ies) with files that have no identical untracked copy in a sibling worktree - may be task work never added; inspect with -v
+    worktree: /home/alan/.treehouse/GOPlanner-a587ec/3/GOPlanner (present)
+    branch: fm/gop274-voiceai-slots; own remote ref: absent (tracks origin/test)
+    HEAD on forge refs: origin/test
+    UNTRACKED ONLY HERE (may be work never added): chatbot-service/
+      file only here (no identical untracked copy in a sibling): chatbot-service/.env
+      file only here (no identical untracked copy in a sibling): chatbot-service/dist/src/audit.js
+      file only here (no identical untracked copy in a sibling): chatbot-service/dist/src/authentication.js
+      file only here (no identical untracked copy in a sibling): chatbot-service/dist/src/conversation-history.js
+      file only here (no identical untracked copy in a sibling): chatbot-service/dist/src/cost-cap.js
+      file only here (no identical untracked copy in a sibling): chatbot-service/dist/src/index.js
+      file only here (no identical untracked copy in a sibling): chatbot-service/dist/src/server.js
+      file only here (no identical untracked copy in a sibling): chatbot-service/dist/src/technical-leak-guard.js
+      file only here (no identical untracked copy in a sibling): chatbot-service/dist/src/tenant-kb.js
+      file only here (no identical untracked copy in a sibling): chatbot-service/dist/src/tools.js
+      file only here (no identical untracked copy in a sibling): chatbot-service/dist/src/widget.js
+    UNTRACKED ONLY HERE (may be work never added): docker-compose.test.yaml
+    pr: https://gitlab.com/alandomio/GOPlannerWeb/-/merge_requests/95 (state not read)
+gop275-json-admin-auth           PR-UNCHECKED    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: not-checked
+    worktree: /home/alan/.treehouse/GOPlanner-a587ec/7/GOPlanner (present)
+    branch: fm/gop275-json-admin-auth; own remote ref: absent
+    HEAD on forge refs: origin/php8
+    pr: https://gitlab.com/alandomio/GOPlannerWeb/-/merge_requests/97 (state not read)
+gop275-port-test                 UNKNOWN         ship        work:  0 unpushed,  0 tracked  |  leftovers:  2 untracked,  2 only here  |  pr: not-checked - 2 untracked entr(ies) with files that have no identical untracked copy in a sibling worktree - may be task work never added; inspect with -v
+    worktree: /home/alan/.treehouse/GOPlanner-a587ec/5/GOPlanner (present)
+    branch: fm/gop275-port-test; own remote ref: absent (tracks origin/test)
+    HEAD on forge refs: origin/test
+    UNTRACKED ONLY HERE (may be work never added): chatbot-service/
+      file only here (no identical untracked copy in a sibling): chatbot-service/.env
+    UNTRACKED ONLY HERE (may be work never added): docker-compose.test.yaml
+    pr: https://gitlab.com/alandomio/GOPlannerWeb/-/merge_requests/98 (state not read)
+gop-stato-utenza-conflitti-mr83  LANDED-CLEAN    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: -
+    worktree: /home/alan/.treehouse/GOPlanner-a587ec/9/GOPlanner (present)
+    branch: fm/gop-stato-utenza-doc; own remote ref: gone (upstream origin/fm/gop-stato-utenza-doc was deleted)
+    HEAD on forge refs: origin/php8
+gop-stato-utenza-doc             PR-UNCHECKED    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: not-checked
+    worktree: /home/alan/.treehouse/GOPlanner-a587ec/1/GOPlanner (present)
+    branch: fm/gop270-pipeline-immagine; own remote ref: gone (upstream origin/fm/gop270-pipeline-immagine was deleted)
+    HEAD on forge refs: origin/php8
+    pr: https://gitlab.com/alandomio/GOPlannerWeb/-/merge_requests/83 (state not read)
+exit: 1

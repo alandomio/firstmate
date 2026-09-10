@@ -1,0 +1,14 @@
+# Remote branch deleted after merge (real fleet task gop242-ingressi-non-protetti)
+$ git -C /home/alan/.treehouse/GOPlanner-a587ec/2/GOPlanner log --oneline origin/fm/gop242-ingressi-non-protetti..HEAD      # the hand-assembled shape
+fatal: ambiguous argument 'origin/fm/gop242-ingressi-non-protetti..HEAD': unknown revision or path not in the working tree.
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'
+exit: 128
+
+$ FM_HOME=/home/alan/firstmate bin/fm-task-landed.sh --no-remote -v gop242-ingressi-non-protetti
+gop242-ingressi-non-protetti  PR-UNCHECKED    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: not-checked
+    worktree: /home/alan/.treehouse/GOPlanner-a587ec/2/GOPlanner (present)
+    branch: fm/gop242-ingressi-non-protetti; own remote ref: gone (upstream origin/fm/gop242-ingressi-non-protetti was deleted)
+    HEAD on forge refs: origin/php8
+    pr: https://gitlab.com/alandomio/GOPlannerWeb/-/merge_requests/94 (state not read)
+exit: 0

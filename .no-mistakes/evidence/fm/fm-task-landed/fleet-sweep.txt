@@ -1,0 +1,19 @@
+$ FM_HOME=/home/alan/firstmate bin/fm-task-landed.sh
+android                          LANDED-CLEAN    secondmate  work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: -
+fm-agents-skill-pointers         PR-UNCHECKED    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: not-checked
+fm-brief-grounding               UNLANDED-WORK   ship        work:  1 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: - - HEAD is on the no-mistakes gate only, which is not a landing
+fm-merge-no-ci                   UNKNOWN         ship        work:  1 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: not-checked - HEAD is on the no-mistakes gate only, which is not a landing; commits on no forge remote; the branch was pushed once but landing is unproven - run with the PR lookup or let fm-teardown.sh decide
+fm-task-landed                   UNLANDED-WORK   ship        work:  1 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: - - HEAD is on the no-mistakes gate only, which is not a landing
+fm-verify-agy-harness            UNKNOWN         ship        work:  1 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: not-checked - HEAD is on the no-mistakes gate only, which is not a landing; commits on no forge remote; the branch was pushed once but landing is unproven - run with the PR lookup or let fm-teardown.sh decide
+gop217-conflitti-mr61            LANDED-CLEAN    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: -
+gop242-ingressi-non-protetti     PR-UNCHECKED    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: not-checked
+gop242-review                    LANDED-CLEAN    scout       work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: -
+gop269-review                    UNKNOWN         scout       work:  ? unpushed,  ? tracked  |  leftovers:  ? untracked,  ? only here  |  pr: - - not a readable git checkout with a commit (fatal: not a git repository: /home/alan/firstmate/projects/GOPlanner/.git/worktrees/GOPlanner5)
+gop270-pipeline-immagine         LANDED-CLEAN    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: -
+gop274-voiceai-slots             UNKNOWN         ship        work:  0 unpushed,  0 tracked  |  leftovers:  2 untracked,  2 only here  |  pr: not-checked - 2 untracked entr(ies) with files that have no identical untracked copy in a sibling worktree - may be task work never added; inspect with -v
+gop275-json-admin-auth           PR-UNCHECKED    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: not-checked
+gop275-port-test                 UNKNOWN         ship        work:  0 unpushed,  0 tracked  |  leftovers:  2 untracked,  2 only here  |  pr: not-checked - 2 untracked entr(ies) with files that have no identical untracked copy in a sibling worktree - may be task work never added; inspect with -v
+gop-stato-utenza-conflitti-mr83  LANDED-CLEAN    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: -
+gop-stato-utenza-doc             PR-UNCHECKED    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: not-checked
+FM_HOME=$H "$S"  0,98s user 1,08s system 85% cpu 2,426 total
+exit: 1

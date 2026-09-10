@@ -1,0 +1,17 @@
+$ FM_HOME=/home/alan/firstmate bin/fm-task-landed.sh -v gop275-json-admin-auth fm-agents-skill-pointers gop242-ingressi-non-protetti
+gop275-json-admin-auth        LANDED-CLEAN    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: !97 MERGED
+    worktree: /home/alan/.treehouse/GOPlanner-a587ec/7/GOPlanner (present)
+    branch: fm/gop275-json-admin-auth; own remote ref: absent
+    HEAD on forge refs: origin/php8
+    pr: https://gitlab.com/alandomio/GOPlannerWeb/-/merge_requests/97 state=MERGED draft=no conflicts=no merge-status=not_open head=cc9a55921ddf
+fm-agents-skill-pointers      PR-OPEN         ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: #21 OPEN clean
+    worktree: /home/alan/.treehouse/firstmate-753674/3/firstmate (present)
+    branch: fm/fm-agents-skill-pointers; own remote ref: origin/fm/fm-agents-skill-pointers present
+    HEAD on forge refs: origin/fm/fm-agents-skill-pointers
+    pr: https://github.com/alandomio/firstmate/pull/21 state=OPEN draft=no conflicts=no merge-status=clean head=c4a882320ebe
+gop242-ingressi-non-protetti  LANDED-CLEAN    ship        work:  0 unpushed,  0 tracked  |  leftovers:  0 untracked,  0 only here  |  pr: !94 MERGED
+    worktree: /home/alan/.treehouse/GOPlanner-a587ec/2/GOPlanner (present)
+    branch: fm/gop242-ingressi-non-protetti; own remote ref: gone (upstream origin/fm/gop242-ingressi-non-protetti was deleted)
+    HEAD on forge refs: origin/php8
+    pr: https://gitlab.com/alandomio/GOPlannerWeb/-/merge_requests/94 state=MERGED draft=no conflicts=no merge-status=not_open head=bda91704a235
+exit: 0

@@ -1,0 +1,51 @@
+$ bin/fm-task-landed.sh --help   (excerpt: verdicts, network policy, exit status)
+Verdicts - a closed set, first match wins:
+  UNKNOWN         landing could not be established: no meta, no worktree=
+                  key, an unreadable worktree or a path that is not itself
+                  a checkout root, unpushed commits whose remote branch is
+                  gone with no proof the work landed, or untracked files
+                  with no identical untracked copy in a sibling worktree.
+                  A real outcome with its reason in the notes - never a guess.
+  NO-WORKTREE     the meta names a worktree path that no longer exists;
+                  nothing local is left to lose or to inspect.
+  UNLANDED-WORK   tracked uncommitted changes, or commits on no forge remote
+                  and not proven landed. Tearing down would lose them.
+  PR-CONFLICT     no local work at risk; the PR/MR is open with conflicts.
+  PR-OPEN         no local work at risk; the PR/MR is open without
+                  conflicts (its merge status is in the pr: field).
+  PR-UNCHECKED    no local work at risk; a pr= is recorded but its state
+                  was not read (a sweep without --remote, or a failed lookup).
+  LEFTOVERS-ONLY  no local work at risk and no open PR; untracked files
+                  remain, every file also untracked and identical in a
+                  sibling worktree (what fm-teardown.sh refuses on as
+                  "uncommitted").
+  LANDED-CLEAN    no local work at risk, no open PR, nothing untracked.
+A merged or closed PR/MR does not change the local verdict; its state is
+Network policy: a named task looks its PR up by default (--no-remote skips
+it); the no-argument fleet sweep never touches the network unless --remote is
+given, because one API call per task is slow and rate-limited.
+
+Exit status: 0 when every row was fully established, whatever its verdict;
+1 when any row is UNKNOWN or any PR lookup failed; 2 on a usage error.
+
+exit: 0
+
+$ bin/fm-task-landed.sh --bogus
+error: unknown option --bogus (see --help)
+exit: 2
+
+$ bin/fm-task-landed.sh ../escape
+error: invalid task id '../escape'
+exit: 2
+
+$ bin/fm-task-landed.sh .hidden
+error: invalid task id '.hidden'
+exit: 2
+
+$ bin/fm-task-landed.sh does-not-exist --no-remote
+does-not-exist  UNKNOWN         -           work:  ? unpushed,  ? tracked  |  leftovers:  ? untracked,  ? only here  |  pr: - - no meta at state/does-not-exist.meta
+exit: 1
+
+$ FM_HOME=/nonexistent-fm-home bin/fm-task-landed.sh
+no tasks: no state/*.meta under /nonexistent-fm-home/state
+exit: 0
