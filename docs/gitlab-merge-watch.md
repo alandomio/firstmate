@@ -258,8 +258,8 @@ $ echo $?
 1
 ```
 
-A project that runs no pipeline at all therefore cannot merge through this path.
-That is the intended reading of the requirement rather than an oversight: a successful pipeline at the head is a condition, and "there is no pipeline" does not satisfy it.
+This fixture project has CI capability at the project level, so a missing head pipeline is still refused here.
+A project confirmed incapable of running CI at all (via a live read of its own `jobs_enabled`/`builds_access_level`) is instead allowed to merge with no pipeline check, with a loud notice naming why; `tests/fm-pr-merge.test.sh` covers that relaxation and every condition that still refuses despite it.
 
 Both refusals came after `pr=` was recorded and the merge poll was armed, exactly as a failing `gh-axi pr merge` does on the GitHub side, so a refusal still leaves the audit trail and the watch in place.
 

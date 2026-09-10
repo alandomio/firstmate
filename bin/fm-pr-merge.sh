@@ -16,13 +16,19 @@
 # live at merge time rather than taken from recorded metadata: the merge request
 # is open, detailed_merge_status is mergeable, has_conflicts is false,
 # blocking_discussions_resolved is true, and the head pipeline succeeded at the
-# exact current head commit. Every failing condition is reported, not just the
-# first. The verified head is then passed to glab as --sha, so a push that lands
-# between that read and the merge fails the merge instead of landing commits
-# nothing verified. A recorded pr_head that disagrees with the live head is
-# reported rather than trusted, because a rebase moves the head and leaves the
-# recorded value stale. Reading that state needs glab and jq, and either one
-# absent stops the merge before any state is recorded.
+# exact current head commit. The pipeline condition has one live-checked
+# exception: a merge request with no head pipeline at all is refused unless the
+# project's own jobs_enabled/builds_access_level settings, read fresh from the
+# forge, confirm CI cannot run there for any commit; a pipeline that ran and
+# failed, is still running, or ran at a stale commit is always refused
+# regardless of that project setting, because a pipeline plainly can run there.
+# Every failing condition is reported, not just the first. The verified head is
+# then passed to glab as --sha, so a push that lands between that read and the
+# merge fails the merge instead of landing commits nothing verified. A recorded
+# pr_head that disagrees with the live head is reported rather than trusted,
+# because a rebase moves the head and leaves the recorded value stale. Reading
+# that state needs glab and jq, and either one absent stops the merge before
+# any state is recorded.
 #
 # Extra args must not include --repo or -R in any form, including a bundled
 # short-option cluster such as -yR, because the repository comes only from the
@@ -138,6 +144,39 @@ grep -qxF "pr=$URL" "$META" || {
   exit 1
 }
 
+# True (0) only when this GitLab project's own settings make it structurally
+# impossible to produce a pipeline for any commit, never merely when this one
+# merge request happens to lack a pipeline: job rules can skip a commit, or a
+# pipeline can simply not have started yet, on a project that runs CI fine.
+# Read live, on every call, because the capability is a project-level forge
+# fact rather than a caller-asserted flag: a live re-read cannot go stale the
+# way a remembered or passed-in claim could. Called only when the merge
+# request's own head pipeline is absent, so a project that can run CI but
+# has none at head still hits the ordinary refusal below. Prints a loud
+# notice and returns 0 when the project is confirmed incapable of running
+# jobs at all; returns 1 (falling back to the ordinary refusal) whenever that
+# is not confirmed, including when the capability itself cannot be read.
+gitlab_ci_disabled_at_project_level() {
+  local encoded project_json jobs_enabled builds_access
+  encoded=$(jq -rn --arg v "$FM_PR_PATH" '$v|@uri' 2>/dev/null) || return 1
+  if ! project_json=$(glab api "projects/$encoded" --hostname "$FM_PR_HOST" 2>/dev/null) \
+    || [ -z "$project_json" ]; then
+    return 1
+  fi
+  if ! jobs_enabled=$(printf '%s' "$project_json" | jq -r '
+      if type == "object" then ((.jobs_enabled) | tostring) else error("not an object") end
+      ' 2>/dev/null); then
+    return 1
+  fi
+  builds_access=$(printf '%s' "$project_json" | jq -r '(.builds_access_level // "") | tostring' 2>/dev/null) || builds_access=""
+  if [ "$jobs_enabled" = false ] || [ "$builds_access" = disabled ]; then
+    printf 'notice: %s has CI disabled at the project level (jobs_enabled=%s, builds_access_level=%s); merging with no pipeline check because none can ever run\n' \
+      "$PROJECT_URL" "$jobs_enabled" "${builds_access:-unset}" >&2
+    return 0
+  fi
+  return 1
+}
+
 # Pre-merge conditions for a GitLab merge request, read from one live view of
 # the merge request. Sets FM_PR_MERGE_HEAD to the verified head on success and
 # returns non-zero after reporting every condition that failed.
@@ -222,20 +261,33 @@ FIELDS
   [ "$discussions" = true ] \
     || refusals="$refusals  - blocking_discussions_resolved is \"${discussions:-unreadable}\", not true
 "
-  [ "$pipeline_status" = success ] \
-    || refusals="$refusals  - the head pipeline status is \"${pipeline_status:-none}\", not success
+  # An empty pipeline_status means head_pipeline is null: this merge request
+  # has no pipeline at all, which is refused below unless the project itself
+  # is confirmed incapable of ever running one. Any other status (failed,
+  # canceled, running) or a status of success at the wrong commit means a
+  # pipeline exists or ran, so the project can plainly run CI and both checks
+  # apply exactly as before regardless of project capability.
+  if [ -n "$pipeline_status" ] || ! gitlab_ci_disabled_at_project_level; then
+    [ "$pipeline_status" = success ] \
+      || refusals="$refusals  - the head pipeline status is \"${pipeline_status:-none}\", not success
 "
-  [ "$pipeline_sha" = "$live_head" ] \
-    || refusals="$refusals  - the head pipeline ran at \"${pipeline_sha:-none}\", not at the current head $live_head
+    [ "$pipeline_sha" = "$live_head" ] \
+      || refusals="$refusals  - the head pipeline ran at \"${pipeline_sha:-none}\", not at the current head $live_head
 "
+  fi
 
   if [ -n "$refusals" ]; then
     printf 'error: refusing to merge %s\n' "$URL" >&2
     printf '%s' "$refusals" >&2
     return 1
   fi
-  printf 'verified: %s is open and mergeable, with a successful pipeline at head %s\n' \
-    "$URL" "$live_head" >&2
+  if [ -n "$pipeline_status" ]; then
+    printf 'verified: %s is open and mergeable, with a successful pipeline at head %s\n' \
+      "$URL" "$live_head" >&2
+  else
+    printf 'verified: %s is open and mergeable at head %s; merging with no pipeline check, per the notice above\n' \
+      "$URL" "$live_head" >&2
+  fi
   FM_PR_MERGE_HEAD=$live_head
 }
 

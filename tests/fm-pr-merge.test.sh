@@ -24,6 +24,10 @@
 #   (o) glab or jq absent refuses before any state is recorded
 #   (p) --sha in extra GitLab args fails fast, and still forwards on GitHub
 #   (q) a GitLab refusal still leaves pr= recorded and the merge poll armed
+#   (r) a project with CI disabled (either signal) merges with no head pipeline
+#   (s) a project that can run CI still refuses a request with no pipeline
+#   (t) a failed or stale-commit pipeline still refuses on a CI-disabled project
+#   (u) a pipeline that already succeeded at head never queries project capability
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -127,6 +131,13 @@ case "${1:-} ${2:-}" in
     exit 0
     ;;
 esac
+case "${1:-}" in
+  api)
+    [ ! -e "$case_dir/glab-api-fails" ] || exit 1
+    [ ! -f "$case_dir/project.json" ] || cat "$case_dir/project.json"
+    exit 0
+    ;;
+esac
 exit 0
 SH
   chmod +x "$case_dir/fakebin/glab"
@@ -164,6 +175,16 @@ write_mr_json() {
     "$state" "$detail" "$conflicts" > "$file"
   printf '"blocking_discussions_resolved":%s,"sha":"%s","head_pipeline":%s}\n' \
     "$discussions" "$head" "$pipeline" >> "$file"
+}
+
+# write_project_json <file> <jobs_enabled> <builds_access_level>: the GitLab
+# project-capability payload fm-pr-merge reads only when a merge request has
+# no head pipeline at all, to tell "this project can never run CI" apart from
+# "this one request just has no pipeline yet".
+write_project_json() {
+  local file=$1 jobs_enabled=$2 builds_access_level=$3
+  printf '{"jobs_enabled":%s,"builds_access_level":"%s"}\n' \
+    "$jobs_enabled" "$builds_access_level" > "$file"
 }
 
 # make_gitlab_case <name> [<field>=<value> ...]: a case dir with both forge
@@ -694,6 +715,121 @@ test_gitlab_stale_recorded_head_is_reported() {
   pass "fm-pr-merge reports a stale recorded head and verifies the live one"
 }
 
+# A merge request with no head pipeline at all is refused unless the project's
+# own settings, read live, confirm CI can never run there. These cases prove
+# that distinction holds in both directions and is never carried by a pipeline
+# that ran: a failed or stale-commit pipeline still refuses even when the
+# project itself has CI disabled, because a pipeline plainly can run there.
+test_gitlab_ci_disabled_at_project_level_allows_merge_without_pipeline() {
+  local case_dir rc merge_line
+  case_dir=$(make_gitlab_case gitlab-ci-disabled-jobs pipeline=null)
+  write_project_json "$case_dir/project.json" false enabled
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "gitlab-ci-disabled-jobs: a project with jobs disabled should merge with no pipeline"
+  assert_grep 'has CI disabled at the project level (jobs_enabled=false' "$case_dir/stderr" \
+    "gitlab-ci-disabled-jobs: the relaxation notice was not printed"
+  merge_line=$(glab_merge_line "$case_dir/glab.log")
+  case "$merge_line" in
+    *"--sha $MR_HEAD"*) : ;;
+    *) fail "gitlab-ci-disabled-jobs: the merge was not bound to the verified head: '$merge_line'" ;;
+  esac
+  pass "fm-pr-merge merges a GitLab merge request with no pipeline when jobs_enabled is false"
+}
+
+test_gitlab_ci_disabled_via_builds_access_level_allows_merge() {
+  local case_dir rc
+  case_dir=$(make_gitlab_case gitlab-ci-disabled-builds pipeline=null)
+  write_project_json "$case_dir/project.json" true disabled
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "gitlab-ci-disabled-builds: builds_access_level disabled should also allow a merge with no pipeline"
+  assert_grep 'builds_access_level=disabled' "$case_dir/stderr" \
+    "gitlab-ci-disabled-builds: the relaxation notice did not name builds_access_level"
+  pass "fm-pr-merge treats builds_access_level=disabled the same as jobs_enabled=false"
+}
+
+test_gitlab_ci_enabled_no_pipeline_still_refuses() {
+  local case_dir rc
+  case_dir=$(make_gitlab_case gitlab-ci-enabled-no-pipeline pipeline=null)
+  write_project_json "$case_dir/project.json" true enabled
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "gitlab-ci-enabled-no-pipeline: a project that can run CI must still refuse a request with no pipeline"
+  assert_grep 'the head pipeline status is "none", not success' "$case_dir/stderr" \
+    "gitlab-ci-enabled-no-pipeline: the ordinary no-pipeline refusal was relaxed even though CI is enabled"
+  assert_no_grep 'CI disabled at the project level' "$case_dir/stderr" \
+    "gitlab-ci-enabled-no-pipeline: a relaxation notice was printed despite CI being enabled"
+  [ -z "$(glab_merge_line "$case_dir/glab.log")" ] \
+    || fail "gitlab-ci-enabled-no-pipeline: a merge was attempted despite the refusal"
+  pass "fm-pr-merge still refuses a pipeline-less GitLab merge request when the project can run CI"
+}
+
+test_gitlab_ci_disabled_does_not_relax_a_failed_pipeline() {
+  local case_dir rc
+  case_dir=$(make_gitlab_case gitlab-ci-disabled-failed-pipeline pipeline_status=failed)
+  write_project_json "$case_dir/project.json" false disabled
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "gitlab-ci-disabled-failed-pipeline: a pipeline that ran and failed must still refuse"
+  assert_grep 'the head pipeline status is "failed", not success' "$case_dir/stderr" \
+    "gitlab-ci-disabled-failed-pipeline: the failed-pipeline refusal was relaxed"
+  pass "fm-pr-merge never relaxes a pipeline that ran and failed, even on a CI-disabled project"
+}
+
+test_gitlab_ci_disabled_does_not_relax_a_stale_pipeline() {
+  local case_dir rc
+  case_dir=$(make_gitlab_case gitlab-ci-disabled-stale-pipeline "pipeline_sha=$MR_STALE_HEAD")
+  write_project_json "$case_dir/project.json" false disabled
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "gitlab-ci-disabled-stale-pipeline: a pipeline that succeeded at a stale commit must still refuse"
+  assert_grep "the head pipeline ran at \"$MR_STALE_HEAD\", not at the current head $MR_HEAD" "$case_dir/stderr" \
+    "gitlab-ci-disabled-stale-pipeline: the stale-commit refusal was relaxed"
+  pass "fm-pr-merge never relaxes a pipeline that succeeded at a stale commit, even on a CI-disabled project"
+}
+
+test_gitlab_pipeline_success_at_head_skips_capability_check() {
+  local case_dir rc
+  case_dir=$(make_gitlab_case gitlab-pipeline-success-skips-api)
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "gitlab-pipeline-success-skips-api: a successful pipeline at head should merge unchanged"
+  assert_no_grep ' api ' "$case_dir/glab.log" \
+    "gitlab-pipeline-success-skips-api: the project-capability endpoint was queried even though a pipeline already succeeded at head"
+  pass "fm-pr-merge does not query project capability when the head pipeline already succeeded"
+}
+
 test_gitlab_unreadable_state_refuses() {
   local case_dir rc name
   for name in view-fails not-an-object split-value; do
@@ -830,6 +966,12 @@ test_gitlab_merge_failure_propagates
 test_gitlab_each_condition_refuses_independently
 test_gitlab_reports_every_failing_condition
 test_gitlab_stale_recorded_head_is_reported
+test_gitlab_ci_disabled_at_project_level_allows_merge_without_pipeline
+test_gitlab_ci_disabled_via_builds_access_level_allows_merge
+test_gitlab_ci_enabled_no_pipeline_still_refuses
+test_gitlab_ci_disabled_does_not_relax_a_failed_pipeline
+test_gitlab_ci_disabled_does_not_relax_a_stale_pipeline
+test_gitlab_pipeline_success_at_head_skips_capability_check
 test_gitlab_unreadable_state_refuses
 test_gitlab_invalid_head_refuses
 test_gitlab_missing_tool_refuses_before_recording
