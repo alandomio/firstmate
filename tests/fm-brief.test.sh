@@ -782,6 +782,11 @@ test_grounding_section_requires_search_and_reporting() {
     "ship brief Grounding section did not require reporting outcome, not just the search"
   assert_grep "starting point rather than a substitute" "$brief" \
     "ship brief Grounding section did not frame the Task section as a starting point"
+  assert_grep "search again whenever a new obstacle or subject comes up" "$brief" \
+    "ship brief Grounding section did not frame search as repeatable, not one-shot"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'check PP Brain before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not' "$brief" \
+    "ship brief Grounding section did not require checking PP Brain for gotchas before working around them"
 
   id="brief-grounding-scout"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1
@@ -789,6 +794,11 @@ test_grounding_section_requires_search_and_reporting() {
   assert_grep "# Grounding" "$brief" "scout brief missing the Grounding section"
   assert_grep "Report what you found and what it changed" "$brief" \
     "scout brief Grounding section did not require reporting outcome, not just the search"
+  assert_grep "search again whenever a new obstacle or subject comes up" "$brief" \
+    "scout brief Grounding section did not frame search as repeatable, not one-shot"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'check PP Brain before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not' "$brief" \
+    "scout brief Grounding section did not require checking PP Brain for gotchas before working around them"
 
   id="brief-grounding-secondmate"
   FM_HOME="$home" FM_SECONDMATE_CHARTER='sample domain' \
@@ -991,8 +1001,9 @@ test_ship_worker_operating_contracts() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-scout gh-proj --scout >/dev/null 2>&1
   brief="$home/data/brief-contracts-scout/brief.md"
   assert_present "$brief" "scout brief was not scaffolded"
-  assert_no_grep "note: CANDIDATE" "$brief" \
-    "scout brief duplicated the ship-only CANDIDATE findings contract"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_no_grep 'raise it as a `note: CANDIDATE - {finding}` status line' "$brief" \
+    "scout brief duplicated the ship-only project-memory CANDIDATE findings contract"
   assert_no_grep "unreachable (confirmed by a live call" "$brief" \
     "scout brief duplicated the ship-only degraded-mode template"
   assert_no_grep "colleague's approval" "$brief" \
