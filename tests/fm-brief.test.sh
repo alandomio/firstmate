@@ -861,10 +861,16 @@ test_skill_declaration_required_in_first_status_line() {
   pass "fm-brief.sh: ship and scout briefs require declaring prescribed skills/procedures invoked and not invoked in the first status line; secondmate charter does not duplicate it"
 }
 
-# The worker-operating contracts added on 2026-09-02 are ship-only: they govern
-# the crewmate that performs the task itself. A scout produces a written report
-# and a secondmate charter routes work to its own crewmates, whose generated
-# ship briefs already carry these contracts, so neither may duplicate them.
+# The worker-operating contracts added on 2026-09-02 are ship-only where they
+# govern the crewmate that performs the task itself: the auth-banner false
+# positive, the degraded-mode blocked: template, the colleague-approval pause,
+# and the Rule 4 durable-findings CANDIDATE paragraph. A scout produces a
+# written report and a secondmate charter routes work to its own crewmates,
+# whose generated ship briefs already carry those, so neither may duplicate
+# them. The scout brief does legitimately share the Grounding note: CANDIDATE
+# gotcha line and its direct-write prohibition, so the scout guards below key
+# on ship-only phrasing; only the secondmate charter, which omits Grounding
+# entirely, can still be guarded on "note: CANDIDATE" alone.
 test_ship_worker_operating_contracts() {
   local home brief dod ship_only_candidate_rule
   home="$TMP_ROOT/worker-contracts-home"
