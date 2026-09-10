@@ -65,6 +65,14 @@ ln -s "$SLEEP_BIN" "$LAB/bin/musescore"
 ln -s "$SLEEP_BIN" "$LAB/bin/amuse"
 ln -s "$SLEEP_BIN" "$LAB/bin/muse-binary"
 ln -s "$SLEEP_BIN" "$LAB/bin/muse-bind"
+# agy resolves unwrapped - tmux and ps both report the literal `agy` - so the
+# exact executable name is its ONLY signal, with no install-path component to
+# fall back on. `agy` is a short fragment of many ordinary words, so the same
+# substring hazard muse's decoys guard against applies here.
+ln -s "$SLEEP_BIN" "$LAB/bin/agy"
+ln -s "$SLEEP_BIN" "$LAB/bin/agypt"
+ln -s "$SLEEP_BIN" "$LAB/bin/shaggy"
+ln -s "$SLEEP_BIN" "$LAB/bin/agy-bin"
 
 # A launcher whose own process identity is a bare shell, running the harness as
 # a child in the same foreground process group - the shape the real Pi Launcher
@@ -171,6 +179,23 @@ for decoy in musescore amuse muse-binary muse-bind; do
     || fail "'$decoy' merely contains 'muse' and must not classify as a live agent pane"
 done
 pass "tmux liveness: unrelated muse-containing command names stay ambiguous"
+
+# --- agy's exact, unwrapped process name ------------------------------------
+# An agy crewmate pane misclassified here reads as a dead endpoint, so a healthy
+# worker would be torn down or relaunched; the decoys keep the exact match from
+# widening into a substring one.
+
+new_window agy "$LAB/bin/agy" 900
+wait_for_state "$SESSION:agy" alive \
+  || fail "agy's exact unwrapped process name must classify alive"
+pass "tmux liveness: agy's exact process name classifies alive"
+
+for decoy in agypt shaggy agy-bin; do
+  new_window "decoy-$decoy" "$LAB/bin/$decoy" 900
+  wait_for_state "$SESSION:decoy-$decoy" ambiguous \
+    || fail "'$decoy' merely contains 'agy' and must not classify as a live agent pane"
+done
+pass "tmux liveness: unrelated agy-containing command names stay ambiguous"
 
 # --- a version name blinds one source ---------------------------------------
 # Giving a genuine harness-named executable the version-string argv[0] that

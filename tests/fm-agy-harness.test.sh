@@ -136,13 +136,17 @@ agy_workspace_field_hex() {  # <workspace-root>
 # workspace path stored as a protobuf-framed blob, which is the byte contract
 # the resolver decodes.
 make_conversation_db() {
-  local path=$1 ws=$2 idx=0 status
+  local path=$1 ws=$2 idx=0 row type status
   shift 2
   sqlite3 "$path" "CREATE TABLE steps (idx integer, step_type integer, status integer, PRIMARY KEY (idx));" || return 1
   sqlite3 "$path" "CREATE TABLE workspace_marker (blob blob);"
   sqlite3 "$path" "INSERT INTO workspace_marker (blob) VALUES (X'$(agy_workspace_field_hex "$ws")');"
-  for status in "$@"; do
-    sqlite3 "$path" "INSERT INTO steps (idx, step_type, status) VALUES ($idx, 15, $status);"
+  for row in "$@"; do
+    case "$row" in
+      *:*) type=${row%%:*}; status=${row#*:} ;;
+      *) type=15; status=$row ;;
+    esac
+    sqlite3 "$path" "INSERT INTO steps (idx, step_type, status) VALUES ($idx, $type, $status);"
     idx=$((idx + 1))
   done
 }
@@ -332,6 +336,98 @@ test_busy_fold_decodes_a_multibyte_length_prefix() {
   pass "agy busy fold decodes a multi-byte varint length prefix"
 }
 
+# agy's busy code is step-type dependent, so the fold reads the (step_type,
+# status) PAIR: (15,8) is a running text step and (132,2) a running tool call,
+# while status 3 is settled for EVERY step_type. Anything outside that
+# measured set stays unknown rather than being guessed at.
+test_run_state_reads_the_step_type_status_pair() {
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    pass "agy run state (step-type pairs): sqlite3 not installed in this environment, skipped"
+    return 0
+  fi
+  local case_dir ws out
+  case_dir="$TMP_ROOT/run-state-pairs"
+  ws="$case_dir/workspace"
+  mkdir -p "$case_dir" "$ws"
+
+  make_conversation_db "$case_dir/text-busy.db" "$ws" 15:3 15:8 || fail "fixture a"
+  make_conversation_db "$case_dir/tool-busy.db" "$ws" 15:3 132:2 || fail "fixture b"
+  make_conversation_db "$case_dir/tool-settled.db" "$ws" 15:8 132:3 || fail "fixture c"
+  make_conversation_db "$case_dir/other-settled.db" "$ws" 101:3 || fail "fixture d"
+  make_conversation_db "$case_dir/text-two.db" "$ws" 132:3 15:2 || fail "fixture e"
+  make_conversation_db "$case_dir/unknown-pair.db" "$ws" 15:3 21:8 || fail "fixture f"
+
+  out=$(
+    # shellcheck source=bin/fm-busy-lib.sh
+    . "$ROOT/bin/fm-busy-lib.sh"
+    printf 'text-busy=%s\n' "$(fm_busy_agy_run_state "$case_dir/text-busy.db" || echo unknown)"
+    printf 'tool-busy=%s\n' "$(fm_busy_agy_run_state "$case_dir/tool-busy.db" || echo unknown)"
+    printf 'tool-settled=%s\n' "$(fm_busy_agy_run_state "$case_dir/tool-settled.db" || echo unknown)"
+    printf 'other-settled=%s\n' "$(fm_busy_agy_run_state "$case_dir/other-settled.db" || echo unknown)"
+    printf 'text-two=%s\n' "$(fm_busy_agy_run_state "$case_dir/text-two.db" || echo unknown)"
+    printf 'unknown-pair=%s\n' "$(fm_busy_agy_run_state "$case_dir/unknown-pair.db" || echo unknown)"
+  )
+  assert_contains "$out" "text-busy=busy" "a running text step (15,8) must be busy"
+  assert_contains "$out" "tool-busy=busy" "a running tool call (132,2) must be busy"
+  assert_contains "$out" "tool-settled=idle" "a settled tool call (132,3) must be idle"
+  assert_contains "$out" "other-settled=idle" "status 3 must settle any step_type, including 101"
+  assert_contains "$out" "text-two=unknown" "status 2 on a TEXT step is not a measured busy pair"
+  assert_contains "$out" "unknown-pair=unknown" "an unmeasured (step_type, status) pair must not be guessed"
+  pass "agy run state reads the (step_type, status) pair, not status alone"
+}
+
+# The length prefix alone is not proof of a protobuf field: a coincidental byte
+# whose value equals the path length would accept an occurrence sitting in
+# another task's captured tool output. A real length-delimited field carries a
+# wire-type-2 tag byte before its varint, and that is required too.
+test_binding_rejects_a_coincidental_length_byte() {
+  local case_dir root state ws db out status len
+  case_dir="$TMP_ROOT/binding-tagless"
+  root="$case_dir/conversations"
+  state="$case_dir/state"
+  ws="$case_dir/wt"
+  db="$root/cccccccc-cccc-cccc-cccc-cccccccccccc.db"
+  mkdir -p "$root" "$state" "$ws"
+  len=$(printf '%s' "$ws" | wc -c)
+  len=$((len))
+  [ "$len" -lt 128 ] || fail "fixture workspace path must fit a single-byte varint"
+  {
+    printf 'captured tool output: '
+    printf 'A'
+    printf "\\$(printf '%03o' "$len")"
+    printf '%s and more\n' "$ws"
+  } > "$db"
+  grep -aqF -- "$ws" "$db" \
+    || fail "fixture does not contain the workspace path as a raw substring"
+  {
+    printf 'conversations_root=%s\n' "$root"
+    printf 'workspace_root=%s\n' "$ws"
+  } > "$state/taskA.agy-session"
+  out=$(
+    # shellcheck source=bin/fm-busy-lib.sh
+    . "$ROOT/bin/fm-busy-lib.sh"
+    fm_busy_agy_conversation "$state" taskA
+  )
+  status=$?
+  [ "$status" -ne 0 ] || fail "a coincidental length byte with no wire-type-2 tag was accepted: '$out'"
+
+  # The same bytes with the preceding byte replaced by a real wire-type-2 tag
+  # (0x12, low 3 bits = 2): the genuine encoding must still resolve.
+  {
+    printf 'captured tool output: '
+    printf '\022'
+    printf "\\$(printf '%03o' "$len")"
+    printf '%s and more\n' "$ws"
+  } > "$db"
+  out=$(
+    # shellcheck source=bin/fm-busy-lib.sh
+    . "$ROOT/bin/fm-busy-lib.sh"
+    fm_busy_agy_conversation "$state" taskA
+  )
+  [ "$out" = "$db" ] || fail "a genuine tag+varint framed path did not resolve, got '$out'"
+  pass "agy binding requires a wire-type-2 tag, not just a matching length byte"
+}
+
 # The real classifier entry point, not the fold helpers: agy must reach its
 # pull source ahead of the record read and label the verdict agy-conversation.
 test_busy_classify_reports_the_agy_conversation_source() {
@@ -418,5 +514,7 @@ test_busy_fold_excludes_prior_conversation
 test_busy_fold_ignores_sibling_slot_path_prefix
 test_busy_fold_resolves_across_an_alphanumeric_successor_byte
 test_busy_fold_decodes_a_multibyte_length_prefix
+test_binding_rejects_a_coincidental_length_byte
+test_run_state_reads_the_step_type_status_pair
 test_busy_fold_ambiguous_resolution_fails
 test_busy_classify_reports_the_agy_conversation_source

@@ -328,15 +328,15 @@ test_matrix_pi_separated_needs_identity() {
 }
 
 # agy (Antigravity CLI) draws the identical separator-bounded shape but has no
-# blocked-menu-above-the-pair hazard of its own and its composer is always
-# exactly one content row, unlike pi's up-to-eight-row box (verified live,
-# agy 1.1.28). Its identity comes from a real per-backend process probe
+# blocked-menu-above-the-pair hazard of its own (verified live, agy 1.1.28).
+# Its identity comes from a real per-backend process probe
 # (bin/fm-tmux-lib.sh's fm_tmux_composer_identity, extended from pi-only),
 # never from structure alone - the same blank-row counterexample that refuses
 # pi above must also refuse a generic `none` identity here, and only an
-# actual `agy` identity tuple may classify the single-row pair.
+# actual `agy` identity tuple may classify the region between the rules,
+# however many rows the typed input wrapped onto.
 test_matrix_agy_separated_needs_identity() {
-  local screen typed wide agy_idle agy_working none
+  local screen typed wide wrapped agy_idle agy_working none
   screen=$'transcript\n────────────────────────\n\n────────────────────────\n footer'
   agy_idle=$(printf 'agy\tidle'); agy_working=$(printf 'agy\tworking')
   none=$(printf 'zsh\t')
@@ -358,11 +358,25 @@ test_matrix_agy_separated_needs_identity() {
   # would for content that happens to be genuinely blank.
   assert_screen "agy working, composer content still classifies" empty \
     "$CAPS_STYLED" "$screen" '' "$agy_working"
-  # A wider pair (more than one content row) is not agy's own shape; without a
-  # genuine pi identity it stays unknown rather than guessed from structure.
+  # Input longer than the pane WRAPS onto further rows between the same two
+  # rules (live-reproduced at 80 columns). Identity has already proven the pane
+  # is agy, so those rows must classify like any other composer content: a
+  # `pending` verdict is what keeps fm_tmux_submit_enter_core retrying a
+  # swallowed Enter, while `unknown` abandons the retry budget outright.
+  wrapped=$'────────────────────────\nrewrite the flaky delivery test so it stops depending on\nwall-clock ordering between the two panes\n────────────────────────'
+  assert_screen "agy wrapped input is pending, not unknown" pending \
+    "$CAPS_STYLED" "$wrapped" '' "$agy_idle"
+  assert_screen "agy wrapped input on tmux is pending" pending \
+    "$CAPS_TMUX" "$wrapped" 2 "$agy_idle"
+  # The same widened region, genuinely blank, is still proven empty - identity
+  # carries it, exactly as it does for the single-row shape.
   wide=$'────────────────────────\n\n\n────────────────────────'
-  assert_screen "a wider blank pair with agy identity stays unknown" unknown \
+  assert_screen "a wider blank pair with agy identity is empty" empty \
     "$CAPS_STYLED" "$wide" '' "$agy_idle"
+  # Without a genuine agy identity that same wider pair stays unknown: the
+  # widened region is classified by IDENTITY, never by structure.
+  assert_screen "a wider blank pair without agy identity stays unknown" unknown \
+    "$CAPS_STYLED" "$wide" '' "$none"
   pass "matrix: agy's separated composer needs a real identity, not structure alone"
 }
 

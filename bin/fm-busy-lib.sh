@@ -80,12 +80,16 @@
 # The agy (Antigravity CLI) pull source folds its own durable per-conversation
 # SQLite database (agy has no hook or plugin surface at all - not even a
 # disabled one - so unlike muse there is nothing to gate on a future build).
-# Its `steps` table's `status` column live-verified (agy 1.1.28): 8 while a
-# step is actually running, settling to 3 once it completes OR is
-# interrupted, which covers interruption the same way cursor's transcript
-# does and Claude's Stop hook does not. See fm_busy_agy_run_state for the
-# fold. agy's rendered `esc to cancel` footer is deliberately not a state
-# source here, same caveat as cursor's footer above.
+# Its `steps` table live-verified (agy 1.1.28) on the (step_type, status)
+# PAIR, because the busy code is step-type dependent: (15, 8) is a running
+# text-generation step, (132, 2) a running tool call, and status 3 is the
+# universal settled value for every step_type - including after an interrupt,
+# which covers interruption the same way cursor's transcript does and Claude's
+# Stop hook does not. The fold carries one documented, deliberately unsolved
+# gap: a poll landing between one step settling and the next being inserted
+# reports idle mid-turn. See fm_busy_agy_run_state for both. agy's rendered
+# `esc to cancel` footer is deliberately not a state source here, same caveat
+# as cursor's footer above.
 #
 # Codex negotiation (fm_busy_codex_appserver_observable,
 # fm_busy_codex_hooks_verified): the approved contract prefers Codex's
@@ -841,10 +845,10 @@ fm_busy_agy_cache_path() {  # <state-dir> <id>
   printf '%s/%s.agy-session-current' "$1" "$2"
 }
 
-# fm_busy_agy_binding_field: read one field from the sidecar, or fail.
-fm_busy_agy_binding_field() {  # <state-dir> <id> <key>
-  local path line key=$3
-  path=$(fm_busy_agy_binding_path "$1" "$2")
+# _fm_busy_agy_kv_field: read one `<key>=<value>` field from an agy sidecar,
+# or fail. Both agy sidecars use the same line format.
+_fm_busy_agy_kv_field() {  # <path> <key>
+  local path=$1 key=$2 line
   [ -f "$path" ] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
@@ -857,6 +861,10 @@ fm_busy_agy_binding_field() {  # <state-dir> <id> <key>
     esac
   done < "$path"
   return 1
+}
+
+fm_busy_agy_binding_field() {  # <state-dir> <id> <key>
+  _fm_busy_agy_kv_field "$(fm_busy_agy_binding_path "$1" "$2")" "$3"
 }
 
 fm_busy_agy_binding_has_prior() {  # <state-dir> <id> <conversation-path>
@@ -882,12 +890,18 @@ fm_busy_agy_binding_has_prior() {  # <state-dir> <id> <conversation-path>
 # 10's conversation and report its busy state as its own.
 #
 # The boundary is taken from protobuf's own framing rather than assumed from a
-# delimiter character. A length-delimited field's payload is preceded by a
-# base-128 varint holding its exact byte length, so an occurrence is this
-# task's workspace only when some valid varint ending immediately before the
-# occurrence decodes to exactly the path's byte length. A byte-class boundary
-# was measured and rejected: in a real database the byte following a genuine
-# occurrence was observed to be an ordinary alphanumeric (0x7a). See
+# delimiter character. A length-delimited field is written as a tag byte whose
+# low 3 bits are wire type 2, then a base-128 varint holding the payload's
+# exact byte length, then the payload - so an occurrence is this task's
+# workspace only when a valid varint ending immediately before it decodes to
+# exactly the path's byte length AND the byte before that varint is a
+# wire-type-2 tag. Both halves were measured against a real database: all 4
+# genuine occurrences carry the tag byte, and requiring the length alone would
+# accept any coincidental equal-valued byte - an ASCII space (0x20 = 32)
+# before an unrelated 32-byte path inside another task's captured tool output
+# is enough to mis-bind and then cache that mis-binding for life.
+# A byte-class boundary was measured and rejected too: the byte FOLLOWING a
+# genuine occurrence was observed to be an ordinary alphanumeric (0x7a). See
 # docs/verification/runtime-backends.md for the dated collision measurement
 # (0 of 18 sibling-prefix occurrences accepted, 4 of 18 own occurrences
 # accepted). node is already this file's decoder for muse's fold and degrades
@@ -905,20 +919,22 @@ const path = require("path");
 const [root, workspace] = process.argv.slice(2);
 const needle = Buffer.from(workspace, "utf8");
 
-// True when a valid protobuf varint ends at buffer[offset - 1] and decodes to
-// exactly `length`. Varint bytes are little-endian base-128: every byte but
-// the last carries a set continuation bit.
+// True when buffer[offset] begins the payload of a length-delimited protobuf
+// field of exactly `length` bytes: a valid varint ends at buffer[offset - 1]
+// and decodes to `length`, and the byte before that varint is a wire-type-2
+// tag. Varint bytes are little-endian base-128: every byte but the last
+// carries a set continuation bit.
 function lengthPrefixed(buffer, offset, length) {
   if (offset < 1 || (buffer[offset - 1] & 0x80) !== 0) return false;
   for (let width = 1; width <= 5; width += 1) {
     const start = offset - width;
-    if (start < 0) return false;
+    if (start < 1) return false;
     if (width > 1 && (buffer[start] & 0x80) === 0) return false;
     let value = 0;
     for (let i = 0; i < width; i += 1) {
       value += (buffer[start + i] & 0x7f) * Math.pow(128, i);
     }
-    if (value === length) return true;
+    if (value === length && (buffer[start - 1] & 0x07) === 2) return true;
   }
   return false;
 }
@@ -954,20 +970,7 @@ NODE
 }
 
 fm_busy_agy_cache_field() {  # <state-dir> <id> <key>
-  local path line key=$3
-  path=$(fm_busy_agy_cache_path "$1" "$2")
-  [ -f "$path" ] || return 1
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      "$key="*)
-        line=${line#"$key="}
-        [ -n "$line" ] || return 1
-        printf '%s' "$line"
-        return 0
-        ;;
-    esac
-  done < "$path"
-  return 1
+  _fm_busy_agy_kv_field "$(fm_busy_agy_cache_path "$1" "$2")" "$3"
 }
 
 fm_busy_agy_cache_conversation() {  # <state-dir> <id> <conversation-path>
@@ -1008,23 +1011,44 @@ EOF
 }
 
 # fm_busy_agy_run_state: busy when the LAST step recorded in <conversation-db>
-# is still running, idle when it has settled, unknown otherwise. Live-verified
-# (agy 1.1.28): the steps table's status column reads 8 for a step actually
-# executing and settles to 3 once it completes OR is interrupted - a single
-# Escape settled the last row to 3 within the same turn in a live capture, so
-# this covers interruption the same way cursor's transcript does and Claude's
-# Stop hook does not. No other status value has been observed, so anything
-# else - including no rows at all - is unknown rather than guessed. Read with
-# sqlite3 -readonly, which shares the live WAL-mode file safely with agy's own
-# writer without needing a lock.
+# is still running, idle when it has settled, unknown otherwise. The verdict
+# reads the (step_type, status) PAIR, because agy's busy code is step-type
+# dependent - status alone does not carry it. Live-verified (agy 1.1.28) by
+# polling a real multi-tool-call turn at 0.5s against known ground-truth
+# timing:
+#   (15, 8)   a text-generation step actually running   -> busy
+#   (132, 2)  a tool-call step actually running         -> busy
+#   (*, 3)    settled, for every observed step_type     -> idle
+# status 3 is the universal terminal value: it appeared as the dominant
+# terminal status across every step_type recorded on this machine (14, 15, 21,
+# 23, 33, 98, 101, 132, 139 and others), and it is also what a single Escape
+# settles the running row to, so interruption is covered the same way cursor's
+# transcript covers it and Claude's Stop hook does not. Every OTHER pair is
+# unknown rather than guessed - no meaning is invented for a step_type or
+# status outside the verified set.
+#
+# KNOWN LIMITATION, deliberately not solved here: a turn is a sequence of step
+# rows, and between one row settling and the next being inserted there is a
+# real window in which the last row reads settled while the turn is still
+# going. A poll landing in that window reports idle. Every other table in the
+# conversation database was inspected for a turn-level signal to close it -
+# trajectory_meta is static single-row metadata written once at conversation
+# creation, and executor_metadata, gen_metadata, parent_references and
+# battle_mode_infos are opaque protobuf blobs with no discoverable status
+# field or empty in every conversation inspected - and none exists. Treat this
+# as a documented gap in the same class as cursor's interrupt-ack timing
+# variability, not a closed guarantee.
+#
+# Read with sqlite3 -readonly, which shares the live WAL-mode file safely with
+# agy's own writer without needing a lock.
 fm_busy_agy_run_state() {  # <conversation-db>
-  local db=$1 status
+  local db=$1 row
   [ -f "$db" ] || return 1
   command -v sqlite3 >/dev/null 2>&1 || return 1
-  status=$(sqlite3 -readonly "$db" 'SELECT status FROM steps ORDER BY idx DESC LIMIT 1;' 2>/dev/null) || return 1
-  case "$status" in
-    8) printf 'busy' ;;
-    3) printf 'idle' ;;
+  row=$(sqlite3 -readonly "$db" 'SELECT step_type, status FROM steps ORDER BY idx DESC LIMIT 1;' 2>/dev/null) || return 1
+  case "$row" in
+    *'|3') printf 'idle' ;;
+    '15|8'|'132|2') printf 'busy' ;;
     *) return 1 ;;
   esac
 }

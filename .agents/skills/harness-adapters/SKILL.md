@@ -557,7 +557,7 @@ It is a CREWMATE and SCOUT adapter only.
 | Skill invocation | `/<skill>`, the claude/grok form, but reachable ONLY through agy's own three discovery paths (see "Skill discovery" below) - it never reads `~/.claude/skills/`. |
 | Autonomy | `--dangerously-skip-permissions`, the CLI's own documented "auto-approve all tool permission requests without prompting" flag; see "Autonomy: no narrower flag found" below for why this is used despite the default interactive TUI already proceeding unprompted for the operations tried. |
 | Trust dialog | `Do you trust the contents of this project?` appears on first launch in a fresh directory, even with `--dangerously-skip-permissions`. Accept with Enter. The decision persists per path, so later spawns in the same worktree slot skip it. |
-| Composer | A BARE row bounded top and bottom by solid `─` horizontal rules (no side borders), prompt glyph a plain ASCII `>` in 256-color `38;5;111`. No idle placeholder text - the row is genuinely blank after the glyph when idle. Idle footer: `? for shortcuts`; busy footer: `esc to cancel` (present for the whole active turn, gone the instant it settles). |
+| Composer | A BARE row bounded top and bottom by solid `─` horizontal rules (no side borders), prompt glyph a plain ASCII `>` in 256-color `38;5;111`. No idle placeholder text - the row is genuinely blank after the glyph when idle. Input longer than the pane wraps onto further rows between the same two rules, so the region is one row only when the input fits. Idle footer: `? for shortcuts`; busy footer: `esc to cancel` (present for the whole active turn, gone the instant it settles). |
 | Effort | `--effort <low\|medium\|high>`; no `xhigh` or `max` exists in `--help`. |
 | Resume | `-c`/`--continue` (most recent for the cwd) or `--conversation=<id>` (id printed on exit). Live-verified: resume restores the full transcript but does NOT preserve the original model/effort - a resumed session silently used a different default model when `--model`/`--effort` were omitted from the resume command, so a relaunch must always pass them explicitly. |
 
@@ -590,6 +590,25 @@ Live-verified on this account (agy 1.1.28, interactive TUI): a Bash command, a R
 `--dangerously-skip-permissions` is kept anyway - it is the CLI's own documented "auto-approve all tool permission requests without prompting" guarantee, it matches the operator's own shell alias, and it matches the fleet-wide pattern of an explicit autonomy flag on every other adapter's launch.
 Firstmate's own prior observation that a permission-needing tool call is silently auto-denied with no output was specifically in `--print` (non-interactive, one-shot) mode, not the interactive TUI `fm-spawn` actually launches, so it does not contradict this finding; it was not independently re-verified in this pass.
 
+### Busy state reads the (step_type, status) PAIR, and has one unsolved race
+
+agy's busy code is STEP-TYPE-DEPENDENT - reading the `status` column alone gets it wrong.
+Live-measured by polling a real multi-tool-call turn at 0.5s resolution against known ground-truth timing (three sequential shell commands each holding for a known duration):
+
+| Last `steps` row | Meaning | Verdict |
+|---|---|---|
+| `(15, 8)` | a text-generation step actually running | busy |
+| `(132, 2)` | a tool-call step actually running | busy |
+| `(*, 3)` | settled, for every step_type observed | idle |
+| anything else | not measured | unknown |
+
+`status = 3` is the universal terminal value: it was the dominant terminal status for every step_type recorded on this machine (14, 15, 21, 23, 33, 98, 101, 132, 139 and others), and a single Escape settles the running row to 3 as well, so interruption is covered.
+Do NOT extend this table by inference - a step_type or status outside the measured set is `unknown`, never a guess.
+
+KNOWN LIMITATION, deliberately not closed: a turn is a sequence of step rows, and between one row settling and the next being inserted there is a real window where the last row reads settled while the turn is still going, so a poll landing there reports `idle` mid-turn.
+Every other table in the conversation database was inspected for a turn-level signal to close it - `trajectory_meta` is static single-row metadata written once at conversation creation, and `executor_metadata`, `gen_metadata`, `parent_references` and `battle_mode_infos` are opaque protobuf blobs with no discoverable status field or empty in every conversation inspected.
+None exists. Treat this as a documented gap in the same class as cursor's interrupt-ack timing variability, not a solved guarantee.
+
 ### Busy-state fold depends on `sqlite3`
 
 `bin/fm-busy-lib.sh`'s agy fold shells out to the `sqlite3` CLI in read-only mode to read the conversation database's `steps` table; it degrades to `unknown` when `sqlite3` is absent rather than erroring, but a fleet machine without it loses agy's busy-state signal entirely.
@@ -604,7 +623,9 @@ An UNANCHORED byte match is unsafe here, so do not copy one into a new adapter.
 Sibling worktrees are numbered pool slots, so `.../proj/1` is a strict byte prefix of every path under `.../proj/10`: a raw substring hit lets slot 1 bind to slot 10's conversation and report slot 10's busy state as its own for the rest of its life, since the resolution is then cached in `state/<id>.agy-session-current`.
 A trailing-byte-class anchor is not a fix either - it was measured against a real database and rejected, because the byte immediately following a genuine occurrence was an ordinary alphanumeric (`0x7a`).
 
-What the resolver actually requires is protobuf's own framing: a length-delimited field's payload is preceded by a base-128 varint carrying its exact byte length, so an occurrence counts only when some valid varint ending immediately before it decodes to exactly the workspace path's byte length.
+What the resolver actually requires is protobuf's own framing: a length-delimited field is a tag byte whose low 3 bits are wire type 2, then a base-128 varint carrying the payload's exact byte length, then the payload.
+An occurrence counts only when a valid varint ending immediately before it decodes to exactly the workspace path's byte length AND the byte before that varint is a wire-type-2 tag.
+The length alone is not enough - a coincidental equal-valued byte (an ASCII space, `0x20` = 32, before an unrelated 32-byte path captured in another task's tool output) would otherwise be accepted; all 4 genuine occurrences measured carry the tag byte.
 That guarantee was measured, not assumed - see `docs/verification/runtime-backends.md` for the collision test (0 of 18 sibling-prefix occurrences accepted, 4 of 18 own occurrences accepted).
 Within that predicate the failure direction stays safe: a missed occurrence only widens the prior-exclusion set at spawn time or leaves a conversation unresolved (`unknown`) at fold time, never binding a task to another task's conversation.
 
@@ -612,5 +633,6 @@ Within that predicate the failure direction stays safe: a missed occurrence only
 
 agy's composer - a single content row bounded by two solid horizontal rules - structurally collides with Pi's own separator-bounded composer shape in `bin/fm-composer-lib.sh` (a genuinely idle Pi composer also collapses to one blank row between two rules), so a live regression test already exists precisely to keep structure-without-identity from resurrecting a documented incident: an ordinary shell pane whose unrelated content happened to draw two divider-like lines around a blank one was once misread as an empty Pi composer (`tests/fm-composer-lib.test.sh`, "absent identity cannot prove blank pi pair").
 The fix therefore does NOT infer agy from shape alone.
-`bin/fm-tmux-lib.sh`'s `fm_tmux_composer_identity` probe (previously pi-only) now also recognizes a genuine `agy` foreground process and reports a real `agy<TAB>idle|working` identity tuple, exactly the same shape pi's own tuple takes; only once that identity has proven the pane IS agy does `bin/fm-composer-lib.sh`'s `_fm_composer_pi_verdict` classify a single-row pair directly from its content (agy carries none of Pi's blocked-menu-above-the-pair hazard - no such overlay was observed to leave the pair intact; agy's own slash-command popup redraws the closing rule away entirely, so the pair never matches at all when one is showing).
+`bin/fm-tmux-lib.sh`'s `fm_tmux_composer_identity` probe (previously pi-only) now also recognizes a genuine `agy` foreground process and reports a real `agy<TAB>idle|working` identity tuple, exactly the same shape pi's own tuple takes; only once that identity has proven the pane IS agy does `bin/fm-composer-lib.sh`'s `_fm_composer_pi_verdict` classify the region between the rules directly from its content (agy carries none of Pi's blocked-menu-above-the-pair hazard - no such overlay was observed to leave the pair intact; agy's own slash-command popup redraws the closing rule away entirely, so the pair never matches at all when one is showing).
 Verified end to end on a live tmux pane: idle reads `empty`, unsent typed text reads `pending`, and the full existing composer suite passes with zero regressions.
+Do not restrict that region to a single content row: agy draws one row for input that fits, but a typed line longer than the pane wraps onto further rows between the SAME two rules (live-reproduced at 80 columns), and refusing those rows returns `unknown`, which makes `fm_tmux_submit_enter_core` abandon a swallowed Enter instead of retrying it - forfeiting the retry budget for exactly the long steers that need it.

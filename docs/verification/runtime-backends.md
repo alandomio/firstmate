@@ -934,6 +934,11 @@ ANTIGRAVITY_AGENT=<redacted>
 `ANTIGRAVITY_AGENT=1` and `ANTIGRAVITY_AGENTAPI_EXE=<path>` are the identity markers; `CLAUDECODE` and Claude Code's own `AI_AGENT` leak through unchanged, confirming agy does not clear a foreign primary's markers (`bin/fm-harness.sh` tests the Antigravity markers first for the same reason it tests Cursor's first).
 
 Process identity: `#{pane_current_command}` and `ps -o comm=` on the live agent process both report the literal, unwrapped `agy` - no node-wrapper obfuscation to resolve, unlike cursor-agent.
+That exact-name match is the whole basis of agy's liveness classification, with no install-path component to fall back on, so refresh this harness-dependent proof before accepting an agy upgrade:
+
+```sh
+FM_HARNESS_LIVENESS_DRIFT=1 bin/fm-test-run.sh tests/fm-harness-liveness-drift-live-e2e.test.sh
+```
 
 Busy-state fold, read directly from the conversation database while a turn ran and after it settled:
 
@@ -950,6 +955,22 @@ $ sqlite3 ~/.gemini/antigravity-cli/conversations/<uuid>.db \
 
 A single Escape mid-turn settled the interrupted row to status `3` as well (the same value a normal completion settles to), within the same live capture - confirmed by re-reading the table immediately after sending Escape.
 
+The busy code is STEP-TYPE-DEPENDENT, established by polling a real multi-tool-call turn at 0.5s resolution against known ground-truth timing (three sequential shell commands each holding for a known duration):
+
+```sh
+(step_type 15,  status 8)   text-generation step running   -> busy
+(step_type 132, status 2)   tool-call step running         -> busy   # a DIFFERENT busy code
+(step_type *,   status 3)   settled                        -> idle
+```
+
+The `(132, 2)` row appeared immediately after the prior row settled, held status `2` for approximately the command's own duration, then settled to `3` as the next row appeared.
+`status = 3` was confirmed as the universal settled value both in that live capture and in a full survey of every conversation recorded on this machine (step_types 14, 15, 21, 23, 33, 98, 101, 132, 139 and others all use `3` as their dominant terminal value).
+`bin/fm-busy-lib.sh` therefore folds the `(step_type, status)` pair and treats every combination outside this measured set as `unknown`.
+
+Residual race, measured and deliberately left open: between one step row settling and the next being inserted, the last row reads settled while the turn is still going, so a poll landing in that window reports `idle` mid-turn.
+Every other table in the database was inspected for a turn-level signal - `trajectory_meta` is static single-row metadata (`trajectory_id`, `cascade_id`, `trajectory_type`, `source`) written once at conversation creation, and `executor_metadata`, `gen_metadata`, `parent_references` and `battle_mode_infos` are opaque protobuf blobs with no discoverable status field or empty in every conversation inspected.
+No alternative signal exists; this gap is not solved.
+
 Conversation binding, prefix-collision measurement (2026-09-10): the fold has to decide which conversation database belongs to this task, and agy stores the workspace path only inside an opaque protobuf blob, so the decision is made on raw bytes.
 Two live agy workspaces were created whose paths form a genuine prefix collision - one path a strict prefix of the other, the shape treehouse's numbered pool slots produce - and a real conversation database was generated for the LONGER workspace only.
 
@@ -964,7 +985,10 @@ raw substring occurrences:                                18
 accepted by a preceding varint == its own length:          4   # resolves correctly
 ```
 
-This is why `fm_busy_agy_matching_conversations` decodes protobuf's length prefix instead of testing the byte that follows the path: a trailing-byte-class anchor was measured against the same real data and rejected, because a genuine occurrence was followed by an ordinary alphanumeric (`0x7a`, ASCII `z`), which such an anchor would refuse.
+All 4 accepted occurrences carried a protobuf wire-type-2 tag byte (`byte & 0x07 == 2`) immediately before the length varint, which is what a length-delimited string field's wire encoding requires, so the resolver requires that tag byte as well as the length match.
+The length alone would false-accept a coincidental equal-valued byte - an ASCII space (`0x20` = 32) preceding an unrelated 32-byte path inside another task's captured tool output is enough.
+
+This is why `fm_busy_agy_matching_conversations` decodes protobuf's framing instead of testing the byte that follows the path: a trailing-byte-class anchor was measured against the same real data and rejected, because a genuine occurrence was followed by an ordinary alphanumeric (`0x7a`, ASCII `z`), which such an anchor would refuse.
 A length-delimited protobuf field's payload is preceded by a base-128 varint carrying its exact byte length, so requiring a valid varint ending immediately before an occurrence to decode to exactly the path's byte length is a property of agy's own encoding rather than an assumption about delimiters.
 
 Composer capture, idle, styled (`tmux capture-pane -e -p -S 0 -E -`), showing the bare rule-bounded shape and the plain ASCII `>` glyph:

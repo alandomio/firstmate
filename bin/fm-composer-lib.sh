@@ -1404,15 +1404,21 @@ _fm_composer_classify_bare_pi_overlap() {  # <screen> <styled> <has-identity> <i
 # (harness-adapters skill, "agy"). Its per-backend identity instead comes from
 # a real foreground-process check equivalent to pi's own (tmux: comm == agy,
 # no node-wrapper ambiguity to resolve, unlike cursor-agent) and is reported
-# through the same tuple shape as pi's, "agy<TAB>idle|working". Structure
-# still narrows it further: agy's own composer is always exactly ONE content
-# row (verified live, agy 1.1.28), unlike pi's up-to-eight-row box, and it
-# carries none of pi's blocked-menu-above-the-pair hazard (no such overlay was
+# through the same tuple shape as pi's, "agy<TAB>idle|working". agy carries
+# none of pi's blocked-menu-above-the-pair hazard (no such overlay was
 # observed to leave the pair intact; agy's own slash-command popup redraws the
 # closing rule away entirely, so the pair never matches at all and this branch
-# is never reached for it) - so once identity has proven the pane IS agy, a
-# single-row pair is classified directly from its content with no separate
-# idle/working distinction needed.
+# is never reached for it) - so once identity has proven the pane IS agy, the
+# whole region between the rules is classified directly from its content with
+# no separate idle/working distinction needed.
+#
+# The region is NOT restricted to a single content row. agy's composer draws
+# one row for input that fits, but a typed line longer than the pane wraps
+# onto further rows between the same two rules (live-reproduced at 80
+# columns), and refusing those rows returned `unknown`, which makes
+# fm_tmux_submit_enter_core abandon a swallowed Enter instead of retrying it -
+# losing the retry budget for exactly the long steers that need it. Only the
+# generic pair-validity ceiling gates the region here, the same one pi uses.
 _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
   local screen=$1 styled=$2 has_identity=$3 identity=$4 agent agent_status state
   if [ "$has_identity" != 1 ]; then
@@ -1430,8 +1436,7 @@ _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
   agent=${identity%%$'\t'*}
   agent_status=${identity#*$'\t'}
   if [ "$agent" = agy ]; then
-    if [ "$FM_COMPOSER_SCAN_PI_PAIR_VALID" = 1 ] \
-       && [ "$((FM_COMPOSER_SCAN_PI_CLOSE - FM_COMPOSER_SCAN_PI_OPEN))" -eq 2 ]; then
+    if [ "$FM_COMPOSER_SCAN_PI_PAIR_VALID" = 1 ]; then
       _fm_composer_classify_rows "$screen" "$styled" 0 \
         "$((FM_COMPOSER_SCAN_PI_OPEN + 1))" "$((FM_COMPOSER_SCAN_PI_CLOSE - 1))"
     else
