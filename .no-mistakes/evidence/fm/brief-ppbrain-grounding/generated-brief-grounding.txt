@@ -1,0 +1,30 @@
+Generated brief Grounding surfaces (bin/fm-brief.sh at fde237d)
+Command: FM_HOME=<tmp> FM_PROJECTS_OVERRIDE=<tmp>/projects bin/fm-brief.sh <id> demo-proj [--mode no-mistakes | --scout | --secondmate]
+
+########## ship ##########
+# Grounding
+Before your first substantive action, search PP Brain (`search_knowledge` with both `query` and `prompt` populated - one alone kills two of six retrieval paths) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
+Treat the `# Task` section above as firstmate's assembly of that context, a starting point rather than a substitute.
+When you hit an obstacle, surprising behavior, or trap, check PP Brain before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to PP Brain or any shared memory directly, only firstmate promotes candidates.
+Report what you found and what it changed in your next status line, or state plainly that both were silent.
+If the session-start banner reports `pp-brain: auth_missing`, or anything else suggests PP Brain is unauthenticated, treat that alone as a known false positive: make ONE real `search_knowledge` call before acting on it.
+Only a failing live call is evidence - never stop, and never proceed without org context, on the banner alone.
+If that live call genuinely fails, append `blocked: <server> unreachable (confirmed by a live call, not the startup banner)` to the status file and stop; firstmate will help.
+
+36:   States: working, note, needs-decision, blocked, paused, done, failed.
+
+########## scout ##########
+# Grounding
+Before your first substantive action, search PP Brain (`search_knowledge` with both `query` and `prompt` populated - one alone kills two of six retrieval paths) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
+Treat the `# Task` section above as firstmate's assembly of that context, a starting point rather than a substitute.
+When you hit an obstacle, surprising behavior, or trap, check PP Brain before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to PP Brain or any shared memory directly, only firstmate promotes candidates.
+Report what you found and what it changed in your next status line, or state plainly that both were silent.
+
+29:   States: working, note, needs-decision, blocked, paused, done, failed.
+
+########## second ##########
+37:States: working, needs-decision, blocked, paused, done, failed.
+
+########## secondmate charter Grounding presence ##########
+# Grounding sections: 0
+note: CANDIDATE occurrences: 0

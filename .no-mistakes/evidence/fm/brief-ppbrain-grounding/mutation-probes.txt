@@ -1,0 +1,27 @@
+Evidence: mutation probes against tests/fm-brief.test.sh at commit fde237d
+Each probe mutates bin/fm-brief.sh, runs the suite, then reverts.
+
+===== PROBE: baseline, no mutation (expect exit=0) =====
+exit=0
+
+===== PROBE: gotcha line removed from both Grounding sections =====
+not ok - ship brief Grounding section did not require checking PP Brain for gotchas before working around them
+exit=1
+
+===== PROBE: repeated-search clause reverted to one-shot wording =====
+not ok - ship brief Grounding section did not frame search as repeatable, not one-shot
+exit=1
+
+425:   States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
+557:   States: working, note, needs-decision, blocked, $PAUSED_VERB, done, failed.
+===== PROBE: note dropped from the scout Rule 4 states enumeration =====
+not ok - scout brief did not render the configured pause verb in its states list
+exit=1
+
+===== PROBE: ship-only Rule 4 CANDIDATE paragraph phrase leaked into the scout scaffold =====
+not ok - scout brief duplicated the ship-only Rule 4 CANDIDATE durable-findings paragraph
+exit=1
+
+===== PROBE: gotcha line removed from the SCOUT scaffold only (ship keeps it) =====
+not ok - scout brief Grounding section did not require checking PP Brain for gotchas before working around them
+exit=1
