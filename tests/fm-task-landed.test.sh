@@ -108,7 +108,8 @@ new_case leftovers fm/leftovers
 wt_commit a.txt one
 git -C "$C_WT" push -q origin fm/leftovers || fail "push"
 for d in "$C_WT" "$C_REPO"; do
-  mkdir -p "$d/chatbot-service" && printf 'x\n' > "$d/chatbot-service/app.py"
+  mkdir -p "$d/chatbot-service/lib" && printf 'x\n' > "$d/chatbot-service/app.py"
+  printf 'y\n' > "$d/chatbot-service/lib/util.py"
   printf 'x\n' > "$d/docker-compose.test.yaml"
 done
 meta leftovers "worktree=$C_WT" kind=ship
@@ -131,6 +132,58 @@ assert_not_contains "$OUT" "LEFTOVERS-ONLY" "onlyhere: never calls possible work
 assert_contains "$OUT" "leftovers:  1 untracked,  1 only here" "onlyhere: counts"
 assert_contains "$OUT" "UNTRACKED ONLY HERE (may be work never added): new-feature.sh" "onlyhere: -v flags the path"
 pass "untracked path in no sibling worktree is UNKNOWN, not a leftover"
+
+# --- 5b. a debris directory name in a sibling does not cover a new file in it
+new_case dirmix fm/dirmix
+wt_commit a.txt one
+git -C "$C_WT" push -q origin fm/dirmix || fail "push"
+for d in "$C_WT" "$C_REPO"; do
+  mkdir -p "$d/svc" && printf 'debris\n' > "$d/svc/old.py"
+done
+printf 'handler\n' > "$C_WT/svc/new_handler.py"
+meta dirmix "worktree=$C_WT" kind=ship
+run_tl "$C_HOME" dirmix -v
+expect_rc 1 "dirmix"
+assert_contains "$OUT" "UNKNOWN" "dirmix: cannot tell, says so"
+assert_not_contains "$OUT" "LEFTOVERS-ONLY" "dirmix: the worker's file is never called a leftover"
+assert_contains "$OUT" "leftovers:  1 untracked,  1 only here" "dirmix: the collapsed entry counts once"
+assert_contains "$OUT" "UNTRACKED ONLY HERE (may be work never added): svc/" "dirmix: -v flags the entry"
+assert_contains "$OUT" "file only here (no identical untracked copy in a sibling): svc/new_handler.py" "dirmix: -v names the new file"
+assert_not_contains "$OUT" "svc/old.py" "dirmix: the proven debris file is not flagged"
+pass "a new file inside a same-named debris directory is UNKNOWN and named"
+
+# --- 5c. a same-named file with different content in the sibling -----------
+new_case differ fm/differ
+wt_commit a.txt one
+git -C "$C_WT" push -q origin fm/differ || fail "push"
+printf 'services: {}\n' > "$C_REPO/docker-compose.test.yaml"
+printf 'services: {worker: {}}\n' > "$C_WT/docker-compose.test.yaml"
+meta differ "worktree=$C_WT" kind=ship
+run_tl "$C_HOME" differ -v
+expect_rc 1 "differ"
+assert_contains "$OUT" "UNKNOWN" "differ: cannot tell, says so"
+assert_contains "$OUT" "leftovers:  1 untracked,  1 only here" "differ: counted only here"
+assert_contains "$OUT" "UNTRACKED ONLY HERE (may be work never added): docker-compose.test.yaml" "differ: -v flags it"
+pass "an untracked file whose sibling copy differs is only here"
+
+# --- 5d. a bare primary is not a sibling checkout ---------------------------
+C_DIR="$TMP_ROOT/bare" C_HOME="$TMP_ROOT/bare/home" C_WT="$TMP_ROOT/bare/wt"
+mkdir -p "$C_HOME/state"
+fm_git_init_commit "$C_DIR/src" >/dev/null 2>&1 || fail "fixture bare: source repo"
+git init -q --bare "$C_DIR/primary.git" || fail "fixture bare: init"
+git -C "$C_DIR/primary.git" remote add origin "$C_DIR/src" || fail "fixture bare: remote"
+git -C "$C_DIR/primary.git" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+git -C "$C_DIR/primary.git" fetch -q origin || fail "fixture bare: fetch"
+BARE_MAIN=$(git -C "$C_DIR/src" symbolic-ref --short HEAD)
+git -C "$C_DIR/primary.git" worktree add -q -b fm/bare "$C_WT" "origin/$BARE_MAIN" >/dev/null 2>&1 || fail "fixture bare: worktree"
+mkdir -p "$C_WT/config" && printf 'key: value\n' > "$C_WT/config/new.yaml"
+meta bare "worktree=$C_WT" kind=ship
+run_tl "$C_HOME" bare -v
+expect_rc 1 "bare"
+assert_contains "$OUT" "UNKNOWN" "bare: cannot tell, says so"
+assert_not_contains "$OUT" "LEFTOVERS-ONLY" "bare: the bare repo's own config never makes config/ debris"
+assert_contains "$OUT" "leftovers:  1 untracked,  1 only here" "bare: counted only here"
+pass "untracked entries matching a bare primary's files are UNKNOWN, not leftovers"
 
 # --- 6a. remote branch gone after a merge: landed, and no ambiguous-arg error
 new_case gone fm/gone
@@ -193,6 +246,18 @@ expect_rc 0 "vanished"
 assert_contains "$OUT" "NO-WORKTREE" "vanished: verdict"
 pass "missing meta is UNKNOWN and a vanished worktree is NO-WORKTREE"
 
+# --- 7b. a stale non-git directory nested in another checkout ---------------
+new_case nested fm/nested
+wt_commit a.txt one
+mkdir -p "$C_REPO/wts/gone-task" && printf 'x\n' > "$C_REPO/wts/gone-task/f.txt"
+meta nested "worktree=$C_REPO/wts/gone-task" kind=ship
+run_tl "$C_HOME" nested
+expect_rc 1 "nested"
+assert_contains "$OUT" "UNKNOWN" "nested: no verdict about the enclosing repo"
+assert_contains "$OUT" "not a git worktree root" "nested: the note names the mismatch"
+assert_not_contains "$OUT" "UNLANDED-WORK" "nested: the enclosing repo's commits are not reported"
+pass "a directory that is not itself a checkout root is UNKNOWN"
+
 # --- 8. the no-mistakes gate remote is not a landing ------------------------
 new_case gate fm/gate
 wt_commit a.txt one
@@ -205,6 +270,28 @@ assert_contains "$OUT" "UNLANDED-WORK" "gate: gate-only commits are unlanded"
 assert_contains "$OUT" "work:  1 unpushed" "gate: counted as unpushed"
 assert_contains "$OUT" "no-mistakes gate only" "gate: the note says why"
 pass "commits only on the no-mistakes gate remote are UNLANDED-WORK"
+
+# --- 8b. local-only work merged into local main, with origin/HEAD present ---
+new_case localff fm/localff
+wt_commit a.txt one
+git -C "$C_REPO" merge -q --ff-only fm/localff || fail "local ff merge"
+meta localff "worktree=$C_WT" kind=ship mode=local-only
+run_tl "$C_HOME" localff
+expect_rc 0 "localff"
+assert_contains "$OUT" "LANDED-CLEAN" "localff: work in local main is landed"
+assert_contains "$OUT" "work:  0 unpushed" "localff: local main counts as a landing"
+
+new_case localsq fm/localsq
+wt_commit a.txt one
+wt_commit b.txt two
+git -C "$C_REPO" merge -q --squash fm/localsq >/dev/null || fail "local squash"
+git -C "$C_REPO" commit -qm squashed || fail "local squash commit"
+meta localsq "worktree=$C_WT" kind=ship mode=local-only
+run_tl "$C_HOME" localsq --no-remote
+expect_rc 0 "localsq"
+assert_contains "$OUT" "LANDED-CLEAN" "localsq: content in local main is landed"
+assert_contains "$OUT" "already in local $MAIN" "localsq: the note names local main"
+pass "local-only work in the local default branch is landed even with origin/HEAD set"
 
 # --- 9. PR/MR state, and the sweep's network policy -------------------------
 new_case pr fm/pr

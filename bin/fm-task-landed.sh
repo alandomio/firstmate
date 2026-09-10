@@ -9,31 +9,50 @@
 # in separate, labeled fields ("work: ..." and "leftovers: ..."), and no count
 # ever folds one into the other.
 # An untracked path is not automatically debris, though: a new file a worker
-# never `git add`ed looks identical. So each untracked path is classified by
-# one structural, read-only signal - whether the same path also sits untracked
-# in a sibling worktree of the same repository (`git worktree list`, the
-# primary clone included). Shared paths are pre-existing debris; a path found
-# only in this worktree may be task work, so the script cannot tell and says so
-# with UNKNOWN instead of calling it a leftover. The row shows both counts
-# ("leftovers: <n> untracked, <n> only here"), and -v lists every path with its
-# classification. Nothing is ever called safe to discard. The harness artifacts
-# fm-teardown.sh already ignores (.claude/, .fm-grok-turnend, .fm-kimi-turnend)
-# are not counted at all.
+# never `git add`ed looks identical. So each untracked entry is classified by
+# one structural, read-only signal, checked per FILE: a file is shared debris
+# only when a sibling worktree of the same repository (`git worktree list`, the
+# primary clone included; a bare repository or a directory that is not itself
+# a checkout root never counts) also has it untracked with identical bytes.
+# `git status` collapses an untracked directory into one `dir/` entry, and a
+# matching directory name proves nothing about the files inside, so an entry is
+# shared only when every file under it is. Anything else - a file absent or
+# different in every sibling, or a comparison that could not be made (git
+# error, unreadable file or sibling, a name git quoted) - is only-here and may
+# be task work, so the script cannot tell and says so with UNKNOWN instead of
+# calling it a leftover. The row shows both counts ("leftovers: <n> untracked,
+# <n> only here"), both counting entries as `git status` shows them, and -v
+# lists every entry with its classification plus the unproven files inside an
+# only-here directory. Nothing is ever called safe to discard. The harness
+# artifacts fm-teardown.sh already ignores (.claude/, .fm-grok-turnend,
+# .fm-kimi-turnend) are not counted at all.
+#
+# Cost of that check: it runs only when a worktree has untracked entries, and
+# never lists untracked files across the whole worktree. It is one
+# `git ls-files -o` scoped to those entries here and in each sibling, then one
+# `git hash-object` batch per side per sibling over the files untracked in
+# both, stopping once every file is proven. The git calls are a constant few
+# per sibling, but the bytes of those shared files are read - a large
+# untracked tree present in several worktrees is read once per comparison.
 #
 # "Landed" uses fm-teardown.sh's meaning, read without its fetch: a commit has
 # landed when it is reachable from a forge remote-tracking ref, when the task's
 # PR is merged with a head containing it, or when its changes are already in
-# the default branch. The no-mistakes gate remote is a local validation copy,
-# not a forge, so a commit reachable only from `no-mistakes/*` is NOT landed.
+# the default branch. For a mode=local-only task that default branch is the
+# LOCAL one (named from origin/HEAD, else main or master, as fm-teardown.sh
+# names it), where fm-merge-local.sh lands work. The no-mistakes gate remote is
+# a local validation copy, not a forge, so a commit reachable only from
+# `no-mistakes/*` is NOT landed.
 # Unpushed commits are counted against every forge remote at once, never as
 # `origin/<branch>..HEAD`, so a branch whose own remote ref was deleted after
 # its merge is still evaluated rather than erroring on an ambiguous argument.
 #
 # Verdicts - a closed set, first match wins:
 #   UNKNOWN         landing could not be established: no meta, no worktree=
-#                   key, an unreadable worktree, unpushed commits whose
-#                   remote branch is gone with no proof the work landed, or
-#                   untracked paths found in no sibling worktree.
+#                   key, an unreadable worktree or a path that is not itself
+#                   a checkout root, unpushed commits whose remote branch is
+#                   gone with no proof the work landed, or untracked files
+#                   with no identical untracked copy in a sibling worktree.
 #                   A real outcome with its reason in the notes - never a guess.
 #   NO-WORKTREE     the meta names a worktree path that no longer exists;
 #                   nothing local is left to lose or to inspect.
@@ -45,8 +64,9 @@
 #   PR-UNCHECKED    no local work at risk; a pr= is recorded but its state
 #                   was not read (a sweep without --remote, or a failed lookup).
 #   LEFTOVERS-ONLY  no local work at risk and no open PR; untracked files
-#                   remain, every one also untracked in a sibling worktree
-#                   (what fm-teardown.sh refuses on as "uncommitted").
+#                   remain, every file also untracked and identical in a
+#                   sibling worktree (what fm-teardown.sh refuses on as
+#                   "uncommitted").
 #   LANDED-CLEAN    no local work at risk, no open PR, nothing untracked.
 # A merged or closed PR/MR does not change the local verdict; its state is
 # still shown in the pr: field. PR-* verdicts cover GitLab merge requests too.
@@ -71,7 +91,8 @@
 # Options:
 #   -v, --verbose   add indented detail under each row: worktree, branch, own
 #                   remote ref, forge refs holding HEAD, each tracked change,
-#                   each leftover, and the full PR/MR URL and fields
+#                   each leftover entry with the unproven files inside an
+#                   only-here directory, and the full PR/MR URL and fields
 #   --remote        look PRs up during the fleet sweep
 #   --no-remote     skip PR lookups for named tasks
 #
@@ -123,20 +144,40 @@ tl_forge_remotes() {
   done
 }
 
-# Print the default-branch ref to compare content against, or nothing.
+tl_physical() { (cd "$1" 2>/dev/null && pwd -P); }
+
+# Succeed when <dir> is itself the top level of the checkout git reads there:
+# not a bare repository, not a plain directory nested in another checkout.
+tl_is_checkout_root() {  # <dir>
+  local real top
+  real=$(tl_physical "$1") && [ -n "$real" ] || return 1
+  top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) && [ -n "$top" ] || return 1
+  [ "$(tl_physical "$top")" = "$real" ]
+}
+
+# Print the default-branch ref to compare content against, or nothing. A
+# local-only task lands in the local default branch, named the way
+# fm-teardown.sh's default_branch() names it: origin/HEAD's target, else main
+# or master.
 tl_default_ref() {
   local r target
+  if [ "$MODE" = local-only ]; then
+    target=$(tl_git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)
+    if [ -n "$target" ]; then
+      set -- "refs/heads/${target#origin/}"
+    else
+      set -- refs/heads/main refs/heads/master
+    fi
+    for target in "$@"; do
+      tl_git rev-parse -q --verify "$target" >/dev/null 2>&1 && { printf '%s\n' "$target"; return 0; }
+    done
+  fi
   while IFS= read -r r; do
     target=$(tl_git symbolic-ref -q "refs/remotes/$r/HEAD" 2>/dev/null) || continue
     [ -n "$target" ] && { printf '%s\n' "$target"; return 0; }
   done <<EOF
 $(tl_forge_remotes)
 EOF
-  if [ "$MODE" = local-only ]; then
-    for target in refs/heads/main refs/heads/master; do
-      tl_git rev-parse -q --verify "$target" >/dev/null 2>&1 && { printf '%s\n' "$target"; return 0; }
-    done
-  fi
   return 0
 }
 
@@ -158,42 +199,80 @@ tl_content_in_default() {  # <ref>
   GIT_LITERAL_PATHSPECS=1 tl_git diff --quiet HEAD "$ref" -- "${paths[@]}" 2>/dev/null
 }
 
-# Classify each untracked path of $WT: shared when the same path is also
-# untracked in a sibling worktree of the same repository, otherwise only-here.
-# Sets SHARED and rewrites LEFTOVER_LIST as "<class><TAB><path>" lines.
+# Print the lines of <list> that are ("in") or are not ("out") lines of <set>.
+tl_filter_lines() {  # in|out <list> <set>
+  awk -v keep="$1" 'FNR == NR { if ($0 != "") set[$0] = 1; next }
+    $0 != "" && (($0 in set) == (keep == "in"))' \
+    <(printf '%s\n' "$3") <(printf '%s\n' "$2")
+}
+
+# Classify each untracked entry of $WT, per file: a file is proven shared only
+# when a sibling checkout root of the same repository lists it untracked too
+# and both copies hash identically. An entry is shared when it has files and
+# every one is proven; any failure leaves a file unproven, so its entry is
+# only-here. Names git quoted are never matched. Sets SHARED and rewrites
+# LEFTOVER_LIST as "<class><TAB><path>" lines: "shared" or "only-here" per
+# entry, followed by "file" lines naming the unproven files of an only-here
+# directory entry.
 tl_classify_leftovers() {
-  local self sibs p sib class out=''
+  local self p sib here='' pending theirs cand ours matched proven='' out class
+  local -a specs=()
   SHARED=0
   [ -n "$LEFTOVER_LIST" ] || return 0
-  self=$(cd "$WT" && pwd -P)
-  sibs=$(tl_git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' |
-    while IFS= read -r p; do
-      [ -d "$p" ] || continue
-      [ "$(cd "$p" && pwd -P)" = "$self" ] || printf '%s\n' "$p"
-    done)
+  self=$(tl_physical "$WT")
   while IFS= read -r p; do
-    [ -n "$p" ] || continue
-    class='only-here'
-    case "$p" in
-      '"'*) ;;  # git quoted an unusual name: never match it, so never call it debris
-      *)
-        while IFS= read -r sib; do
-          [ -n "$sib" ] || continue
-          if [ -e "$sib/${p%/}" ] &&
-            ! GIT_LITERAL_PATHSPECS=1 git -C "$sib" ls-files --error-unmatch -- "${p%/}" >/dev/null 2>&1; then
-            class=shared; break
-          fi
-        done <<EOF
-$sibs
-EOF
-        ;;
-    esac
-    [ "$class" = shared ] && SHARED=$((SHARED + 1))
-    out="$out$class"$'\t'"$p"$'\n'
+    case "$p" in ''|'"'*) ;; *) specs+=("${p%/}") ;; esac
   done <<EOF
 $LEFTOVER_LIST
 EOF
-  LEFTOVER_LIST=$out
+  if [ "${#specs[@]}" -gt 0 ]; then
+    here=$(GIT_LITERAL_PATHSPECS=1 tl_git ls-files -o --exclude-standard -- "${specs[@]}" 2>/dev/null) || here=''
+  fi
+  pending=$here
+  while IFS= read -r sib; do
+    [ -n "$pending" ] || break
+    if [ -z "$sib" ] || [ "$(tl_physical "$sib")" = "$self" ] || ! tl_is_checkout_root "$sib"; then
+      continue
+    fi
+    theirs=$(GIT_LITERAL_PATHSPECS=1 git -C "$sib" ls-files -o --exclude-standard -- "${specs[@]}" 2>/dev/null) || continue
+    cand=$(tl_filter_lines in "$pending" "$theirs" | while IFS= read -r p; do
+      case "$p" in '"'*) continue ;; esac
+      [ -f "$WT/$p" ] && [ -r "$WT/$p" ] && [ -f "$sib/$p" ] && [ -r "$sib/$p" ] && printf '%s\n' "$p"
+    done)
+    [ -n "$cand" ] || continue
+    ours=$(printf '%s\n' "$cand" | tl_git hash-object --no-filters --stdin-paths 2>/dev/null) || continue
+    theirs=$(printf '%s\n' "$cand" | git -C "$sib" hash-object --no-filters --stdin-paths 2>/dev/null) || continue
+    matched=$(paste <(printf '%s\n' "$ours") <(printf '%s\n' "$theirs") <(printf '%s\n' "$cand") |
+      awk -F'\t' '$1 != "" && $1 == $2 { print substr($0, length($1) + length($2) + 3) }')
+    [ -n "$matched" ] || continue
+    proven="$proven$matched"$'\n'
+    pending=$(tl_filter_lines out "$pending" "$matched")
+  done < <(tl_git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+  out=$(awk '
+    FNR == 1 { f++ }
+    $0 == "" { next }
+    f == 1 { ok[$0] = 1; next }
+    f == 2 { files[++nf] = $0; next }
+    {
+      e = $0; seen = 0; bad = ""
+      if (e !~ /^"/) for (i = 1; i <= nf; i++) {
+        p = files[i]; q = p
+        if (q ~ /^"/) q = substr(q, 2)
+        if (p == e || (e ~ /\/$/ && substr(q, 1, length(e)) == e)) {
+          seen = 1
+          if (!(p in ok)) bad = bad "file\t" p "\n"
+        }
+      }
+      if (seen && bad == "") { print "shared\t" e; next }
+      print "only-here\t" e
+      if (e ~ /\/$/) printf "%s", bad
+    }' <(printf '%s\n' "$proven") <(printf '%s\n' "$here") <(printf '%s\n' "$LEFTOVER_LIST"))
+  while IFS=$'\t' read -r class p; do
+    [ "$class" = shared ] && SHARED=$((SHARED + 1))
+  done <<EOF
+$out
+EOF
+  LEFTOVER_LIST=$out$'\n'
 }
 
 # Control characters in PR/MR descriptions break JSON parsers mid-parse.
@@ -318,6 +397,11 @@ tl_task() {  # <task-id>
     tl_note "not a readable git checkout with a commit ($(tl_git rev-parse HEAD 2>&1 >/dev/null | head -1))"
     tl_print "$id"; return
   fi
+  if ! tl_is_checkout_root "$WT"; then
+    VERDICT='UNKNOWN'
+    tl_note "not a git worktree root: git reads the checkout at $(tl_git rev-parse --show-toplevel 2>/dev/null || echo '?')"
+    tl_print "$id"; return
+  fi
   BRANCH=$(tl_git symbolic-ref -q --short HEAD 2>/dev/null || true)
   if [ -n "$meta_branch" ] && [ "$meta_branch" != "$BRANCH" ]; then
     tl_note "meta branch $meta_branch but ${BRANCH:-a detached HEAD} is checked out"
@@ -392,7 +476,10 @@ EOF
       tl_git merge-base --is-ancestor HEAD "$PR_HEAD" >/dev/null 2>&1; then
       tl_note "unpushed commits are contained in the merged $PR_LABEL head"
     elif tl_content_in_default "$default_ref"; then
-      tl_note "unpushed commits' changes are already in ${default_ref#refs/remotes/}"
+      case "$default_ref" in
+        refs/heads/*) tl_note "unpushed commits' changes are already in local ${default_ref#refs/heads/}" ;;
+        *) tl_note "unpushed commits' changes are already in ${default_ref#refs/remotes/}" ;;
+      esac
     elif [ "$PR_STATE" = MERGED ] && [ -n "$PR_HEAD" ] && [ "$PR_HEAD" != - ] &&
       tl_git cat-file -e "$PR_HEAD^{commit}" 2>/dev/null; then
       VERDICT='UNLANDED-WORK'; tl_note "commits beyond the merged $PR_LABEL head"
@@ -409,7 +496,7 @@ EOF
 
   if [ -z "$VERDICT" ] && [ "$LEFTOVERS" -gt "$SHARED" ]; then
     VERDICT='UNKNOWN'
-    tl_note "$((LEFTOVERS - SHARED)) untracked path(s) in no sibling worktree - may be task work never added; inspect with -v"
+    tl_note "$((LEFTOVERS - SHARED)) untracked entr(ies) with files that have no identical untracked copy in a sibling worktree - may be task work never added; inspect with -v"
   fi
 
   if [ -z "$VERDICT" ]; then
@@ -453,11 +540,11 @@ $TRACKED_LIST
 EOF
   while IFS=$'\t' read -r class line; do
     [ -n "$line" ] || continue
-    if [ "$class" = shared ]; then
-      printf '    leftover (untracked here and in a sibling worktree): %s\n' "$line"
-    else
-      printf '    UNTRACKED ONLY HERE (may be work never added): %s\n' "$line"
-    fi
+    case "$class" in
+      shared) printf '    leftover (untracked here and in a sibling worktree): %s\n' "$line" ;;
+      file) printf '      file only here (no identical untracked copy in a sibling): %s\n' "$line" ;;
+      *) printf '    UNTRACKED ONLY HERE (may be work never added): %s\n' "$line" ;;
+    esac
   done <<EOF
 $LEFTOVER_LIST
 EOF
