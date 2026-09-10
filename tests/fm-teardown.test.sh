@@ -56,6 +56,9 @@ set -u
 fm_git_identity fmtest fmtest@example.invalid
 
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
+# fm_run_timed guards cases whose failure mode is a hang.
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$ROOT/bin/fm-timeout-lib.sh"
 PR_CHECK="$ROOT/bin/fm-pr-check.sh"
 TMP_ROOT=$(fm_test_tmproot fm-teardown-tests)
 REAL_GIT_FOR_TEST=$(command -v git)
@@ -2293,6 +2296,8 @@ EOF
   fi
   assert_grep "reaping leaked worktree process group" "$case_dir/stderr" \
     "lsof-absent-process-group-reap: teardown did not use the process-group fallback"
+  assert_grep "leftover-process check under $case_dir/wt was skipped because lsof is not installed" "$case_dir/stdout" \
+    "lsof-absent-process-group-reap: stdout did not say the cwd scan was skipped"
   pass "missing lsof falls back to reaping the tmux pane process group"
 }
 
@@ -2508,6 +2513,151 @@ SH
   pass "persistent leaked processes refuse teardown after bounded retries"
 }
 
+# fakebin/lsof stub standing in for a cwd scan stalled in the kernel: records
+# its argv and pid, then never answers within any test guard.
+add_lsof_stall() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/lsof" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> '$case_dir/lsof-args'
+printf '%s\n' "\$\$" >> '$case_dir/lsof-pids'
+exec sleep 300
+EOF
+  chmod +x "$case_dir/fakebin/lsof"
+}
+
+# Every stalled scan teardown started must be gone once teardown returns; a
+# bound that abandons a live scan would leak one lsof per retry.
+assert_stalled_scans_gone() {  # <case-dir> <label>
+  local case_dir=$1 label=$2 pid i
+  [ -s "$case_dir/lsof-pids" ] || fail "$label: the cwd scan never ran"
+  while IFS= read -r pid; do
+    i=0
+    while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 30 ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+      fail "$label: the stalled cwd scan (pid $pid) outlived teardown"
+    fi
+  done < "$case_dir/lsof-pids"
+}
+
+# A cwd scan that never answers must not wedge teardown, with or without
+# --force: the scan runs with lsof -b under a hard cap, stdout names the check
+# that did not run and its consequence, the task is preserved, and the
+# lifecycle lock is released so the retry completes instead of being refused as
+# "already running". Against an unbounded scan this case hangs until the test
+# guard kills it.
+test_stalled_cwd_scan_is_bounded_and_refuses_visibly() {
+  local case_dir rc start elapsed mode label
+  for mode in plain force; do
+    label="stalled-cwd-scan-$mode"
+    case_dir=$(make_case "$label")
+    write_meta "$case_dir" no-mistakes ship
+    land_shippable_commit "$case_dir"
+    add_lsof_stall "$case_dir"
+    cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf 'return\n' >> "$case_dir/treehouse.log"
+EOF
+    chmod +x "$case_dir/fakebin/treehouse"
+    set --
+    [ "$mode" = plain ] || set -- --force
+
+    rc=0
+    start=$(date +%s)
+    fm_run_timed 40 env FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$case_dir/state" \
+      FM_CONFIG_OVERRIDE="$case_dir/config" PATH="$case_dir/fakebin:$PATH" \
+      FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS=1 \
+      "$TEARDOWN" task-x1 "$@" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    elapsed=$(( $(date +%s) - start ))
+
+    [ "$rc" -ne 124 ] || fail "$label: teardown hung on a stalled cwd scan until the 40s test guard killed it"
+    expect_code 1 "$rc" "$label: teardown should refuse when the cwd scan is capped"
+    [ "$elapsed" -lt 20 ] || fail "$label: a 1s scan cap took ${elapsed}s to refuse"
+    grep -Eq '(^| )-b( |$)' "$case_dir/lsof-args" \
+      || fail "$label: the cwd scan did not ask lsof to avoid blocking kernel calls (-b)"
+    assert_grep "leftover-process check under $case_dir/wt did not finish within 1s" "$case_dir/stdout" \
+      "$label: stdout did not say which check was capped"
+    assert_grep "cleanup refused; the worktree and task records are kept" "$case_dir/stdout" \
+      "$label: stdout did not state the consequence of the capped check"
+    assert_grep "REFUSED: cannot determine leaked processes under $case_dir/wt for task-x1 (lsof did not finish within 1s)" "$case_dir/stderr" \
+      "$label: stderr did not carry the refusal"
+    assert_present "$case_dir/wt" "$label: teardown removed the worktree"
+    assert_present "$case_dir/state/task-x1.meta" "$label: teardown removed task metadata"
+    assert_absent "$case_dir/treehouse.log" "$label: teardown returned the worktree"
+    assert_stalled_scans_gone "$case_dir" "$label"
+
+    add_lsof_no_holder "$case_dir"
+    rc=0
+    run_teardown "$case_dir" "$@" > "$case_dir/retry.stdout" 2> "$case_dir/retry.stderr" || rc=$?
+    assert_no_grep "another lifecycle action is already running" "$case_dir/retry.stderr" \
+      "$label: the capped teardown left its lifecycle lock held"
+    expect_code 0 "$rc" "$label: retry with a responsive scan should complete"
+    assert_grep "teardown task-x1 complete" "$case_dir/retry.stdout" \
+      "$label: retry did not complete teardown"
+  done
+  pass "a stalled cwd scan is capped, refuses visibly on stdout, and releases the lifecycle lock (with and without --force)"
+}
+
+# A teardown killed outright (SIGKILL, so its EXIT trap never runs) while its
+# scan is stalled leaves its lifecycle lock on disk. While that holder is
+# alive a second teardown must be refused without touching the task; once the
+# holder is gone the next teardown must reclaim the lock and complete instead
+# of being stranded.
+test_killed_teardown_lock_is_reclaimed_only_after_holder_dies() {
+  local case_dir rc pid i scan_pid label=killed-teardown-lock
+  case_dir=$(make_case "$label")
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  add_lsof_stall "$case_dir"
+
+  env FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$case_dir/state" \
+    FM_CONFIG_OVERRIDE="$case_dir/config" PATH="$case_dir/fakebin:$PATH" \
+    FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS=120 \
+    "$TEARDOWN" task-x1 > "$case_dir/first.stdout" 2> "$case_dir/first.stderr" &
+  pid=$!
+  i=0
+  while [ ! -s "$case_dir/lsof-pids" ] && [ "$i" -lt 300 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if [ ! -s "$case_dir/lsof-pids" ]; then
+    kill -KILL "$pid" 2>/dev/null || true
+    fail "$label: the first teardown never reached the cwd scan"
+  fi
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/live.stdout" 2> "$case_dir/live.stderr" || rc=$?
+  kill -0 "$pid" 2>/dev/null \
+    || fail "$label: the first teardown exited before the live-holder check, so the check proved nothing"
+  expect_code 1 "$rc" "$label: a second teardown must be refused while the first is alive"
+  assert_grep "another lifecycle action is already running for task task-x1" "$case_dir/live.stderr" \
+    "$label: the live holder was not reported"
+  assert_present "$case_dir/wt" "$label: the refused teardown removed the worktree"
+  assert_present "$case_dir/state/task-x1.meta" "$label: the refused teardown removed task metadata"
+
+  kill -KILL "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  while IFS= read -r scan_pid; do
+    kill -KILL "$scan_pid" 2>/dev/null || true
+  done < "$case_dir/lsof-pids"
+  [ -e "$case_dir/state/.control-task-x1.lock" ] || [ -L "$case_dir/state/.control-task-x1.lock" ] \
+    || fail "$label: precondition failed: the killed teardown's lifecycle lock is not on disk"
+
+  add_lsof_no_holder "$case_dir"
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/reclaim.stdout" 2> "$case_dir/reclaim.stderr" || rc=$?
+  assert_no_grep "another lifecycle action is already running" "$case_dir/reclaim.stderr" \
+    "$label: a dead holder's lifecycle lock stranded the task"
+  expect_code 0 "$rc" "$label: teardown after the holder died should reclaim the lock and complete"
+  assert_grep "teardown task-x1 complete" "$case_dir/reclaim.stdout" \
+    "$label: teardown after the holder died did not complete"
+  pass "a killed teardown's lifecycle lock refuses a rival while the holder lives and is reclaimed once it dies"
+}
+
 test_process_exit_during_identity_lookup_does_not_refuse() {
   local case_dir rc wt_path fake_pid=99999998
   case_dir=$(make_case identity-exit-convergence)
@@ -2647,5 +2797,7 @@ test_reused_pid_identity_is_not_force_killed
 test_exec_changed_process_is_still_reaped
 test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
+test_stalled_cwd_scan_is_bounded_and_refuses_visibly
+test_killed_teardown_lock_is_reclaimed_only_after_holder_dies
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal

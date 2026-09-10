@@ -117,12 +117,17 @@
 #     hours with no live task meta to attribute them to once teardown had
 #     already removed it). reap_task_worktree_processes finds every process
 #     whose CURRENT WORKING DIRECTORY is this task's own worktree or tasktmp
-#     root via `lsof -a -d cwd` (cheap: bounded by process count, not by
-#     walking the worktree's file tree) and sends TERM, then KILL after a short
-#     grace period to any survivor whose process identity still matches. Both
-#     roots are unique per task and never
-#     shared, so this can never reach another task's or the primary's
-#     processes. Idempotent: nothing left to find is a silent no-op.
+#     root via a system-wide `lsof -b -a -d cwd` scan (never a walk of the
+#     worktree's file tree) and sends TERM, then KILL after a short grace
+#     period to any survivor whose process identity still matches. Both roots
+#     are unique per task and never shared, so this can never reach another
+#     task's or the primary's processes. Idempotent: nothing left to find is a
+#     silent no-op. The scan still visits every open file of every process, and
+#     -b alone has not kept it from stalling for minutes, so each scan is also
+#     capped at FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS (whole seconds, default
+#     30). A capped or failed scan refuses teardown, --force included, keeping
+#     the worktree and task records; a capped scan, or one skipped because lsof
+#     is missing, is announced on stdout with its consequence.
 #   Fix 3 - sweep abandoned remote job workers. A remote job worker started
 #     from a worktree's own bin/ outlives that worktree's removal without
 #     being reachable by Fix 2, because its working directory is wherever it
@@ -168,6 +173,8 @@ SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"
 if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   echo "error: invalid teardown request" >&2
   exit 2
@@ -993,6 +1000,13 @@ if ! retry_wait_secs_is_valid "$TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS"; then
 fi
 # Compatibility alias used by the safety-check wait path and older call sites.
 STALE_WORKTREE_LOCK_RETRY_WAIT_SECS=$TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS
+# Hard cap, in whole seconds, on each leftover-process scan (Fix 2). Zero is
+# rejected because fm_run_timed treats a zero bound as no bound.
+PROCESS_SCAN_TIMEOUT_SECS=${FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS:-30}
+if ! [[ "$PROCESS_SCAN_TIMEOUT_SECS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "teardown: invalid leftover-process scan cap '$PROCESS_SCAN_TIMEOUT_SECS'; using 30s" >&2
+  PROCESS_SCAN_TIMEOUT_SECS=30
+fi
 TEARDOWN_TREEHOUSE_LOCK_REFUSED=2
 TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED=3
 TEARDOWN_PROCEVENT_RESTORE_FAILED=4
@@ -1286,15 +1300,23 @@ conclude_task_no_mistakes_run() {  # <worktree>
 }
 
 # Fix 2 (see script header): pids of every process whose CURRENT WORKING
-# DIRECTORY is exactly $1 or under it, from one bounded system-wide `lsof -a
-# -d cwd` scan (never the recursive +D file-tree walk, which lsof itself
-# documents as slow). Never $$ (this script's own pid). Empty output when
-# nothing matches; failure means the scan could not establish a safe result.
+# DIRECTORY is exactly $1 or under it, from one system-wide `lsof -b -a -d cwd`
+# scan (never the recursive +D file-tree walk, which lsof itself documents as
+# slow) capped at PROCESS_SCAN_TIMEOUT_SECS. The scan writes to a file, not a
+# pipe, so a stalled lsof cannot hold this function open past the cap. Never $$
+# (this script's own pid). Empty output when nothing matches. Returns 1 when
+# the scan could not establish a safe result and 2 when it hit the cap.
 pids_with_cwd_under() {  # <dir>
-  local dir=$1 out pid path line
+  local dir=$1 out pid path line scan_out rc=0
   [ -n "$dir" ] && [ -d "$dir" ] || return 0
   dir=$(cd "$dir" && pwd -P) || return 1
-  out=$(lsof -a -d cwd -Fpn 2>/dev/null) || return 1
+  scan_out=$(mktemp "${TMPDIR:-/tmp}/fm-teardown-cwd-scan.XXXXXX") || return 1
+  fm_run_timed "$PROCESS_SCAN_TIMEOUT_SECS" lsof -b -a -d cwd -Fpn \
+    < /dev/null > "$scan_out" 2> /dev/null || rc=$?
+  out=$(cat "$scan_out") || { rm -f "$scan_out"; return 1; }
+  rm -f "$scan_out"
+  [ "$rc" -ne 124 ] || return 2
+  [ "$rc" -eq 0 ] || return 1
   [ -n "$out" ] || return 0
   pid=
   while IFS= read -r line; do
@@ -1347,6 +1369,18 @@ task_process_identity_matches() {  # <pid> <identity>
   [ "$current" = "$2" ]
 }
 
+# Refuse destructive cleanup because the leftover-process scan gave no
+# trustworthy answer. A capped scan is also announced on stdout, naming the
+# check that did not run and its consequence, so it is never silent.
+refuse_unscanned_processes() {
+  local dir=${TASK_PIDS_FAILED_DIR:-<missing>} reason="lsof failed"
+  if [ "${TASK_PIDS_FAILED_RC:-}" = 2 ]; then
+    reason="lsof did not finish within ${PROCESS_SCAN_TIMEOUT_SECS}s"
+    echo "teardown: the leftover-process check under $dir did not finish within ${PROCESS_SCAN_TIMEOUT_SECS}s and was stopped; cleanup refused; the worktree and task records are kept for a retry (FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS raises the cap)."
+  fi
+  echo "REFUSED: cannot determine leaked processes under $dir for $ID ($reason); preserving the worktree/tasktmp for manual inspection or retry." >&2
+}
+
 task_pid_list_contains() {  # <pid-list> <pid>
   printf '%s\n' "$1" | grep -Fxq "$2"
 }
@@ -1354,11 +1388,15 @@ task_pid_list_contains() {  # <pid-list> <pid>
 task_pids_under_roots() {  # <dir>...
   TASK_PIDS=
   TASK_PIDS_FAILED_DIR=
-  local dir dir_pids pids=""
+  TASK_PIDS_FAILED_RC=
+  local dir dir_pids pids="" rc
   for dir in "$@"; do
     [ -n "$dir" ] || continue
-    if ! dir_pids=$(pids_with_cwd_under "$dir"); then
+    rc=0
+    dir_pids=$(pids_with_cwd_under "$dir") || rc=$?
+    if [ "$rc" -ne 0 ]; then
       TASK_PIDS_FAILED_DIR=$dir
+      TASK_PIDS_FAILED_RC=$rc
       return 1
     fi
     pids="$pids
@@ -1416,18 +1454,20 @@ reap_task_backend_process_group() {  # <label>
 # first, then KILL after a short grace period for anything still alive; a
 # process that exits on its own between the two passes is simply absent from
 # the recheck. A missing lsof uses the backend process-group fallback; an lsof
-# scan error refuses before destructive teardown.
+# scan error or a scan that hits its cap refuses before destructive teardown.
 reap_task_worktree_processes() {  # <label> <dir>...
   local label=$1 pids pid identity current_pids i pass=1 max_passes=3
   local -a tracked_pids tracked_identities remaining_pids remaining_identities
   shift
   if ! command -v lsof >/dev/null 2>&1; then
+    echo "teardown: the leftover-process check under ${1:-<missing>} was skipped because lsof is not installed; background processes started there may survive cleanup, and only the task terminal's own process group is reaped where the runtime allows it."
     reap_task_backend_process_group "$label"
     return 0
   fi
+  echo "teardown: checking for leftover processes under ${1:-<missing>} (each scan gives up after ${PROCESS_SCAN_TIMEOUT_SECS}s)"
   while [ "$pass" -le "$max_passes" ]; do
     if ! task_pids_under_roots "$@"; then
-      echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
+      refuse_unscanned_processes
       return 1
     fi
     pids=$TASK_PIDS
@@ -1438,7 +1478,7 @@ reap_task_worktree_processes() {  # <label> <dir>...
       [ -n "$pid" ] || continue
       if ! identity=$(task_process_identity "$pid"); then
         if ! task_pids_under_roots "$@"; then
-          echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
+          refuse_unscanned_processes
           return 1
         fi
         if task_pid_list_contains "$TASK_PIDS" "$pid"; then
@@ -1457,7 +1497,7 @@ EOF
       continue
     fi
     if ! task_pids_under_roots "$@"; then
-      echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
+      refuse_unscanned_processes
       return 1
     fi
     current_pids=$TASK_PIDS
@@ -1472,7 +1512,7 @@ EOF
     done
     sleep 1
     if ! task_pids_under_roots "$@"; then
-      echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
+      refuse_unscanned_processes
       return 1
     fi
     current_pids=$TASK_PIDS
@@ -1490,7 +1530,7 @@ EOF
     if [ "${#remaining_pids[@]}" -gt 0 ]; then
       echo "teardown: force-killing leaked $label process(es) for $ID: ${remaining_pids[*]}" >&2
       if ! task_pids_under_roots "$@"; then
-        echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
+        refuse_unscanned_processes
         return 1
       fi
       current_pids=$TASK_PIDS
@@ -1506,7 +1546,7 @@ EOF
     pass=$((pass + 1))
   done
   if ! task_pids_under_roots "$@"; then
-    echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
+    refuse_unscanned_processes
     return 1
   fi
   [ -z "$TASK_PIDS" ] && return 0
