@@ -1020,4 +1020,12 @@ Create new skills
 `/harness-adapters` autocompleted correctly when agy was launched inside firstmate's own worktree (which tracks `.agents/skills/harness-adapters/SKILL.md`); `/no-mistakes` returned `No matches` in an ordinary scratch workspace with no `.agents/skills/no-mistakes/`.
 
 Regression coverage: the composer fix is pinned by the full existing `tests/fm-composer-lib.test.sh` suite (in particular "matrix: pi's separated composer needs identity + structure" and "absent identity cannot prove blank pi pair", both of which the naive structure-only version of this fix broke before the identity-based version was written); `tests/fm-tmux-agent-liveness.test.sh` and `tests/fm-tmux-submit-busy.test.sh` were re-run for regressions on the tmux liveness and delivery-busy changes.
-`tests/fm-agy-harness.test.sh` pins this adapter portably (detection ordering, process ancestry, the control-plane tables, and the busy fold's resolution, idle, prior-exclusion, sibling-worktree boundary, and ambiguity-refusal behavior); the live evidence above is the record for the facts a portable test cannot reach.
+`tests/fm-agy-harness.test.sh` pins this adapter portably (detection ordering, process ancestry, the control-plane tables, the launch command's `-i` brief delivery and effort capping, the secondmate refusal, and the busy fold's resolution, idle, prior-exclusion, sibling-worktree boundary, protobuf tag and varint framing, `-wal` sibling scan, and ambiguity-refusal behavior); the live evidence above is the record for the facts a portable test cannot reach.
+The background-task composer regression is pinned separately by `tests/fm-composer-lib.test.sh`'s "agy's running-background-task strip cannot displace its own composer pair", built from a verbatim live capture.
+
+### Version drift observed during this pass
+
+agy auto-updated itself from 1.1.28 to 1.2.0 partway through this same verification session, without being asked.
+Everything above marked 1.1.28 - env markers, launch and effort flags, process identity, `/skills` discovery, the interrupt, the composer capture, and the `(step_type, status)` busy measurement - was recorded before that update, as was the first observation of the `-wal` binding blind spot.
+The background-task composer strip appeared only after it and was reproduced on 1.2.0, and the post-fix live re-verifications (the `-wal` scan's before/after busy poll and the end-to-end launch, detection, busy, and interrupt run) were all on 1.2.0.
+Read every version number in this section as the version at the moment of that observation, and re-check `agy --version` at both the start and the end of any re-verification pass, because agy's TUI can change under a running session through its own update mechanism.

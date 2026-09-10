@@ -20,6 +20,7 @@ set -u
 unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT CURSOR_AGENT CURSOR_INVOKED_AS ANTIGRAVITY_AGENT AI_AGENT
 
 HARNESS="$ROOT/bin/fm-harness.sh"
+SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-agy-harness)
 
 # --- harness detection -------------------------------------------------
@@ -684,6 +685,127 @@ test_busy_fold_excludes_a_prior_conversation_matching_only_in_its_wal() {
   pass "agy busy fold keeps excluding a prior conversation that now matches only through its -wal"
 }
 
+# --- launch mechanics (bin/fm-spawn.sh) ---------------------------------
+
+# The spawn cases below drive the real bin/fm-spawn.sh against a fake tmux that
+# records the launch command line it is asked to type into the pane. That line
+# IS the adapter's launch contract - the exact string a crewmate's shell runs -
+# so asserting on it exercises the emitted interface rather than the source.
+
+make_agy_spawn_fakebin() {
+  local dir=$1 fakebin
+  fakebin=$(fm_fakebin "$dir")
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
+esac
+case "${1:-}" in
+  display-message) printf 'firstmate\n'; exit 0 ;;
+  send-keys)
+    prev=
+    for arg in "$@"; do
+      if [ "$prev" = -l ]; then
+        printf '%s\n' "$arg" >> "$FM_FAKE_LAUNCH_LOG"
+        break
+      fi
+      prev=$arg
+    done
+    exit 0
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  fm_fake_exit0 "$fakebin" treehouse gh-axi gh
+  printf '%s\n' "$fakebin"
+}
+
+run_agy_spawn() {  # <case-name> <id> [extra spawn args...]
+  local name=$1 id=$2 case_dir home proj wt fakebin
+  shift 2
+  case_dir="$TMP_ROOT/spawn-$name"
+  home="$case_dir/home"
+  proj="$case_dir/project"
+  wt="$case_dir/wt"
+  fakebin=$(make_agy_spawn_fakebin "$case_dir/fake")
+  mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config"
+  printf 'brief\n' > "$home/data/$id/brief.md"
+  fm_git_worktree "$proj" "$wt" "fm/$id"
+  touch "$home/state/.last-watcher-beat"
+  FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
+    FM_FAKE_LAUNCH_LOG="$home/launch.log" \
+    AGY_CONVERSATIONS_ROOT_OVERRIDE="$case_dir/conversations" \
+    PATH="$fakebin:$PATH" \
+    "$SPAWN" "$id" "$proj" --harness agy "$@" 2>&1
+}
+
+# agy rejects a bare positional prompt (verified live, agy 1.1.28/1.2.0), so the
+# brief has to reach it through -i. A launch that lost the -i would start an
+# empty interactive session and silently drop the crewmate's whole brief.
+test_spawn_launch_delivers_the_brief_through_dash_i() {
+  local out status launch log
+  log="$TMP_ROOT/spawn-launch/home/launch.log"
+  out=$(run_agy_spawn launch agy-launch-x1 --mode no-mistakes --yolo off \
+    --model gemini-3.7-flash --effort high)
+  status=$?
+  expect_code 0 "$status" "agy crewmate spawn should succeed: $out"
+  launch=$(cat "$log")
+  assert_contains "$launch" ' -i "' "agy launch must deliver the brief through -i, not a bare positional"
+  assert_contains "$launch" '--dangerously-skip-permissions' \
+    "agy launch must carry its documented autonomy flag"
+  assert_contains "$launch" "--model 'gemini-3.7-flash'" "agy launch must map --model"
+  assert_contains "$launch" "--effort 'high'" "agy launch must map --effort"
+  assert_contains "$launch" 'env -u CLAUDECODE' \
+    "agy launch must clear the foreign primary markers it does not clear itself"
+  pass "agy crewmate launch delivers the brief via -i with its autonomy, model and effort flags"
+}
+
+# agy's own --help documents only low|medium|high. A captain asking for xhigh
+# must not have that value passed through to a CLI that rejects it - the axis is
+# omitted from the launch instead, leaving agy on its own default.
+test_spawn_omits_an_effort_agy_does_not_support() {
+  local out status launch log
+  log="$TMP_ROOT/spawn-effort/home/launch.log"
+  out=$(run_agy_spawn effort agy-effort-x1 --mode no-mistakes --yolo off --effort xhigh)
+  status=$?
+  expect_code 0 "$status" "agy crewmate spawn with xhigh should still launch: $out"
+  launch=$(cat "$log")
+  assert_not_contains "$launch" '--effort' \
+    "agy launch must omit an effort level its CLI rejects rather than passing it through"
+  assert_contains "$launch" ' -i "' "agy launch must still deliver the brief"
+  pass "agy launch omits xhigh rather than passing a level its CLI rejects"
+}
+
+# agy has no hook, plugin lifecycle, notify flag, or app-server surface to build
+# a primary supervision protocol on, so fm-spawn refuses the kind outright
+# rather than launching a secondmate that could never be supervised.
+test_spawn_refuses_secondmate() {
+  local case_dir home fakebin id out status
+  case_dir="$TMP_ROOT/spawn-secondmate"
+  home="$case_dir/home"
+  fakebin=$(make_agy_spawn_fakebin "$case_dir/fake")
+  id="agy-secondmate-x1"
+  mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config"
+  printf 'charter\n' > "$home/data/$id/brief.md"
+  out=$(cd "$case_dir" && FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_FAKE_LAUNCH_LOG="$home/launch.log" \
+    PATH="$fakebin:$PATH" \
+    "$SPAWN" "$id" --harness agy --secondmate 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "agy was accepted as a secondmate harness"
+  assert_contains "$out" "crewmate/scout adapter only" \
+    "agy secondmate refusal did not explain the boundary"
+  assert_absent "$home/launch.log" "a refused agy secondmate spawn must launch nothing"
+  pass "agy is refused as a secondmate harness"
+}
+
 test_env_marker_wins_over_inherited_claude_markers
 test_no_marker_falls_back_to_claude
 test_detects_agy_process_ancestor
@@ -703,3 +825,6 @@ test_binding_rejects_a_coincidental_length_byte
 test_run_state_reads_the_step_type_status_pair
 test_busy_fold_ambiguous_resolution_fails
 test_busy_classify_reports_the_agy_conversation_source
+test_spawn_launch_delivers_the_brief_through_dash_i
+test_spawn_omits_an_effort_agy_does_not_support
+test_spawn_refuses_secondmate
