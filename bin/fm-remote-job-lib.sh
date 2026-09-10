@@ -57,6 +57,12 @@ FM_REMOTE_JOB_TIMEOUT=${FM_REMOTE_JOB_TIMEOUT:-360}
 FM_REMOTE_JOB_WAIT_GRACE=${FM_REMOTE_JOB_WAIT_GRACE:-30}
 FM_REMOTE_JOB_POLL_SECONDS=${FM_REMOTE_JOB_POLL_SECONDS:-0.05}
 FM_REMOTE_JOB_REAP_SECONDS=${FM_REMOTE_JOB_REAP_SECONDS:-3600}
+FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=${FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS:-3}
+FM_REMOTE_JOB_REAP_INTERVAL_SECONDS=${FM_REMOTE_JOB_REAP_INTERVAL_SECONDS:-60}
+# The single owner of fm_remote_job_probe's freshness window, so the heartbeat
+# interval bound below cannot silently drift out of sync with what a prober
+# actually tolerates.
+FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS=10
 # shellcheck disable=SC2034 # Shared protocol constant consumed by the worker and sourcing callers.
 FM_REMOTE_JOB_PREEMPTED_EXIT=76
 FM_REMOTE_JOB_OPERATOR_PATH=
@@ -93,6 +99,9 @@ fm_remote_job_validate_settings() {
   case "$FM_REMOTE_JOB_WAIT_GRACE" in ''|*[!0-9]*) return 1 ;; esac
   [ "$FM_REMOTE_JOB_WAIT_GRACE" -le 300 ] || return 1
   case "$FM_REMOTE_JOB_REAP_SECONDS" in ''|*[!0-9]*|0) return 1 ;; esac
+  case "$FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS" in ''|*[!0-9]*|0) return 1 ;; esac
+  [ "$FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS" -lt "$FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS" ] || return 1
+  case "$FM_REMOTE_JOB_REAP_INTERVAL_SECONDS" in ''|*[!0-9]*|0) return 1 ;; esac
   return 0
 }
 
@@ -881,7 +890,7 @@ fm_remote_job_probe() { # <account-home>; a fresh worker heartbeat or active job
   mtime=$(fm_remote_job_path_mtime "$ready" 2>/dev/null || true)
   case "$mtime" in ''|*[!0-9]*) return 1 ;; esac
   now=$(date +%s)
-  [ $((now - mtime)) -le 10 ]
+  [ $((now - mtime)) -le "$FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS" ]
 }
 
 fm_remote_job_wait_for_probe() { # <remote-root> <account-home>

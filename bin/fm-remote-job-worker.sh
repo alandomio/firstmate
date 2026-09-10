@@ -15,6 +15,15 @@
 # have been committed. The library header owns the exact record fields and
 # lifecycle.
 #
+# Job pickup stays on the fast FM_REMOTE_JOB_POLL_SECONDS tick, while the two
+# loop-maintenance duties run on their own cadence so an idle worker does not
+# fork a heartbeat write and a full queue rescan every tick: worker.ready is
+# refreshed every FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS and stale done
+# records are swept every FM_REMOTE_JOB_REAP_INTERVAL_SECONDS. That heartbeat
+# interval is validated strictly below FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS,
+# the window the library's probe tolerates, so a healthy worker between writes
+# never reads as unready.
+#
 # The worker is abandoned when its configured FM_ROOT stops being a genuine
 # Firstmate checkout - the state a pruned no-mistakes gate worktree, a returned
 # pooled worktree, or a removed test fixture root leaves behind. It can never
@@ -73,6 +82,11 @@ worker_write_heartbeat() {
   printf '%s\n' "${BASHPID:-$$}" > "$tmp" || { rm -f -- "$tmp"; return 1; }
   chmod 600 "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$ready"
+}
+
+worker_refresh_heartbeat() {
+  worker_write_heartbeat || { worker_error "cannot update worker heartbeat"; exit 1; }
+  next_heartbeat=$((SECONDS + FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS))
 }
 
 worker_publish_pid() {
@@ -677,7 +691,7 @@ worker_process_once() { # <account-home>
 }
 
 main() {
-  local account_home lock_status
+  local account_home lock_status next_heartbeat next_reap
   account_home=$(worker_account_home) || { worker_error "cannot resolve account home"; exit 1; }
   FM_ROOT=$(fm_remote_job_canonical_existing_dir "$FM_ROOT") || { worker_error "configured FM_ROOT is unsafe"; exit 1; }
   [ -f "$FM_ROOT/AGENTS.md" ] && [ ! -L "$FM_ROOT/AGENTS.md" ] || { worker_error "FM_ROOT is not a Firstmate checkout"; exit 1; }
@@ -695,18 +709,29 @@ main() {
   trap worker_shutdown HUP INT TERM
   worker_publish_identity "$account_home" || { worker_error "cannot publish worker code identity"; exit 1; }
   worker_publish_pid || { worker_error "cannot publish worker pid"; exit 1; }
+  worker_refresh_heartbeat
+  next_reap=$SECONDS
   while :; do
-    worker_write_heartbeat || { worker_error "cannot update worker heartbeat"; exit 1; }
-    # Checked right after a fresh heartbeat, so the grace window cannot make a
-    # still-healthy worker read as unready to a concurrent probe.
-    if worker_code_root_abandoned; then
-      worker_error "configured FM_ROOT $FM_ROOT no longer exists; stopping the abandoned worker"
-      exit 0
+    if [ "$SECONDS" -ge "$next_heartbeat" ]; then
+      worker_refresh_heartbeat
     fi
-    worker_reap=0
-    if [ "$worker_reap" -eq 0 ]; then
+    if ! fm_remote_job_root_is_live "$FM_ROOT"; then
+      # A prober's freshness window must not lapse during the abandoned-root
+      # grace check below, which can block for seconds confirming a transient
+      # disappearance instead of a real one.
+      worker_refresh_heartbeat
+      if worker_code_root_abandoned; then
+        worker_error "configured FM_ROOT $FM_ROOT no longer exists; stopping the abandoned worker"
+        exit 0
+      fi
+    fi
+    if [ "$SECONDS" -ge "$next_reap" ]; then
+      # The sweep re-prepares the state tree, so refresh first: a deleted state
+      # root must fail this write and stop the worker for its supervisor rather
+      # than be silently recreated behind an owner that holds no lock.
+      worker_refresh_heartbeat
       fm_remote_job_reap_stale "$account_home" || true
-      worker_reap=1
+      next_reap=$((SECONDS + FM_REMOTE_JOB_REAP_INTERVAL_SECONDS))
     fi
     worker_process_once "$account_home"
     sleep "$FM_REMOTE_JOB_POLL_SECONDS"

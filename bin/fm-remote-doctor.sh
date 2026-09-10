@@ -244,7 +244,7 @@ remote_job_probe_ok() {
   mtime=$(fm_remote_job_path_mtime "$ready" 2>/dev/null || true)
   case "$mtime" in ''|*[!0-9]*) return 1 ;; esac
   now=$(date +%s)
-  [ $((now - mtime)) -le 10 ]
+  [ $((now - mtime)) -le "$FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS" ]
 }
 
 remote_job_identity_ok() {

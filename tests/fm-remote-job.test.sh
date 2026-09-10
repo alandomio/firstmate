@@ -19,6 +19,8 @@ REAL_GIT=$(command -v git)
 OTHER_PID=
 RECOVERY_WORKER_PID=
 REPEAT_WORKER_PID=
+IDLE_WORKER_PID=
+TRIPWIRE_WORKER_PID=
 mkdir -p "$REMOTE_ROOT/bin" "$REMOTE_HOME" "$ACCOUNT_HOME" "$RUNTIME_BIN"
 # worker.pid records the serving child, not its restart supervisor, so stopping
 # that pid alone leaves the supervisor to respawn - the leak
@@ -27,6 +29,8 @@ cleanup_remote_job_fixture() {
   [ -z "$OTHER_PID" ] || kill "$OTHER_PID" 2>/dev/null || true
   [ -z "$RECOVERY_WORKER_PID" ] || kill "$RECOVERY_WORKER_PID" 2>/dev/null || true
   [ -z "$REPEAT_WORKER_PID" ] || kill "$REPEAT_WORKER_PID" 2>/dev/null || true
+  [ -z "$IDLE_WORKER_PID" ] || kill "$IDLE_WORKER_PID" 2>/dev/null || true
+  [ -z "$TRIPWIRE_WORKER_PID" ] || kill "$TRIPWIRE_WORKER_PID" 2>/dev/null || true
   if [ -f "$STATE_ROOT/worker.pid" ]; then
     fm_remote_job_stop_worker_tree "$(cat "$STATE_ROOT/worker.pid")" || true
   fi
@@ -690,5 +694,146 @@ kill -TERM "$REPEAT_WORKER_PID"
 wait "$REPEAT_WORKER_PID" 2>/dev/null || true
 REPEAT_WORKER_PID=
 pass "a repeatedly signalled shutdown still releases ownership for the next worker"
+
+# Fake mktemp/date/sleep shadow the real ones on PATH to count calls, still
+# exec'ing through. Idle mktemp comes only from heartbeat writes, idle date
+# only from reap_stale, and idle sleep only from the poll tick itself.
+IDLE_HOME="$TMP_ROOT/idle-cadence-account"
+IDLE_STATE="$TMP_ROOT/idle-cadence-jobs"
+IDLE_BIN="$TMP_ROOT/idle-cadence-bin"
+IDLE_MKTEMP_LOG="$TMP_ROOT/idle-cadence-mktemp.log"
+IDLE_DATE_LOG="$TMP_ROOT/idle-cadence-date.log"
+IDLE_SLEEP_LOG="$TMP_ROOT/idle-cadence-sleep.log"
+mkdir -p "$IDLE_HOME" "$IDLE_BIN"
+chmod 700 "$IDLE_HOME"
+: > "$IDLE_MKTEMP_LOG"
+: > "$IDLE_DATE_LOG"
+: > "$IDLE_SLEEP_LOG"
+REAL_MKTEMP=$(command -v mktemp)
+REAL_DATE=$(command -v date)
+REAL_SLEEP=$(command -v sleep)
+cat > "$IDLE_BIN/mktemp" <<SH
+#!/bin/bash
+printf 'call\n' >> "$IDLE_MKTEMP_LOG"
+exec "$REAL_MKTEMP" "\$@"
+SH
+cat > "$IDLE_BIN/date" <<SH
+#!/bin/bash
+printf 'call\n' >> "$IDLE_DATE_LOG"
+exec "$REAL_DATE" "\$@"
+SH
+cat > "$IDLE_BIN/sleep" <<SH
+#!/bin/bash
+printf 'call\n' >> "$IDLE_SLEEP_LOG"
+exec "$REAL_SLEEP" "\$@"
+SH
+chmod +x "$IDLE_BIN/mktemp" "$IDLE_BIN/date" "$IDLE_BIN/sleep"
+HOME="$IDLE_HOME" PATH="$IDLE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+  FM_REMOTE_JOB_STATE_ROOT="$IDLE_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=2 FM_REMOTE_JOB_REAP_INTERVAL_SECONDS=2 \
+  FM_REMOTE_JOB_POLL_SECONDS=0.02 \
+  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
+  > "$TMP_ROOT/idle-cadence.out" 2> "$TMP_ROOT/idle-cadence.err" &
+IDLE_WORKER_PID=$!
+for _ in $(seq 1 300); do
+  [ -f "$IDLE_STATE/worker.ready" ] && break
+  sleep 0.05
+done
+assert_present "$IDLE_STATE/worker.ready" "the idle-cadence worker did not become ready"
+# Startup (lock acquisition, identity, pid, the first heartbeat) already forked
+# these before this point; only counts from here measure the idle cadence
+# itself, not one-time startup cost.
+: > "$IDLE_MKTEMP_LOG"
+: > "$IDLE_DATE_LOG"
+: > "$IDLE_SLEEP_LOG"
+sleep 6
+kill -TERM "$IDLE_WORKER_PID"
+wait "$IDLE_WORKER_PID" 2>/dev/null || true
+IDLE_WORKER_PID=
+MKTEMP_CALLS=$(wc -l < "$IDLE_MKTEMP_LOG" | tr -d ' ')
+DATE_CALLS=$(wc -l < "$IDLE_DATE_LOG" | tr -d ' ')
+# The poll tick is the only per-iteration sleep while idle, so counting it
+# measures the cadence as a ratio instead of an absolute fork count that a
+# loaded runner (or the regression's own forking) would silently rescale.
+TICK_CALLS=$(wc -l < "$IDLE_SLEEP_LOG" | tr -d ' ')
+[ "$TICK_CALLS" -ge 20 ] \
+  || fail "the idle worker polled only $TICK_CALLS times; the cadence window is too short to measure"
+[ "$DATE_CALLS" -ge 2 ] && [ $((DATE_CALLS * 3)) -le "$TICK_CALLS" ] \
+  || fail "idle reap forked date $DATE_CALLS times across $TICK_CALLS poll ticks; the dead reap throttle regressed to running every poll tick"
+[ "$MKTEMP_CALLS" -ge 2 ] && [ $((MKTEMP_CALLS * 3)) -le "$TICK_CALLS" ] \
+  || fail "idle heartbeat forked mktemp $MKTEMP_CALLS times across $TICK_CALLS poll ticks; expected the write gated to its own cadence"
+pass "idle heartbeat and reap run on their own cadence, not on every poll tick"
+
+TRIPWIRE_HOME="$TMP_ROOT/tripwire-home"
+TRIPWIRE_STATE="$TMP_ROOT/tripwire-jobs"
+mkdir -p "$TRIPWIRE_HOME"
+chmod 700 "$TRIPWIRE_HOME"
+HOME="$TRIPWIRE_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+  FM_REMOTE_JOB_STATE_ROOT="$TRIPWIRE_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=9 FM_REMOTE_JOB_REAP_INTERVAL_SECONDS=1 \
+  FM_REMOTE_JOB_POLL_SECONDS=0.02 \
+  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
+  > "$TMP_ROOT/tripwire.out" 2> "$TMP_ROOT/tripwire.err" &
+TRIPWIRE_WORKER_PID=$!
+for _ in $(seq 1 300); do
+  [ -f "$TRIPWIRE_STATE/worker.ready" ] && break
+  sleep 0.05
+done
+assert_present "$TRIPWIRE_STATE/worker.ready" "the state-root tripwire worker did not become ready"
+# The reap sweep re-prepares the state tree, so a worker whose root is deleted
+# must fail fast on its heartbeat before that sweep can silently recreate an
+# unowned tree and leave two workers serving one queue.
+rm -rf -- "$TRIPWIRE_STATE"
+for _ in $(seq 1 200); do
+  kill -0 "$TRIPWIRE_WORKER_PID" 2>/dev/null || break
+  sleep 0.05
+done
+if kill -0 "$TRIPWIRE_WORKER_PID" 2>/dev/null; then
+  kill -KILL "$TRIPWIRE_WORKER_PID" 2>/dev/null || true
+  wait "$TRIPWIRE_WORKER_PID" 2>/dev/null || true
+  TRIPWIRE_WORKER_PID=
+  fail "the worker kept serving after its state root was deleted"
+fi
+TRIPWIRE_STATUS=0
+wait "$TRIPWIRE_WORKER_PID" 2>/dev/null || TRIPWIRE_STATUS=$?
+TRIPWIRE_WORKER_PID=
+[ "$TRIPWIRE_STATUS" -ne 0 ] \
+  || fail "a worker whose state root vanished exited cleanly instead of failing for its supervisor to restart"
+assert_absent "$TRIPWIRE_STATE" "the reap sweep recreated the deleted worker state root behind an unowned worker"
+pass "a deleted state root fails the worker fast instead of being recreated by the reap sweep"
+
+# A prober reads worker.ready as fresh for FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS,
+# so a heartbeat cadence at or past that window would let a healthy worker read
+# as unready between writes. Settings validation refuses it before any state.
+for BAD_HEARTBEAT in '' abc 0 "$FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS" \
+  "$((FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS + 1))"; do
+  ( FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=$BAD_HEARTBEAT
+    fm_remote_job_validate_settings ) \
+    && fail "a heartbeat interval of '$BAD_HEARTBEAT' was accepted"
+done
+( FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=$((FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS - 1))
+  fm_remote_job_validate_settings ) \
+  || fail "the widest heartbeat interval still inside the freshness window was rejected"
+for BAD_REAP in '' abc 0; do
+  ( FM_REMOTE_JOB_REAP_INTERVAL_SECONDS=$BAD_REAP
+    fm_remote_job_validate_settings ) \
+    && fail "a reap interval of '$BAD_REAP' was accepted"
+done
+BOUNDS_HOME="$TMP_ROOT/bounds-home"
+BOUNDS_STATE="$TMP_ROOT/bounds-jobs"
+mkdir -p "$BOUNDS_HOME"
+chmod 700 "$BOUNDS_HOME"
+BOUNDS_STATUS=0
+HOME="$BOUNDS_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+  FM_REMOTE_JOB_STATE_ROOT="$BOUNDS_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS="$FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS" \
+  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
+  > "$TMP_ROOT/bounds.out" 2> "$TMP_ROOT/bounds.err" || BOUNDS_STATUS=$?
+[ "$BOUNDS_STATUS" -ne 0 ] \
+  || fail "the worker served with a heartbeat cadence outside the probe freshness window"
+grep -q 'bounds or timeout are invalid' "$TMP_ROOT/bounds.err" \
+  || fail "the refused worker did not report invalid bounds: $(cat "$TMP_ROOT/bounds.err")"
+assert_absent "$BOUNDS_STATE/worker.ready" "a worker with a refused heartbeat cadence still published a heartbeat"
+pass "a heartbeat cadence outside the probe freshness window is refused before the worker serves"
 
 echo "ALL TESTS PASSED"
