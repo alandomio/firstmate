@@ -380,6 +380,41 @@ test_matrix_agy_separated_needs_identity() {
   pass "matrix: agy's separated composer needs a real identity, not structure alone"
 }
 
+# agy's BACKGROUND-TASK strip: while an async shell task runs, agy draws a
+# second rule-bounded region BELOW the live composer (a rule, a
+# `● [HH:MM:SS] <cmd> running` row, another rule). The scanner keeps only the
+# LAST pair it sees, so that strip displaced the composer's own pair and every
+# verdict degraded to `unknown` - which bin/fm-send.sh reports as
+# "text not submitted", inviting a resend of a steer that actually landed
+# (live-reproduced twice on agy 1.2.0). In cursor mode the pair the CURSOR is
+# inside is the composer's, however many pairs sit below it.
+test_matrix_agy_background_task_strip() {
+  local rule screen typed agy_idle
+  agy_idle=$(printf 'agy\tidle')
+  # Captured verbatim from a live agy 1.2.0 pane at 220 columns; the composer's
+  # own `>` row is row 7 (0-based), the strip's rules are rows 8 and 10.
+  rule=$(printf '─%.0s' $(seq 1 220))
+  screen="> Run the shell command 'sleep 90 && echo fixturebgdone' as a background task using your tools right now. Then just say fixtureok.
+
+● Bash(sleep 90 && echo fixturebgdone) (ctrl+o to expand)
+
+fixtureok
+
+$rule
+>
+$rule
+● [05:00:47] sleep 90 && echo fixturebgdone running
+$rule"
+  assert_screen "agy idle composer above a running-task strip is empty" empty \
+    "$CAPS_TMUX" "$screen" 7 "$agy_idle"
+  # The delivery-critical direction: unsent text in that same composer must
+  # still read pending so fm_tmux_submit_enter_core retries the swallowed Enter.
+  typed=${screen/$'\n>\n'/$'\n> ship the release notes\n'}
+  assert_screen "agy typed composer above a running-task strip is pending" pending \
+    "$CAPS_TMUX" "$typed" 7 "$agy_idle"
+  pass "matrix: agy's running-background-task strip cannot displace its own composer pair"
+}
+
 test_matrix_opencode_leftbar_signals() {
   # Real idle opencode: `┃`-prefixed rows holding the "Ask anything..." hint,
   # blanks, and a Build-mode footer. Two independent idle signals: the shared
@@ -672,6 +707,7 @@ test_matrix_cursor_reverse_video_placeholder_remnant
 test_matrix_herdr_halfblock_rule_bounds_bare_wrap
 test_matrix_pi_separated_needs_identity
 test_matrix_agy_separated_needs_identity
+test_matrix_agy_background_task_strip
 test_matrix_opencode_leftbar_signals
 test_matrix_grok_titled_bottom_border
 test_matrix_kimi_bordered_shell_glyph_box

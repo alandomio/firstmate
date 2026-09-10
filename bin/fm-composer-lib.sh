@@ -617,6 +617,10 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
   FM_COMPOSER_SCAN_PI_OPEN=-1
   FM_COMPOSER_SCAN_PI_CLOSE=-1
   FM_COMPOSER_SCAN_PI_LAST_SEPARATOR=-1
+  FM_COMPOSER_SCAN_PI_CURSOR_FOUND=0
+  FM_COMPOSER_SCAN_PI_CURSOR_VALID=0
+  FM_COMPOSER_SCAN_PI_CURSOR_OPEN=-1
+  FM_COMPOSER_SCAN_PI_CURSOR_CLOSE=-1
   local leftbar_start=-1 pi_open=-1 pi_lines=0 pi_max
   pi_max=$FM_COMPOSER_PI_MAX_LINES
   case "$pi_max" in ''|*[!0-9]*|0) pi_max=8 ;; esac
@@ -651,6 +655,20 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
           FM_COMPOSER_SCAN_PI_PAIR_VALID=1
         else
           FM_COMPOSER_SCAN_PI_PAIR_VALID=0
+        fi
+        # The last pair wins above, which is right for pi (it never stacks two
+        # separator regions) and for cursorless selection. agy DOES stack them:
+        # while a background shell task runs it draws a second rule-bounded
+        # strip (`● [HH:MM:SS] <cmd> running`) BELOW the live composer, so the
+        # last pair is the task strip and the composer's own pair is lost -
+        # every verdict then degraded to `unknown`, which fm-send reports as a
+        # delivery failure for a steer that actually landed. Keep the pair the
+        # CURSOR sits inside separately; cursor mode reads these instead.
+        if [ -n "$cy" ] && [ "$cy" -gt "$pi_open" ] && [ "$cy" -lt "$row" ]; then
+          FM_COMPOSER_SCAN_PI_CURSOR_FOUND=1
+          FM_COMPOSER_SCAN_PI_CURSOR_OPEN=$pi_open
+          FM_COMPOSER_SCAN_PI_CURSOR_CLOSE=$row
+          FM_COMPOSER_SCAN_PI_CURSOR_VALID=$FM_COMPOSER_SCAN_PI_PAIR_VALID
         fi
       fi
       pi_open=$row
@@ -1211,6 +1229,15 @@ EOF
   _fm_composer_scan_screen "$plain" "$cy"
   if [ -n "$cy" ]; then
     # Cursor mode (tmux): the shape CONTAINING the cursor is the composer.
+    # That rule applies to the separator pair too: adopt the pair the cursor is
+    # inside, not the bottom-most one, so a stacked strip below the composer
+    # (agy's running-background-task row) cannot outrank it. With a single pair
+    # on screen - every other case in the fleet - the two are identical. The
+    # cursorless path below keeps reading the last-pair globals untouched.
+    FM_COMPOSER_SCAN_PI_PAIR_FOUND=$FM_COMPOSER_SCAN_PI_CURSOR_FOUND
+    FM_COMPOSER_SCAN_PI_PAIR_VALID=$FM_COMPOSER_SCAN_PI_CURSOR_VALID
+    FM_COMPOSER_SCAN_PI_OPEN=$FM_COMPOSER_SCAN_PI_CURSOR_OPEN
+    FM_COMPOSER_SCAN_PI_CLOSE=$FM_COMPOSER_SCAN_PI_CURSOR_CLOSE
     if [ "$FM_COMPOSER_SCAN_UNSAFE" = 1 ]; then
       printf 'unknown'; return 0
     fi
