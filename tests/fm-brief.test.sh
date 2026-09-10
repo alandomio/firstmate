@@ -866,10 +866,11 @@ test_skill_declaration_required_in_first_status_line() {
 # and a secondmate charter routes work to its own crewmates, whose generated
 # ship briefs already carry these contracts, so neither may duplicate them.
 test_ship_worker_operating_contracts() {
-  local home brief dod
+  local home brief dod ship_only_candidate_rule
   home="$TMP_ROOT/worker-contracts-home"
   mkdir -p "$home/data"
   dod="$TMP_ROOT/worker-contracts-dod.txt"
+  ship_only_candidate_rule="firstmate promotes them, and you must never write to PP Brain"
 
   write_project_clone "$home" gh-proj https://github.com/acme/gh-proj.git
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gh gh-proj --mode no-mistakes >/dev/null 2>&1
@@ -898,6 +899,8 @@ test_ship_worker_operating_contracts() {
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
   assert_grep '`note: CANDIDATE - {finding}` rather than acting on it yourself' "$brief" \
     "ship brief did not route durable findings through the note: unread-surface channel"
+  assert_grep "$ship_only_candidate_rule" "$brief" \
+    "ship brief lost the durable-findings ownership rule the scout guard below keys on"
   assert_grep "States: working, note, needs-decision, blocked, paused, done, failed." "$brief" \
     "ship brief instructs a note: line but omits note from its own states enumeration"
   # Delivery of a note: line does not depend on its wording, but the wedge
@@ -1010,7 +1013,7 @@ test_ship_worker_operating_contracts() {
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
   assert_no_grep 'raise it as a `note: CANDIDATE - {finding}` status line' "$brief" \
     "scout brief duplicated the ship-only project-memory CANDIDATE findings contract"
-  assert_no_grep "you record candidates, only firstmate promotes them" "$brief" \
+  assert_no_grep "$ship_only_candidate_rule" "$brief" \
     "scout brief duplicated the ship-only Rule 4 CANDIDATE durable-findings paragraph"
   assert_no_grep "unreachable (confirmed by a live call" "$brief" \
     "scout brief duplicated the ship-only degraded-mode template"
