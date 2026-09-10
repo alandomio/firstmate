@@ -97,6 +97,36 @@ test_control_lib_wiring_paths() {
 
 # --- busy-state fold (bin/fm-busy-lib.sh) -------------------------------
 
+# The fold's entry points, each reached through its own function so that the
+# library source stays inside a subshell of that function's scope - the same
+# shape tests/fm-muse-harness.test.sh uses. Sourcing bin/fm-busy-lib.sh
+# directly inside a test's own command substitution instead makes ShellCheck
+# read the library's `local state`/`local db` as modifications of the test's
+# same-named variables (SC2031).
+agy_conversation() {  # <state-dir> <id>
+  (
+    # shellcheck source=bin/fm-busy-lib.sh
+    . "$ROOT/bin/fm-busy-lib.sh"
+    fm_busy_agy_conversation "$1" "$2"
+  )
+}
+
+agy_run_state() {  # <conversation-db>
+  (
+    # shellcheck source=bin/fm-busy-lib.sh
+    . "$ROOT/bin/fm-busy-lib.sh"
+    fm_busy_agy_run_state "$1"
+  )
+}
+
+classify_agy() {  # <state-dir> <id>
+  (
+    # shellcheck source=bin/fm-busy-lib.sh
+    . "$ROOT/bin/fm-busy-lib.sh"
+    fm_busy_classify tmux none agy "$2" "$1"
+  )
+}
+
 test_agy_trusts_no_record_source() {
   local out
   out=$(
@@ -170,11 +200,9 @@ test_busy_fold_resolves_and_reads_status() {
     printf 'workspace_root=%s\n' "$ws"
   } > "$state/task1.agy-session"
   out=$(
-    # shellcheck source=bin/fm-busy-lib.sh
-    . "$ROOT/bin/fm-busy-lib.sh"
-    resolved=$(fm_busy_agy_conversation "$state" task1) || { echo "resolve-failed"; exit 0; }
+    resolved=$(agy_conversation "$state" task1) || { echo "resolve-failed"; exit 0; }
     [ "$resolved" = "$db" ] && echo "resolve-ok"
-    fm_busy_agy_run_state "$resolved"
+    agy_run_state "$resolved"
   )
   assert_contains "$out" "resolve-ok" "the single matching conversation was not resolved"
   assert_contains "$out" "busy" "a last step with status 8 must fold to busy"
@@ -199,10 +227,8 @@ test_busy_fold_settled_reads_idle() {
     printf 'workspace_root=%s\n' "$ws"
   } > "$state/task2.agy-session"
   out=$(
-    # shellcheck source=bin/fm-busy-lib.sh
-    . "$ROOT/bin/fm-busy-lib.sh"
-    resolved=$(fm_busy_agy_conversation "$state" task2) || exit 0
-    fm_busy_agy_run_state "$resolved"
+    resolved=$(agy_conversation "$state" task2) || exit 0
+    agy_run_state "$resolved"
   )
   [ "$out" = idle ] || fail "a fully settled conversation must fold to idle, got '$out'"
   pass "agy busy fold reads a settled conversation as idle"
@@ -232,11 +258,7 @@ test_busy_fold_excludes_prior_conversation() {
     printf 'workspace_root=%s\n' "$ws"
     printf 'prior_conversation=%s\n' "$(basename -- "$prior_db")"
   } > "$state/task3.agy-session"
-  out=$(
-    # shellcheck source=bin/fm-busy-lib.sh
-    . "$ROOT/bin/fm-busy-lib.sh"
-    fm_busy_agy_conversation "$state" task3
-  )
+  out=$(agy_conversation "$state" task3)
   [ "$out" = "$new_db" ] || fail "expected the new conversation '$new_db', resolved '$out'"
   pass "agy busy fold excludes a conversation recorded as pre-existing at spawn time"
 }
@@ -266,11 +288,7 @@ test_busy_fold_ignores_sibling_slot_path_prefix() {
     printf 'conversations_root=%s\n' "$root"
     printf 'workspace_root=%s\n' "$ws"
   } > "$state/task5.agy-session"
-  out=$(
-    # shellcheck source=bin/fm-busy-lib.sh
-    . "$ROOT/bin/fm-busy-lib.sh"
-    fm_busy_agy_conversation "$state" task5
-  )
+  out=$(agy_conversation "$state" task5)
   status=$?
   [ "$status" -ne 0 ] || fail "slot 1 bound to sibling slot 10's conversation: '$out'"
   [ ! -e "$state/task5.agy-session-current" ] \
@@ -297,11 +315,7 @@ test_busy_fold_resolves_across_an_alphanumeric_successor_byte() {
     printf 'conversations_root=%s\n' "$root"
     printf 'workspace_root=%s\n' "$ws"
   } > "$state/task6.agy-session"
-  out=$(
-    # shellcheck source=bin/fm-busy-lib.sh
-    . "$ROOT/bin/fm-busy-lib.sh"
-    fm_busy_agy_conversation "$state" task6
-  )
+  out=$(agy_conversation "$state" task6)
   [ "$out" = "$db" ] || fail "the task's own conversation did not resolve, got '$out'"
   pass "agy busy fold resolves its own conversation despite an alphanumeric successor byte"
 }
@@ -328,11 +342,7 @@ test_busy_fold_decodes_a_multibyte_length_prefix() {
     printf 'conversations_root=%s\n' "$root"
     printf 'workspace_root=%s\n' "$ws"
   } > "$state/task9.agy-session"
-  out=$(
-    # shellcheck source=bin/fm-busy-lib.sh
-    . "$ROOT/bin/fm-busy-lib.sh"
-    fm_busy_agy_conversation "$state" task9
-  )
+  out=$(agy_conversation "$state" task9)
   [ "$out" = "$db" ] || fail "a multi-byte length prefix did not resolve, got '$out'"
   pass "agy busy fold decodes a multi-byte varint length prefix"
 }
@@ -395,7 +405,7 @@ test_binding_rejects_a_coincidental_length_byte() {
   {
     printf 'captured tool output: '
     printf 'A'
-    printf "\\$(printf '%03o' "$len")"
+    printf '%b' "\\0$(printf '%03o' "$len")"
     printf '%s and more\n' "$ws"
   } > "$db"
   grep -aqF -- "$ws" "$db" \
@@ -404,11 +414,7 @@ test_binding_rejects_a_coincidental_length_byte() {
     printf 'conversations_root=%s\n' "$root"
     printf 'workspace_root=%s\n' "$ws"
   } > "$state/taskA.agy-session"
-  out=$(
-    # shellcheck source=bin/fm-busy-lib.sh
-    . "$ROOT/bin/fm-busy-lib.sh"
-    fm_busy_agy_conversation "$state" taskA
-  )
+  out=$(agy_conversation "$state" taskA)
   status=$?
   [ "$status" -ne 0 ] || fail "a coincidental length byte with no wire-type-2 tag was accepted: '$out'"
 
@@ -417,14 +423,10 @@ test_binding_rejects_a_coincidental_length_byte() {
   {
     printf 'captured tool output: '
     printf '\022'
-    printf "\\$(printf '%03o' "$len")"
+    printf '%b' "\\0$(printf '%03o' "$len")"
     printf '%s and more\n' "$ws"
   } > "$db"
-  out=$(
-    # shellcheck source=bin/fm-busy-lib.sh
-    . "$ROOT/bin/fm-busy-lib.sh"
-    fm_busy_agy_conversation "$state" taskA
-  )
+  out=$(agy_conversation "$state" taskA)
   [ "$out" = "$db" ] || fail "a genuine tag+varint framed path did not resolve, got '$out'"
   pass "agy binding requires a wire-type-2 tag, not just a matching length byte"
 }
@@ -448,11 +450,7 @@ test_busy_classify_reports_the_agy_conversation_source() {
     printf 'conversations_root=%s\n' "$root"
     printf 'workspace_root=%s\n' "$ws"
   } > "$state/task7.agy-session"
-  out=$(
-    # shellcheck source=bin/fm-busy-lib.sh
-    . "$ROOT/bin/fm-busy-lib.sh"
-    fm_busy_classify tmux none agy task7 "$state"
-  )
+  out=$(classify_agy "$state" task7)
   [ "$out" = "busy agy-conversation" ] || fail "expected 'busy agy-conversation', got '$out'"
 
   mkdir -p "$case_dir/idle-root" "$case_dir/idle-state"
@@ -462,11 +460,7 @@ test_busy_classify_reports_the_agy_conversation_source() {
     printf 'conversations_root=%s\n' "$case_dir/idle-root"
     printf 'workspace_root=%s\n' "$ws"
   } > "$case_dir/idle-state/task8.agy-session"
-  out=$(
-    # shellcheck source=bin/fm-busy-lib.sh
-    . "$ROOT/bin/fm-busy-lib.sh"
-    fm_busy_classify tmux none agy task8 "$case_dir/idle-state"
-  )
+  out=$(classify_agy "$case_dir/idle-state" task8)
   [ "$out" = "idle agy-conversation" ] || fail "expected 'idle agy-conversation', got '$out'"
   pass "fm_busy_classify routes an agy task to its conversation fold and names the source"
 }
@@ -493,11 +487,7 @@ test_busy_fold_ambiguous_resolution_fails() {
     printf 'conversations_root=%s\n' "$root"
     printf 'workspace_root=%s\n' "$ws"
   } > "$state/task4.agy-session"
-  out=$(
-    # shellcheck source=bin/fm-busy-lib.sh
-    . "$ROOT/bin/fm-busy-lib.sh"
-    fm_busy_agy_conversation "$state" task4
-  )
+  out=$(agy_conversation "$state" task4)
   status=$?
   [ "$status" -ne 0 ] || fail "two matching conversations with neither recorded as prior must not resolve, got '$out'"
   pass "agy busy fold refuses to guess between two ambiguous conversations"
@@ -585,11 +575,9 @@ test_busy_fold_resolves_a_conversation_still_writing_to_its_wal() {
   in_db=$(grep -acF -- "$ws" "$db" 2>/dev/null || true)
   in_wal=$(grep -acF -- "$ws" "$db-wal" 2>/dev/null || true)
   out=$(
-    # shellcheck source=bin/fm-busy-lib.sh
-    . "$ROOT/bin/fm-busy-lib.sh"
-    resolved=$(fm_busy_agy_conversation "$state" taskwal) || exit 0
+    resolved=$(agy_conversation "$state" taskwal) || exit 0
     printf '%s\n' "$resolved"
-    fm_busy_agy_run_state "$resolved"
+    agy_run_state "$resolved"
   )
   close_live_conversation
   [ "${in_db:-0}" -eq 0 ] \
@@ -633,11 +621,7 @@ test_busy_fold_counts_a_db_and_wal_match_as_one_conversation() {
   open_live_conversation "$db" "$ws" 132 2 || fail "the live sqlite3 writer never acknowledged its writes"
   in_db=$(grep -acF -- "$ws" "$db" 2>/dev/null || true)
   in_wal=$(grep -acF -- "$ws" "$db-wal" 2>/dev/null || true)
-  out=$(
-    # shellcheck source=bin/fm-busy-lib.sh
-    . "$ROOT/bin/fm-busy-lib.sh"
-    fm_busy_agy_conversation "$state" taskboth
-  )
+  out=$(agy_conversation "$state" taskboth)
   close_live_conversation
   [ "${in_db:-0}" -gt 0 ] && [ "${in_wal:-0}" -gt 0 ] \
     || fail "fixture does not reproduce the overlap: .db=$in_db -wal=$in_wal occurrences"
@@ -672,11 +656,7 @@ test_busy_fold_excludes_a_prior_conversation_matching_only_in_its_wal() {
   } > "$state/taskpw.agy-session"
   open_live_conversation "$prior_db" "$ws" 15 8 || fail "the live sqlite3 writer never acknowledged its writes"
   in_db=$(grep -acF -- "$ws" "$prior_db" 2>/dev/null || true)
-  out=$(
-    # shellcheck source=bin/fm-busy-lib.sh
-    . "$ROOT/bin/fm-busy-lib.sh"
-    fm_busy_agy_conversation "$state" taskpw
-  )
+  out=$(agy_conversation "$state" taskpw)
   close_live_conversation
   [ "${in_db:-0}" -eq 0 ] \
     || fail "fixture does not reproduce a live predecessor: its bytes already reached the .db"
