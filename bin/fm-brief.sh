@@ -61,16 +61,20 @@
 # findings instead go through the note: CANDIDATE status line (Rule 4;
 # AGENTS.md section 6) for firstmate to route.
 # Ship and scout briefs include a Grounding section requiring PP Brain and
-# local-memory-store search before the first substantive action and a reported
-# outcome; a secondmate charter omits it because its own crewmates each get
-# their own generated brief carrying the same contract.
+# local-memory-store search before the first substantive action, a repeated
+# search whenever a later obstacle or subject comes up since latency is the
+# only cost, a check of PP Brain before working around any gotcha (citing it,
+# or filing a note: CANDIDATE when it is silent, never writing to PP Brain or
+# any shared memory itself), and a reported outcome; a secondmate charter omits
+# it because its own crewmates each get their own generated brief carrying the
+# same contract.
 # A ship brief additionally treats a session-start "pp-brain: auth_missing" banner as a known
 # false positive: the worker makes ONE real search_knowledge call before acting on it, and only
 # a genuinely failing live call becomes the fixed
 # "blocked: <server> unreachable (confirmed by a live call, not the startup banner)" line,
 # reusing an existing classifier verb rather than inventing one.
-# Ship briefs route a durable finding through a "note: CANDIDATE - {finding}" line the worker
-# records and only firstmate promotes, never a direct write to PP Brain or any shared memory.
+# A ship brief additionally widens the Grounding CANDIDATE channel above from an undocumented
+# gotcha to every durable finding the worker records and only firstmate promotes.
 # The brief treats "note:" as nonterminal like "working:", and discloses that the supervisor's
 # wedge guards do not yet do the same.
 # A ship brief describes a wait on an open PR/MR as a colleague's approval, never the captain's
@@ -399,8 +403,9 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 {TASK}
 
 # Grounding
-Before your first substantive action, search PP Brain (\`search_knowledge\` with both \`query\` and \`prompt\` populated - one alone kills two of six retrieval paths) and the local memory store for prior decisions, refuted approaches, and known traps on this subject.
+Before your first substantive action, search PP Brain (\`search_knowledge\` with both \`query\` and \`prompt\` populated - one alone kills two of six retrieval paths) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
 Treat the \`# Task\` section above as firstmate's assembly of that context, a starting point rather than a substitute.
+When you hit an obstacle, surprising behavior, or trap, check PP Brain before working around it - cite it if documented, or append \`note: CANDIDATE - {finding}\` if it is not; never write to PP Brain or any shared memory directly, only firstmate promotes candidates.
 Report what you found and what it changed in your next status line, or state plainly that both were silent.
 
 $HERDR_SECTION
@@ -417,7 +422,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 3. $FORGE_TOOLS_LINE
 4. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
-   States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
+   States: working, note, needs-decision, blocked, $PAUSED_VERB, done, failed.
    Each append wakes firstmate, so report sparingly: only phase changes a supervisor
    would act on and the needs-decision/blocked/paused/done/failed states. No step-by-step
    FYI progress lines; firstmate reads your pane for that.
@@ -531,8 +536,9 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 {TASK}
 
 # Grounding
-Before your first substantive action, search PP Brain (\`search_knowledge\` with both \`query\` and \`prompt\` populated - one alone kills two of six retrieval paths) and the local memory store for prior decisions, refuted approaches, and known traps on this subject.
+Before your first substantive action, search PP Brain (\`search_knowledge\` with both \`query\` and \`prompt\` populated - one alone kills two of six retrieval paths) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
 Treat the \`# Task\` section above as firstmate's assembly of that context, a starting point rather than a substitute.
+When you hit an obstacle, surprising behavior, or trap, check PP Brain before working around it - cite it if documented, or append \`note: CANDIDATE - {finding}\` if it is not; never write to PP Brain or any shared memory directly, only firstmate promotes candidates.
 Report what you found and what it changed in your next status line, or state plainly that both were silent.
 If the session-start banner reports \`pp-brain: auth_missing\`, or anything else suggests PP Brain is unauthenticated, treat that alone as a known false positive: make ONE real \`search_knowledge\` call before acting on it.
 Only a failing live call is evidence - never stop, and never proceed without org context, on the banner alone.

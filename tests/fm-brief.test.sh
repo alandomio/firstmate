@@ -748,8 +748,8 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
     esac
     brief="$home/data/$id/brief.md"
     case "$kind" in
-      ship) states="States: working, note, needs-decision, blocked, awaiting, done, failed." ;;
-      *)    states="States: working, needs-decision, blocked, awaiting, done, failed." ;;
+      ship|scout) states="States: working, note, needs-decision, blocked, awaiting, done, failed." ;;
+      *)          states="States: working, needs-decision, blocked, awaiting, done, failed." ;;
     esac
     assert_grep "$states" "$brief" \
       "$kind brief did not render the configured pause verb in its states list"
@@ -811,6 +811,13 @@ test_grounding_section_requires_search_and_reporting() {
     "ship brief Grounding section did not require reporting outcome, not just the search"
   assert_grep "starting point rather than a substitute" "$brief" \
     "ship brief Grounding section did not frame the Task section as a starting point"
+  assert_grep "search again whenever a new obstacle or subject comes up" "$brief" \
+    "ship brief Grounding section did not frame search as repeatable, not one-shot"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'check PP Brain before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not' "$brief" \
+    "ship brief Grounding section did not require checking PP Brain for gotchas before working around them"
+  assert_grep "never write to PP Brain or any shared memory directly, only firstmate promotes candidates" "$brief" \
+    "ship brief Grounding section invited a gotcha candidate without forbidding a direct shared-store write"
 
   id="brief-grounding-scout"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1
@@ -818,6 +825,15 @@ test_grounding_section_requires_search_and_reporting() {
   assert_grep "# Grounding" "$brief" "scout brief missing the Grounding section"
   assert_grep "Report what you found and what it changed" "$brief" \
     "scout brief Grounding section did not require reporting outcome, not just the search"
+  assert_grep "search again whenever a new obstacle or subject comes up" "$brief" \
+    "scout brief Grounding section did not frame search as repeatable, not one-shot"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'check PP Brain before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not' "$brief" \
+    "scout brief Grounding section did not require checking PP Brain for gotchas before working around them"
+  assert_grep "never write to PP Brain or any shared memory directly, only firstmate promotes candidates" "$brief" \
+    "scout brief Grounding section invited a gotcha candidate without forbidding a direct shared-store write"
+  assert_grep "States: working, note, needs-decision, blocked, paused, done, failed." "$brief" \
+    "scout brief Grounding section instructs a note: line but Rule 4 omits note from its states enumeration"
 
   id="brief-grounding-secondmate"
   FM_HOME="$home" FM_SECONDMATE_CHARTER='sample domain' \
@@ -874,15 +890,22 @@ test_skill_declaration_required_in_first_status_line() {
   pass "fm-brief.sh: ship and scout briefs require declaring prescribed skills/procedures invoked and not invoked in the first status line; secondmate charter does not duplicate it"
 }
 
-# The worker-operating contracts added on 2026-09-02 are ship-only: they govern
-# the crewmate that performs the task itself. A scout produces a written report
-# and a secondmate charter routes work to its own crewmates, whose generated
-# ship briefs already carry these contracts, so neither may duplicate them.
+# The worker-operating contracts added on 2026-09-02 are ship-only where they
+# govern the crewmate that performs the task itself: the auth-banner false
+# positive, the degraded-mode blocked: template, the colleague-approval pause,
+# and the Rule 4 durable-findings CANDIDATE paragraph. A scout produces a
+# written report and a secondmate charter routes work to its own crewmates,
+# whose generated ship briefs already carry those, so neither may duplicate
+# them. The scout brief does legitimately share the Grounding note: CANDIDATE
+# gotcha line and its direct-write prohibition, so the scout guards below key
+# on ship-only phrasing; only the secondmate charter, which omits Grounding
+# entirely, can still be guarded on "note: CANDIDATE" alone.
 test_ship_worker_operating_contracts() {
-  local home brief dod
+  local home brief dod ship_only_candidate_rule
   home="$TMP_ROOT/worker-contracts-home"
   mkdir -p "$home/data"
   dod="$TMP_ROOT/worker-contracts-dod.txt"
+  ship_only_candidate_rule="firstmate promotes them, and you must never write to PP Brain"
 
   write_project_clone "$home" gh-proj https://github.com/acme/gh-proj.git
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gh gh-proj --mode no-mistakes >/dev/null 2>&1
@@ -911,6 +934,8 @@ test_ship_worker_operating_contracts() {
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
   assert_grep '`note: CANDIDATE - {finding}` rather than acting on it yourself' "$brief" \
     "ship brief did not route durable findings through the note: unread-surface channel"
+  assert_grep "$ship_only_candidate_rule" "$brief" \
+    "ship brief lost the durable-findings ownership rule the scout guard below keys on"
   assert_grep "States: working, note, needs-decision, blocked, paused, done, failed." "$brief" \
     "ship brief instructs a note: line but omits note from its own states enumeration"
   # Delivery of a note: line does not depend on its wording, but the wedge
@@ -1020,8 +1045,11 @@ test_ship_worker_operating_contracts() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-scout gh-proj --scout >/dev/null 2>&1
   brief="$home/data/brief-contracts-scout/brief.md"
   assert_present "$brief" "scout brief was not scaffolded"
-  assert_no_grep "note: CANDIDATE" "$brief" \
-    "scout brief duplicated the ship-only CANDIDATE findings contract"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_no_grep 'raise it as a `note: CANDIDATE - {finding}` status line' "$brief" \
+    "scout brief duplicated the ship-only project-memory CANDIDATE findings contract"
+  assert_no_grep "$ship_only_candidate_rule" "$brief" \
+    "scout brief duplicated the ship-only Rule 4 CANDIDATE durable-findings paragraph"
   assert_no_grep "unreachable (confirmed by a live call" "$brief" \
     "scout brief duplicated the ship-only degraded-mode template"
   assert_no_grep "colleague's approval" "$brief" \
