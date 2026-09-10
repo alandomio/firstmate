@@ -16,6 +16,9 @@
 #   loud one-line deviation notice is printed and the spawn continues.
 #   no-mistakes-prod-only is a registry policy rather than a task mode and is
 #   refused as a flag value.
+#   A fresh ship or scout spawn also REFUSES a brief still carrying an unfilled
+#   {RECALL_FOUND} or {RECALL_CHANGED} placeholder (bin/fm-brief.sh owns that
+#   section); only replacement is checked, never content, and --relaunch skips it.
 #        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded endpoint and worktree instead of creating either. It is
@@ -1734,6 +1737,22 @@ else
   BRIEF="$DATA/$ID/brief.md"
 fi
 [ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
+
+# Firstmate recall, checked before any endpoint exists. fm-brief.sh scaffolds
+# ship and scout briefs with {RECALL_FOUND: firstmate - ...} and
+# {RECALL_CHANGED: firstmate - ...} placeholders that firstmate fills while
+# choosing the task's shape; one left unreplaced means that step was skipped.
+# Only that scaffold form is matched, so a filled brief may still mention a bare
+# {RECALL_FOUND} token. Only replacement is checked, never content, so an honest
+# "Nothing" passes. A relaunch recovers an existing task and is never held here.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
+  for recall_token in RECALL_FOUND RECALL_CHANGED; do
+    if grep -qF -- "{$recall_token: firstmate - " "$BRIEF"; then
+      echo "error: $BRIEF still carries its unfilled {$recall_token} placeholder; fill the firstmate recall section with what you consulted before fixing this task's shape and what it changed (\"Nothing\" is a valid answer), then spawn again" >&2
+      exit 1
+    fi
+  done
+fi
 
 delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task mode
   case "$1" in

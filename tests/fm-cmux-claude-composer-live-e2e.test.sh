@@ -54,11 +54,13 @@ STATUS="$LAB/state/$TASK.status"
 FM_HOME="$LAB" "$ROOT/bin/fm-brief.sh" "$TASK" comms --scout || fail "could not scaffold the Claude probe brief"
 python3 - "$LAB/data/$TASK/brief.md" "$STATUS" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 brief = Path(sys.argv[1])
 status = sys.argv[2]
-brief.write_text(brief.read_text().replace("{TASK}", f'''Run a cmux communication probe.
+text = re.sub(r'\{RECALL_[A-Z]+:[^}]*\}', 'Nothing - a scripted communication probe.', brief.read_text())
+brief.write_text(text.replace("{TASK}", f'''Run a cmux communication probe.
 
 Immediately append `working: cmux composer probe ready` to `{status}`.
 Then append exactly `needs-decision [key=probe-decision]: awaiting codeword` to that file and stop to wait for a firstmate message.

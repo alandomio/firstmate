@@ -845,6 +845,64 @@ test_grounding_section_requires_search_and_reporting() {
   pass "fm-brief.sh: ship and scout briefs require Brain/memory grounding with reported outcome; secondmate charter does not duplicate it"
 }
 
+# Firstmate fixes a task's shape - project, base branch, delivery mode, scope -
+# while writing the brief, before any worker exists, so the worker's own
+# Grounding cannot correct it. The recall section records firstmate's recall at
+# that moment, sits between Task and the worker's Grounding, and states that
+# "Nothing" is a legal answer so it never invites a fabricated change. A
+# secondmate charter omits it for the same reason it omits Grounding.
+test_firstmate_recall_section() {
+  local home kind id brief task_line recall_line grounding_line
+  home="$TMP_ROOT/recall-home"
+  mkdir -p "$home/data"
+
+  for kind in ship scout; do
+    id="brief-recall-$kind"
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+    fi
+    brief="$home/data/$id/brief.md"
+    assert_grep "# Firstmate recall - written by firstmate before dispatch" "$brief" \
+      "$kind brief missing the firstmate recall section"
+    assert_grep "Firstmate filled this section, not you" "$brief" \
+      "$kind recall section did not say firstmate, not the worker, fills it"
+    assert_grep "{RECALL_FOUND: firstmate - quote verbatim, never summarise" "$brief" \
+      "$kind recall section lost its quoted-recall placeholder"
+    assert_grep "{RECALL_CHANGED: firstmate - one sentence naming the shape decision it changed" "$brief" \
+      "$kind recall section lost its what-it-changed placeholder"
+    # The worker-visible framing survives the fill, so "Nothing" never reads as a gap.
+    assert_grep '"Nothing" in either part is an honest answer, not an omission.' "$brief" \
+      "$kind recall section did not tell the worker that Nothing is an honest answer"
+    assert_grep "Nothing is a first-class answer: never invent a change to fill this line" "$brief" \
+      "$kind recall section did not make Nothing a first-class answer for firstmate"
+    assert_grep "a fabricated grounding line launders a guess as evidence" "$brief" \
+      "$kind recall section did not say why a fabricated change is worse than none"
+
+    task_line=$(grep -n '^# Task$' "$brief" | head -1 | cut -d: -f1)
+    recall_line=$(grep -n '^# Firstmate recall' "$brief" | head -1 | cut -d: -f1)
+    grounding_line=$(grep -n '^# Grounding$' "$brief" | head -1 | cut -d: -f1)
+    if [ -z "$task_line" ] || [ -z "$recall_line" ] || [ -z "$grounding_line" ] \
+      || [ "$task_line" -ge "$recall_line" ] || [ "$recall_line" -ge "$grounding_line" ]; then
+      fail "$kind brief must order Task ($task_line), firstmate recall ($recall_line), then the worker's Grounding ($grounding_line)"
+    fi
+    [ "$(grep -c '^# Grounding$' "$brief")" -eq 1 ] \
+      || fail "$kind brief must keep exactly one worker Grounding section, distinct from firstmate's recall"
+  done
+
+  id="brief-recall-secondmate"
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='sample domain' \
+    "$ROOT/bin/fm-brief.sh" "$id" --secondmate --no-projects >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_no_grep "Firstmate recall" "$brief" \
+    "secondmate charter should not carry a recall section its own crewmates' briefs already carry"
+  assert_no_grep "{RECALL_" "$brief" \
+    "secondmate charter carries a recall placeholder that nothing checks at seeding"
+
+  pass "fm-brief.sh: ship and scout briefs carry a firstmate-filled recall section where Nothing is a legal answer; secondmate charter does not"
+}
+
 # Firstmate briefs routinely prescribe a project-specific skill or procedure
 # (e.g. GOPlanner's implement-ticket) in the Task section, but no status log
 # has ever reported one being invoked. This lives in Rule 4's status-protocol
@@ -1269,6 +1327,7 @@ test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_grounding_section_requires_search_and_reporting
+test_firstmate_recall_section
 test_skill_declaration_required_in_first_status_line
 test_ship_worker_operating_contracts
 test_scout_and_secondmate_scaffold
