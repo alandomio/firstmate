@@ -311,7 +311,9 @@ fm_composer_strip_ghost() {
 # part of that union for the same reason the others are: without it a cursor
 # submit could never be acknowledged, because cursor parks its terminal cursor
 # outside its composer and the composer verdict is therefore always `unknown`.
-FM_DELIVERY_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working\.\.\.|Ctrl\+c:cancel|ctrl\+c to stop'
+# agy's `esc to cancel` is part of it too, verified live, agy 1.1.28: present
+# in the footer for the whole active turn and absent the instant it settles.
+FM_DELIVERY_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working\.\.\.|Ctrl\+c:cancel|ctrl\+c to stop|esc to cancel'
 FM_DELIVERY_CLAUDE_BUSY_REGEX_DEFAULT='esc to interrupt|…[[:space:]]+\([0-9]+[smh]'
 FM_DELIVERY_CODEX_BUSY_REGEX_DEFAULT='esc to interrupt'
 FM_DELIVERY_OPENCODE_BUSY_REGEX_DEFAULT='esc interrupt'
@@ -326,6 +328,11 @@ FM_DELIVERY_GROK_BUSY_REGEX_DEFAULT='Ctrl\+c:cancel'
 # bin/fm-busy-lib.sh, never from this row.
 FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT='ctrl\+c to stop'
 FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT='^[[:space:]]*(🌑|🌒|🌓|🌔|🌕|🌖|🌗|🌘)[[:space:]]+·[[:space:]]+'
+# agy's busy footer, verified live (agy 1.1.28): present for the whole active
+# turn beside its braille spinner and gone the instant the turn settles. This
+# is a DELIVERY guard only, same caveat as cursor's above; agy's recorded
+# worker state comes from its own semantic fold in bin/fm-busy-lib.sh.
+FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT='esc to cancel'
 
 fm_busy_lines_match() {  # [harness]
   local harness=${1:-} lines regex
@@ -341,6 +348,7 @@ fm_busy_lines_match() {  # [harness]
       grok) regex=$FM_DELIVERY_GROK_BUSY_REGEX_DEFAULT ;;
       kimi) regex=$FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT ;;
       cursor) regex=$FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT ;;
+      agy) regex=$FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT ;;
       '') regex=$FM_DELIVERY_BUSY_REGEX_DEFAULT ;;
       *)
         # A supplied harness must never borrow another harness's signature.
@@ -609,6 +617,10 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
   FM_COMPOSER_SCAN_PI_OPEN=-1
   FM_COMPOSER_SCAN_PI_CLOSE=-1
   FM_COMPOSER_SCAN_PI_LAST_SEPARATOR=-1
+  FM_COMPOSER_SCAN_PI_CURSOR_FOUND=0
+  FM_COMPOSER_SCAN_PI_CURSOR_VALID=0
+  FM_COMPOSER_SCAN_PI_CURSOR_OPEN=-1
+  FM_COMPOSER_SCAN_PI_CURSOR_CLOSE=-1
   local leftbar_start=-1 pi_open=-1 pi_lines=0 pi_max
   pi_max=$FM_COMPOSER_PI_MAX_LINES
   case "$pi_max" in ''|*[!0-9]*|0) pi_max=8 ;; esac
@@ -643,6 +655,20 @@ _fm_composer_scan_screen() {  # <plain-screen> <cursor-or-empty> [extract-wrap]
           FM_COMPOSER_SCAN_PI_PAIR_VALID=1
         else
           FM_COMPOSER_SCAN_PI_PAIR_VALID=0
+        fi
+        # The last pair wins above, which is right for pi (it never stacks two
+        # separator regions) and for cursorless selection. agy DOES stack them:
+        # while a background shell task runs it draws a second rule-bounded
+        # strip (`● [HH:MM:SS] <cmd> running`) BELOW the live composer, so the
+        # last pair is the task strip and the composer's own pair is lost -
+        # every verdict then degraded to `unknown`, which fm-send reports as a
+        # delivery failure for a steer that actually landed. Keep the pair the
+        # CURSOR sits inside separately; cursor mode reads these instead.
+        if [ -n "$cy" ] && [ "$cy" -gt "$pi_open" ] && [ "$cy" -lt "$row" ]; then
+          FM_COMPOSER_SCAN_PI_CURSOR_FOUND=1
+          FM_COMPOSER_SCAN_PI_CURSOR_OPEN=$pi_open
+          FM_COMPOSER_SCAN_PI_CURSOR_CLOSE=$row
+          FM_COMPOSER_SCAN_PI_CURSOR_VALID=$FM_COMPOSER_SCAN_PI_PAIR_VALID
         fi
       fi
       pi_open=$row
@@ -1203,6 +1229,15 @@ EOF
   _fm_composer_scan_screen "$plain" "$cy"
   if [ -n "$cy" ]; then
     # Cursor mode (tmux): the shape CONTAINING the cursor is the composer.
+    # That rule applies to the separator pair too: adopt the pair the cursor is
+    # inside, not the bottom-most one, so a stacked strip below the composer
+    # (agy's running-background-task row) cannot outrank it. With a single pair
+    # on screen - every other case in the fleet - the two are identical. The
+    # cursorless path below keeps reading the last-pair globals untouched.
+    FM_COMPOSER_SCAN_PI_PAIR_FOUND=$FM_COMPOSER_SCAN_PI_CURSOR_FOUND
+    FM_COMPOSER_SCAN_PI_PAIR_VALID=$FM_COMPOSER_SCAN_PI_CURSOR_VALID
+    FM_COMPOSER_SCAN_PI_OPEN=$FM_COMPOSER_SCAN_PI_CURSOR_OPEN
+    FM_COMPOSER_SCAN_PI_CLOSE=$FM_COMPOSER_SCAN_PI_CURSOR_CLOSE
     if [ "$FM_COMPOSER_SCAN_UNSAFE" = 1 ]; then
       printf 'unknown'; return 0
     fi
@@ -1384,6 +1419,33 @@ _fm_composer_classify_bare_pi_overlap() {  # <screen> <styled> <has-identity> <i
 # is drawn above the separator pair, so the composer region looks free while the
 # keys would answer the prompt instead of composing (issue #2797). Structure
 # cannot disprove that, so a blocked pi defers rather than claiming empty.
+# A blank single row between two rules is NOT on its own proof of anything - an
+# ordinary shell pane whose unrelated content happens to draw two divider-like
+# lines around a blank one is a real, previously-live counterexample (see
+# "sleep-pane counterexample" and "absent identity cannot prove blank pi pair"
+# below) - so identity is REQUIRED, never inferred from structure alone, for
+# every agent this shape is asked about, agy included.
+#
+# agy (Antigravity CLI) draws the identical separator-bounded shape but has no
+# hook, plugin, session, or app-server surface to source identity from
+# (harness-adapters skill, "agy"). Its per-backend identity instead comes from
+# a real foreground-process check equivalent to pi's own (tmux: comm == agy,
+# no node-wrapper ambiguity to resolve, unlike cursor-agent) and is reported
+# through the same tuple shape as pi's, "agy<TAB>idle|working". agy carries
+# none of pi's blocked-menu-above-the-pair hazard (no such overlay was
+# observed to leave the pair intact; agy's own slash-command popup redraws the
+# closing rule away entirely, so the pair never matches at all and this branch
+# is never reached for it) - so once identity has proven the pane IS agy, the
+# whole region between the rules is classified directly from its content with
+# no separate idle/working distinction needed.
+#
+# The region is NOT restricted to a single content row. agy's composer draws
+# one row for input that fits, but a typed line longer than the pane wraps
+# onto further rows between the same two rules (live-reproduced at 80
+# columns), and refusing those rows returned `unknown`, which makes
+# fm_tmux_submit_enter_core abandon a swallowed Enter instead of retrying it -
+# losing the retry budget for exactly the long steers that need it. Only the
+# generic pair-validity ceiling gates the region here, the same one pi uses.
 _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
   local screen=$1 styled=$2 has_identity=$3 identity=$4 agent agent_status state
   if [ "$has_identity" != 1 ]; then
@@ -1400,6 +1462,15 @@ _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
   fi
   agent=${identity%%$'\t'*}
   agent_status=${identity#*$'\t'}
+  if [ "$agent" = agy ]; then
+    if [ "$FM_COMPOSER_SCAN_PI_PAIR_VALID" = 1 ]; then
+      _fm_composer_classify_rows "$screen" "$styled" 0 \
+        "$((FM_COMPOSER_SCAN_PI_OPEN + 1))" "$((FM_COMPOSER_SCAN_PI_CLOSE - 1))"
+    else
+      printf 'unknown'
+    fi
+    return 0
+  fi
   if [ "$agent" != pi ] || [ "$FM_COMPOSER_SCAN_PI_PAIR_VALID" != 1 ]; then
     printf 'unknown'
     return 0

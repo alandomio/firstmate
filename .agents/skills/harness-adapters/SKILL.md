@@ -3,7 +3,7 @@ name: harness-adapters
 description: >-
   Agent-only reference for firstmate harness operations.
   Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter.
-  Contains verified facts for claude, codex, opencode, pi, pi-signed, grok, kimi, cursor, and muse.
+  Contains verified facts for claude, codex, opencode, pi, pi-signed, grok, kimi, cursor, muse, and agy.
 user-invocable: false
 metadata:
   internal: true
@@ -42,7 +42,8 @@ Each adapter's `Busy state` row names only which semantic source that harness us
 Never dispatch a crewmate or secondmate on an unverified adapter.
 If `config/crew-harness` or `config/secondmate-harness` names an unverified adapter, tell the captain under `AGENTS.md` section 9 that the requested worker runtime is not verified yet, use firstmate's own verified runtime for current work, and ask only whether to verify the requested runtime before future use.
 Do not pause current work for that future-verification choice, and never launch an unverified adapter.
-If the captain asks for a new harness, propose verifying it first: spawn a trivial supervised task using `fm-spawn`'s raw-launch-command escape hatch, confirm every fact empirically, then record the mechanics in `fm-spawn`, its semantic busy source and trust gate in `bin/fm-busy-lib.sh`, any new composer shape, prompt glyph, or idle placeholder in `bin/fm-composer-lib.sh`'s shared screen classifier (the ONE fleet-wide owner of every composer shape and the `empty`/`pending`/`pending-unproven`/`unknown` decision - teaching it there gives every backend the shape in the same commit, and no adapter may carry its own copy), the tmux agent-process liveness classification in `bin/backends/tmux.sh` when the harness can launch a secondmate, and the verified knowledge here.
+If the captain asks for a new harness, propose verifying it first: spawn a trivial supervised task using `fm-spawn`'s raw-launch-command escape hatch, confirm every fact empirically, then record the mechanics in `fm-spawn`, its semantic busy source and trust gate in `bin/fm-busy-lib.sh`, any new composer shape, prompt glyph, or idle placeholder in `bin/fm-composer-lib.sh`'s shared screen classifier (the ONE fleet-wide owner of every composer shape and the `empty`/`pending`/`pending-unproven`/`unknown` decision - teaching it there gives every backend the shape in the same commit, and no adapter may carry its own copy), the tmux agent-process liveness classification in `bin/backends/tmux.sh` for EVERY adapter (stuck-crewmate recovery reads it too, so a crewmate-only harness needs it just as much as a secondmate-capable one), and the verified knowledge here.
+An adapter that adds a per-task state file also belongs in the fleet registries that enumerate adapters by name: `bin/fm-bootstrap.sh`'s crew-dispatch validation (the verified-harness list and its per-harness effort ceiling) and `bin/fm-teardown.sh`'s state cleanup, on both the task path and the secondmate-child path.
 
 ## Detection
 
@@ -134,6 +135,7 @@ The supported launch-profile flags below are verified locally; each row records 
 | kimi | `--model <model>` | none | Verified 2026-07-25 on Kimi Code CLI 0.29.1. |
 | cursor | `--model <model>` | none | Verified 2026-08-11 on Cursor Agent CLI 2026.08.11-e8db854. No effort flag exists, so firstmate records the requested effort in task metadata and omits it from the launch. Validate ids against `cursor-agent --list-models` rather than assuming a low/medium/high family: the live catalog carries only `-high` Grok ids. |
 | muse | `--model <model>` | `--reasoning-effort <low\|medium\|high\|xhigh>`, and `ultra` only for an explicit `max` | Verified 2026-08-05 on Muse Code 0.1.0-R708.1. The flag accepts `none\|minimal\|low\|medium\|high\|xhigh\|ultra` and defaults to `high`. `ultra` is muse's max-class level, so it is reachable only through an explicit captain `max`, never from the generic fallback; `none` and `minimal` sit below the shared vocabulary and stay unreachable. |
+| agy | `--model <model>` | `--effort <low\|medium\|high>` | Verified 2026-09-10 on Antigravity CLI (agy) 1.1.28. `--help` documents only low/medium/high; no `xhigh` or `max` exists, so the generic fallback caps at `high` rather than omitting effort, and an explicit captain request for `xhigh`/`max` is recorded in task metadata but omitted from the launch. |
 
 The concrete `harness` field owns adapter identity independently of the model provider: `harness=pi` with `model=xai/grok-*` is Pi using xAI, not `harness=grok`, and does not require Grok CLI login; `harness=grok` remains the standalone Grok Build CLI adapter.
 Likewise, `harness=cursor` with `model=cursor-grok-4.5-*` is Cursor Agent CLI routing a Grok model, not the xAI Grok Build `grok` harness.
@@ -153,6 +155,7 @@ Use the discovery surface in the current authenticated environment because suppo
 | grok | Run `grok models`, which lists the models available to the current Grok installation and account. |
 | kimi | Run `kimi provider list --json`, which lists the current provider and model configuration. |
 | cursor | Run `cursor-agent --list-models` (or the legacy `agent --list-models`), which lists the ids available to the current Cursor account. `cursor` is not the CLI name. |
+| agy | Run `agy models`, which lists the models available to the current Antigravity account (Gemini and, on this account, Claude and GPT-OSS ids alongside them - a multi-provider catalog, not Gemini-only). |
 
 For an unfamiliar harness or model namespace, establish support and provider identity from that harness's authoritative CLI help, model listing, or current documentation rather than guessing from a name or prefix.
 A listing that reaches the account and does not contain the model is concrete evidence the model is unsupported: block that candidate and quote the result.
@@ -174,6 +177,7 @@ Natural language is acceptable if uncertain.
 - grok: `/<skill>`, for example `/no-mistakes` (same form as claude). Verified end to end: grok discovers the user-level `no-mistakes` skill, `/no-mistakes` invokes it, and grok drives a real `no-mistakes axi run`. Like codex's `$`/`/` popups, typing `/<skill>` opens grok's slash-autocomplete, so a too-fast Enter selects the popup entry instead of sending, and for an argument-taking command (like `/no-mistakes`'s optional task-first argument) that first Enter only expands the popup selection into an argument-hint placeholder rather than submitting - a genuine second Enter is required (see the grok section below for the 2026-07-03 incident and fix). `fm_tmux_submit_core`'s retried Enter (used by `fm-send` on the tmux backend) handles this through the shared structural composer classifier; the herdr backend needed a dedicated fix (`fm_backend_herdr_composer_state`, docs/herdr-backend.md) because its prior delta-based verification false-positived on that same popup-close content change.
 - kimi: `/<skill>`, for example `/no-mistakes`.
 - cursor: `/<skill>`, for example `/no-mistakes`. Cursor discovers firstmate's user-level skills. Its slash popup swallows the first Enter, so a genuine second Enter submits; the shared submit retry handles it.
+- agy: `/<skill>` IS discovered and invoked correctly (verified: `/harness-adapters` autocompleted inside this repo's own worktree, which tracks `.agents/skills/`), but agy does NOT read `~/.claude/skills/` at all - see the agy section below for its three actual discovery paths. `/no-mistakes` returned "No matches" in an ordinary project worktree that has no `.agents/skills/no-mistakes/`, so this invocation is NOT yet reachable for an ordinary agy crewmate; do not dispatch a no-mistakes ship task to agy until the skill is mirrored into one of agy's own discovery paths.
 
 ## Submission acknowledgement hazards
 
@@ -537,3 +541,126 @@ A teardown refusal naming muse scratch is therefore correct behavior: inspect it
 muse is a day-0 `0.1.0` beta whose launcher polls a release channel hourly and can replace the running binary underneath the fleet, changing the process name with it.
 The captain accepted that risk, so firstmate does NOT set `MUSE_NO_AUTO_UPDATE=1`; a fleet that later wants stability can set it in the launch environment without any adapter change.
 Its plugin/hook engine reports `plugins are not available in this build` unless `MUSE_EXPERIMENTAL_PLUGINS=on`, which is why the busy source reads the session log instead of installing a hook.
+
+## agy (VERIFIED CREWMATE/SCOUT ONLY, 2026-09-10, Antigravity CLI 1.1.28)
+
+Antigravity CLI (`agy`) is a Google CLI resolving to `~/.local/bin/agy`, installed under `~/.gemini/antigravity-cli/`.
+It is a CREWMATE and SCOUT adapter only.
+`bin/fm-spawn.sh` refuses `--secondmate` on it, and it has no primary supervision protocol under `docs/supervision-protocols/`, so a firstmate primary detected as agy would fall back to the `unknown` protocol.
+
+| Fact | Value |
+|---|---|
+| Binary | `~/.local/bin/agy`, version `1.1.28`. `#{pane_current_command}` reports it directly as `agy`, no node-wrapper obfuscation to resolve (unlike cursor-agent). |
+| Launch | `-i "<prompt>"` (or `--prompt-interactive`) starts the interactive session AND submits the initial prompt in one shot. A bare positional prompt, the shape claude/grok/muse use, is NOT accepted. |
+| Busy state | Its own durable per-conversation SQLite database at `~/.gemini/antigravity-cli/conversations/<uuid>.db`. There is no hook or plugin writer of any kind (agy exposes no lifecycle, notify, or app-server surface at all - not even a disabled one, unlike muse), so nothing is armed and no busy record is ever seeded; `bin/fm-busy-lib.sh` folds it on demand, the same PULL-source shape as muse and cursor. |
+| Exit command | `/exit`; one Enter submits it, no resume hint is printed unless the session actually completed a turn. |
+| Interrupt | Single Escape, which prints `Interrupted - What should Antigravity CLI do instead?` and leaves the composer genuinely empty - no clear key needed, unlike muse. |
+| Skill invocation | `/<skill>`, the claude/grok form, but reachable ONLY through agy's own three discovery paths (see "Skill discovery" below) - it never reads `~/.claude/skills/`. |
+| Autonomy | `--dangerously-skip-permissions`, the CLI's own documented "auto-approve all tool permission requests without prompting" flag; see "Autonomy: no narrower flag found" below for why this is used despite the default interactive TUI already proceeding unprompted for the operations tried. |
+| Trust dialog | `Do you trust the contents of this project?` appears on first launch in a fresh directory, even with `--dangerously-skip-permissions`. Accept with Enter. The decision persists per path, so later spawns in the same worktree slot skip it. |
+| Composer | A BARE row bounded top and bottom by solid `─` horizontal rules (no side borders), prompt glyph a plain ASCII `>` in 256-color `38;5;111`. No idle placeholder text - the row is genuinely blank after the glyph when idle. Input longer than the pane wraps onto further rows between the same two rules, so the region is one row only when the input fits. Idle footer: `? for shortcuts`; busy footer: `esc to cancel` (present for the whole active turn, gone the instant it settles). |
+| Effort | `--effort <low\|medium\|high>`; no `xhigh` or `max` exists in `--help`. |
+| Resume | `-c`/`--continue` (most recent for the cwd) or `--conversation=<id>` (id printed on exit). Live-verified: resume restores the full transcript but does NOT preserve the original model/effort - a resumed session silently used a different default model when `--model`/`--effort` were omitted from the resume command, so a relaunch must always pass them explicitly. |
+
+### Credentials are read from the ambient environment, not a file firstmate writes
+
+agy authenticates through `GEMINI_API_KEY` (an operator-set environment variable, confirmed present on this account) or a stored OAuth credential under `~/.gemini/` (`oauth_creds.json`), obtained via the CLI's own login flow.
+Firstmate does not manage, copy, or store this credential anywhere: the launch command reads it from whatever the worker's ambient environment already provides, the same shape as muse's credential preflight except that agy needed no explicit forwarding logic in `fm-spawn` to prove it reaches the worker - the account was already authenticated end to end in every verification session.
+Never echo, log, or write `GEMINI_API_KEY`'s value anywhere, including into a brief, a merge request, or a test fixture.
+
+### Skill discovery does not include `~/.claude/skills/`
+
+The `/skills` command (agy 1.1.28) prints agy's own three discovery paths verbatim:
+
+```
+Workspace: <worktree>/.agents/skills/{skill_name}/SKILL.md
+Global:    ~/.gemini/antigravity-cli/skills/{skill_name}/SKILL.md
+Shared:    ~/.gemini/skills/{skill_name}/SKILL.md
+```
+
+None of these is `~/.claude/skills/`, where the captain's project-agnostic skills (`no-mistakes` included) actually live.
+Verified live: `/harness-adapters` autocompleted correctly with its real description when agy was launched inside firstmate's OWN worktree (which tracks `.agents/skills/harness-adapters/SKILL.md` and so matches agy's workspace-relative path by coincidence of firstmate's own layout), while `/no-mistakes` returned `No matches` in an ordinary scratch workspace with no `.agents/skills/no-mistakes/`.
+This means the `no-mistakes` skill invocation AGENTS.md section 7 relies on for every ship task is NOT reachable for an ordinary agy project crewmate today.
+Do not dispatch a no-mistakes ship task to agy until this gap is closed (mirroring the skill into one of agy's own discovery paths, most likely the Shared `~/.gemini/skills/` root, is unexplored follow-up work, not something this verification pass implemented).
+A scout dispatch, which produces a report rather than driving `/no-mistakes`, is unaffected.
+
+### Autonomy: no narrower flag found
+
+`--mode <accept-edits|plan>` is the only other permission-adjacent flag `--help` documents, and it is a plan-vs-execute TOGGLE, not a prompt-vs-skip gate: `--mode plan` visibly switches the composer to "Plan mode: research & plan only" and restricts the turn to research, while the unspecified default mode already executes tools.
+Live-verified on this account (agy 1.1.28, interactive TUI): a Bash command, a ReadURL fetch, and a file Create all proceeded with no visible approval prompt even WITHOUT `--dangerously-skip-permissions`.
+`--dangerously-skip-permissions` is kept anyway - it is the CLI's own documented "auto-approve all tool permission requests without prompting" guarantee, it matches the operator's own shell alias, and it matches the fleet-wide pattern of an explicit autonomy flag on every other adapter's launch.
+Firstmate's own prior observation that a permission-needing tool call is silently auto-denied with no output was specifically in `--print` (non-interactive, one-shot) mode, not the interactive TUI `fm-spawn` actually launches, so it does not contradict this finding; it was not independently re-verified in this pass.
+
+### Busy state reads the (step_type, status) PAIR, and has one unsolved race
+
+agy's busy code is STEP-TYPE-DEPENDENT - reading the `status` column alone gets it wrong.
+Live-measured by polling a real multi-tool-call turn at 0.5s resolution against known ground-truth timing (three sequential shell commands each holding for a known duration):
+
+| Last `steps` row | Meaning | Verdict |
+|---|---|---|
+| `(15, 8)` | a text-generation step actually running | busy |
+| `(132, 2)` | a tool-call step actually running | busy |
+| `(*, 3)` | settled, for every step_type observed | idle |
+| anything else | not measured | unknown |
+
+`status = 3` is the universal terminal value: it was the dominant terminal status for every step_type recorded on this machine (14, 15, 21, 23, 33, 98, 101, 132, 139 and others), and a single Escape settles the running row to 3 as well, so interruption is covered.
+Do NOT extend this table by inference - a step_type or status outside the measured set is `unknown`, never a guess.
+
+KNOWN LIMITATION, deliberately not closed: a turn is a sequence of step rows, and between one row settling and the next being inserted there is a real window where the last row reads settled while the turn is still going, so a poll landing there reports `idle` mid-turn.
+Every other table in the conversation database was inspected for a turn-level signal to close it - `trajectory_meta` is static single-row metadata written once at conversation creation, and `executor_metadata`, `gen_metadata`, `parent_references` and `battle_mode_infos` are opaque protobuf blobs with no discoverable status field or empty in every conversation inspected.
+None exists. Treat this as a documented gap in the same class as cursor's interrupt-ack timing variability, not a solved guarantee.
+
+### Busy-state fold depends on `sqlite3`
+
+`bin/fm-busy-lib.sh`'s agy fold shells out to the `sqlite3` CLI in read-only mode to read the conversation database's `steps` table; it degrades to `unknown` when `sqlite3` is absent rather than erroring, but a fleet machine without it loses agy's busy-state signal entirely.
+On this machine the only installed `sqlite3` came from the Android SDK's `platform-tools` bundle, not a general-purpose system package (`libsqlite3-0` is the shared library, not the CLI) - treat this as a real, unguaranteed external dependency rather than an assumed-present tool, and confirm `command -v sqlite3` on any machine this adapter is dispatched from.
+
+### Conversation binding decodes protobuf framing, not a delimiter character
+
+agy's workspace path is not exposed through any queryable column in its conversation database - it is embedded somewhere inside an opaque protobuf blob (confirmed live: `grep -a` on the raw `.db` file found the workspace path as plain bytes).
+`fm-spawn`'s sidecar (`state/<id>.agy-session`) and the busy fold's resolver therefore match at the byte level rather than on a parsed field, the same tradeoff muse's own flat JSONL metadata scan makes for a different reason.
+
+An UNANCHORED byte match is unsafe here, so do not copy one into a new adapter.
+Sibling worktrees are numbered pool slots, so `.../proj/1` is a strict byte prefix of every path under `.../proj/10`: a raw substring hit lets slot 1 bind to slot 10's conversation and report slot 10's busy state as its own for the rest of its life, since the resolution is then cached in `state/<id>.agy-session-current`.
+A trailing-byte-class anchor is not a fix either - it was measured against a real database and rejected, because the byte immediately following a genuine occurrence was an ordinary alphanumeric (`0x7a`).
+
+What the resolver actually requires is protobuf's own framing: a length-delimited field is a tag byte whose low 3 bits are wire type 2, then a base-128 varint carrying the payload's exact byte length, then the payload.
+An occurrence counts only when a valid varint ending immediately before it decodes to exactly the workspace path's byte length AND the byte before that varint is a wire-type-2 tag.
+The length alone is not enough - a coincidental equal-valued byte (an ASCII space, `0x20` = 32, before an unrelated 32-byte path captured in another task's tool output) would otherwise be accepted; all 4 genuine occurrences measured carry the tag byte.
+That guarantee was measured, not assumed - see `docs/verification/runtime-backends.md` for the collision test (0 of 18 sibling-prefix occurrences accepted, 4 of 18 own occurrences accepted).
+Within that predicate the failure direction stays safe: a missed occurrence only widens the prior-exclusion set at spawn time or leaves a conversation unresolved (`unknown`) at fold time, never binding a task to another task's conversation.
+
+### Scan the `-wal` sibling too, or the binding is blind for the whole first turn
+
+The scan must cover BOTH `<uuid>.db` and `<uuid>.db-wal`, reporting the plain `.db` path for a hit in either.
+SQLite in WAL mode leaves a live session's freshly written pages in the `-wal` until a checkpoint, so a scan restricted to `*.db` cannot see a conversation that has only just been created - which is exactly the window a crewmate's brief-consuming first turn occupies.
+The fold itself never had this problem: `sqlite3 -readonly` reads through the WAL, so only the matching scan was blind.
+
+Two measurements DISAGREED here, and resolving which one was "right" was not necessary to act:
+
+- The no-mistakes test step launched a real agy session and polled the actual `fm_busy_classify` path: `unknown agy-conversation` for a full ~7-second window in which the pane was genuinely working (02:15:15-02:15:22, footer `esc to cancel`, identity `agy/working`), with the binding resolving only at 02:15:53 - about 30 seconds AFTER that turn had already settled - when the WAL was checkpointed (`<uuid>.db` 49152 -> 196608 bytes, 0 -> 24 occurrences of the workspace path; `-wal` 589192 -> 0). `busy agy-conversation` was never once reported for turn 1.
+- A quicker manual check in a different fresh workspace did NOT reproduce the gap, because a checkpoint had already landed by the time it looked.
+
+Record both, not just the one that motivated the fix: the gap is timing-dependent, so a single lucky observation proves nothing about its absence.
+Widening the glob is correct and safe under either timing, because it only enlarges the set of FILES searched - a match is still verified by the same protobuf-framing predicate above.
+Two consequences follow from mapping a `-wal` hit back to its `.db`, and both matter: the same conversation matching in both files must be reported ONCE (a checkpointed session still writing has its path in both, and double-counting would trip the one-candidate rule and leave the task permanently unresolvable), and prior-conversation exclusion stays keyed on the single `.db` basename the spawn-time snapshot recorded, so a predecessor that is live again is still excluded.
+
+### Composer classification required extending the shared Pi-pair mechanism, not a new shape
+
+agy's composer - a single content row bounded by two solid horizontal rules - structurally collides with Pi's own separator-bounded composer shape in `bin/fm-composer-lib.sh` (a genuinely idle Pi composer also collapses to one blank row between two rules), so a live regression test already exists precisely to keep structure-without-identity from resurrecting a documented incident: an ordinary shell pane whose unrelated content happened to draw two divider-like lines around a blank one was once misread as an empty Pi composer (`tests/fm-composer-lib.test.sh`, "absent identity cannot prove blank pi pair").
+The fix therefore does NOT infer agy from shape alone.
+`bin/fm-tmux-lib.sh`'s `fm_tmux_composer_identity` probe (previously pi-only) now also recognizes a genuine `agy` foreground process and reports a real `agy<TAB>idle|working` identity tuple, exactly the same shape pi's own tuple takes; only once that identity has proven the pane IS agy does `bin/fm-composer-lib.sh`'s `_fm_composer_pi_verdict` classify the region between the rules directly from its content (agy carries none of Pi's blocked-menu-above-the-pair hazard - no such overlay was observed to leave the pair intact; agy's own slash-command popup redraws the closing rule away entirely, so the pair never matches at all when one is showing).
+Verified end to end on a live tmux pane: idle reads `empty`, unsent typed text reads `pending`, and the full existing composer suite passes with zero regressions.
+Do not restrict that region to a single content row: agy draws one row for input that fits, but a typed line longer than the pane wraps onto further rows between the SAME two rules (live-reproduced at 80 columns), and refusing those rows returns `unknown`, which makes `fm_tmux_submit_enter_core` abandon a swallowed Enter instead of retrying it - forfeiting the retry budget for exactly the long steers that need it.
+
+Nor may the pair be picked by position alone.
+While a backgrounded shell task runs, agy draws a SECOND rule-bounded strip below the live composer - a rule, a `● [HH:MM:SS] <cmd> running` row, another rule - and the shared scanner kept only the LAST pair it saw (a safe assumption for Pi, which never stacks two separator regions).
+The composer's own pair was then displaced by the task strip and every verdict degraded to `unknown`, including a genuinely empty composer; `bin/fm-send.sh` maps any non-empty/non-pending verdict to `error: text not submitted`, so the captain saw a hard delivery failure for a steer that had actually landed and was invited to resend it (live-reproduced twice, and pinned offline by `tests/fm-composer-lib.test.sh`'s "agy's running-background-task strip cannot displace its own composer pair").
+In cursor mode the pair the CURSOR sits inside is the composer's, whatever sits below it, so `_fm_composer_scan_screen` now records that pair separately from the last-pair bookkeeping the cursorless path still reads.
+A long build or test run backgrounded by a crewmate is precisely when this shape is on screen, so treat any new adapter drawing rule-bounded furniture below its composer the same way.
+
+### Version numbers in this section are "as of that observation", not a guarantee
+
+agy AUTO-UPDATED itself from 1.1.28 to 1.2.0 partway through this single verification session, without being asked, which is exactly how the background-task strip above appeared mid-session.
+Read every version number here as the version at the moment of that observation, and re-check `agy --version` at the START of a re-verification pass and again at the end.
+`docs/verification/runtime-backends.md` "Version drift observed during this pass" owns the dated record of which facts were measured on which version.

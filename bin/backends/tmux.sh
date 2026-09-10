@@ -170,6 +170,12 @@ fm_backend_tmux_classify_process_name() {  # <path> [argv0] -> agent|shell|other
     # cannot carry it either: ~/.local/bin/muse-bin-<version> has no `muse` path
     # COMPONENT, so the fm_harness_path_name fallback below never fires for it.
     muse|muse-bin-*) printf 'agent' ;;
+    # agy is exact-matched rather than globbed, the same caution as pi/
+    # pi-signed: it is short enough that a *agy* glob risks an unrelated
+    # binary. Its own comm reports as the literal, unwrapped "agy" (verified
+    # live, agy 1.1.28 - no node-wrapper obfuscation to resolve, unlike
+    # cursor-agent), so an exact match is sufficient and correct.
+    agy) printf 'agent' ;;
     *claude*|*codex*|*opencode*|*grok*|*kimi*|pi|pi-signed|pi-launcher|Pi) printf 'agent' ;;
     zsh|bash|sh|dash|ash|ksh|mksh|tcsh|csh|fish) printf 'shell' ;;
     *)

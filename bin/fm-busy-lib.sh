@@ -40,8 +40,9 @@
 #   fm-recovery      a documented recovery reset after relaunch
 # Classifier-only sources (never written into a record):
 #   endpoint-gone, herdr-native, grok-regex, muse-session-log,
-#   cursor-transcript, missing, malformed, gen-mismatch, source-mismatch,
-#   kimi-unverified, codex-unverified, capture-failed, no-target
+#   cursor-transcript, agy-conversation, missing, malformed, gen-mismatch,
+#   source-mismatch, kimi-unverified, codex-unverified, capture-failed,
+#   no-target
 #
 # Classification (fm_busy_classify): busy | idle | unknown | dead, always
 # with the producing source as the second token. Precedence:
@@ -75,6 +76,20 @@
 # no writer, no arm, and no gen, so nothing is seeded that could never be
 # cleared. See fm_busy_cursor_turn_state for the fold. Cursor's rendered
 # `ctrl+c to stop` footer is deliberately not a state source here.
+#
+# The agy (Antigravity CLI) pull source folds its own durable per-conversation
+# SQLite database (agy has no hook or plugin surface at all - not even a
+# disabled one - so unlike muse there is nothing to gate on a future build).
+# Its `steps` table live-verified (agy 1.1.28) on the (step_type, status)
+# PAIR, because the busy code is step-type dependent: (15, 8) is a running
+# text-generation step, (132, 2) a running tool call, and status 3 is the
+# universal settled value for every step_type - including after an interrupt,
+# which covers interruption the same way cursor's transcript does and Claude's
+# Stop hook does not. The fold carries one documented, deliberately unsolved
+# gap: a poll landing between one step settling and the next being inserted
+# reports idle mid-turn. See fm_busy_agy_run_state for both. agy's rendered
+# `esc to cancel` footer is deliberately not a state source here, same caveat
+# as cursor's footer above.
 #
 # Codex negotiation (fm_busy_codex_appserver_observable,
 # fm_busy_codex_hooks_verified): the approved contract prefers Codex's
@@ -822,6 +837,244 @@ fm_busy_cursor_turn_state() {  # <transcript>
   '
 }
 
+fm_busy_agy_binding_path() {  # <state-dir> <id>
+  printf '%s/%s.agy-session' "$1" "$2"
+}
+
+fm_busy_agy_cache_path() {  # <state-dir> <id>
+  printf '%s/%s.agy-session-current' "$1" "$2"
+}
+
+# _fm_busy_agy_kv_field: read one `<key>=<value>` field from an agy sidecar,
+# or fail. Both agy sidecars use the same line format.
+_fm_busy_agy_kv_field() {  # <path> <key>
+  local path=$1 key=$2 line
+  [ -f "$path" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "$key="*)
+        line=${line#"$key="}
+        [ -n "$line" ] || return 1
+        printf '%s' "$line"
+        return 0
+        ;;
+    esac
+  done < "$path"
+  return 1
+}
+
+fm_busy_agy_binding_field() {  # <state-dir> <id> <key>
+  _fm_busy_agy_kv_field "$(fm_busy_agy_binding_path "$1" "$2")" "$3"
+}
+
+fm_busy_agy_binding_has_prior() {  # <state-dir> <id> <conversation-path>
+  local path line base
+  path=$(fm_busy_agy_binding_path "$1" "$2")
+  [ -f "$path" ] || return 1
+  base=$(basename -- "$3")
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ "$line" = "prior_conversation=$base" ] && return 0
+  done < "$path"
+  return 1
+}
+
+# fm_busy_agy_matching_conversations: every conversation database directly
+# under <conversations-root> that stores <workspace-root> as a COMPLETE
+# protobuf string field. agy's workspace path is not exposed through any
+# queryable column - each database embeds it inside an opaque protobuf blob
+# (verified live, agy 1.1.28) - so the scan is byte-level rather than
+# structured, the same tradeoff muse's own flat text scan makes over its JSONL
+# metadata. A raw substring hit is NOT sufficient: sibling worktrees are
+# numbered pool slots, so `.../proj/1` occurs inside every byte sequence
+# naming `.../proj/10`, and an unanchored hit would let slot 1 bind to slot
+# 10's conversation and report its busy state as its own.
+#
+# The boundary is taken from protobuf's own framing rather than assumed from a
+# delimiter character. A length-delimited field is written as a tag byte whose
+# low 3 bits are wire type 2, then a base-128 varint holding the payload's
+# exact byte length, then the payload - so an occurrence is this task's
+# workspace only when a valid varint ending immediately before it decodes to
+# exactly the path's byte length AND the byte before that varint is a
+# wire-type-2 tag. Both halves were measured against a real database: all 4
+# genuine occurrences carry the tag byte, and requiring the length alone would
+# accept any coincidental equal-valued byte - an ASCII space (0x20 = 32)
+# before an unrelated 32-byte path inside another task's captured tool output
+# is enough to mis-bind and then cache that mis-binding for life.
+# A byte-class boundary was measured and rejected too: the byte FOLLOWING a
+# genuine occurrence was observed to be an ordinary alphanumeric (0x7a). See
+# docs/verification/runtime-backends.md for the dated collision measurement
+# (0 of 18 sibling-prefix occurrences accepted, 4 of 18 own occurrences
+# accepted). node is already this file's decoder for muse's fold and degrades
+# the same way when absent: no match, so the fold reports unknown rather than
+# guessing.
+#
+# Both `<uuid>.db` and its sibling `<uuid>.db-wal` are scanned, and either hit
+# reports the plain `<uuid>.db`. SQLite in WAL mode leaves a live session's
+# freshly written pages in the -wal until a checkpoint, so scanning only *.db
+# left the binding unresolvable for exactly as long as the first turn ran -
+# measured on a real agy 1.1.28 session as `unknown agy-conversation` for a
+# whole ~7s working window, with the binding landing ~30s later when the WAL
+# was checkpointed. Widening the glob does not weaken the anchoring above: a
+# match is still verified the same way, only in more files.
+fm_busy_agy_matching_conversations() {  # <conversations-root> <workspace-root>
+  local root=$1 ws=$2
+  [ -d "$root" ] || return 1
+  ws=${ws%/}
+  [ -n "$ws" ] || return 1
+  command -v node >/dev/null 2>&1 || return 1
+  node - "$root" "$ws" <<'NODE'
+const fs = require("fs");
+const path = require("path");
+const [root, workspace] = process.argv.slice(2);
+const needle = Buffer.from(workspace, "utf8");
+
+// True when buffer[offset] begins the payload of a length-delimited protobuf
+// field of exactly `length` bytes: a valid varint ends at buffer[offset - 1]
+// and decodes to `length`, and the byte before that varint is a wire-type-2
+// tag. Varint bytes are little-endian base-128: every byte but the last
+// carries a set continuation bit.
+function lengthPrefixed(buffer, offset, length) {
+  if (offset < 1 || (buffer[offset - 1] & 0x80) !== 0) return false;
+  for (let width = 1; width <= 5; width += 1) {
+    const start = offset - width;
+    if (start < 1) return false;
+    if (width > 1 && (buffer[start] & 0x80) === 0) return false;
+    let value = 0;
+    for (let i = 0; i < width; i += 1) {
+      value += (buffer[start + i] & 0x7f) * Math.pow(128, i);
+    }
+    if (value === length && (buffer[start - 1] & 0x07) === 2) return true;
+  }
+  return false;
+}
+
+function recordsWorkspace(file) {
+  let buffer;
+  try {
+    buffer = fs.readFileSync(file);
+  } catch {
+    return false;
+  }
+  let from = 0;
+  for (;;) {
+    const at = buffer.indexOf(needle, from);
+    if (at < 0) return false;
+    if (lengthPrefixed(buffer, at, needle.length)) return true;
+    from = at + 1;
+  }
+}
+
+let entries;
+try {
+  entries = fs.readdirSync(root, { withFileTypes: true });
+} catch {
+  entries = [];
+}
+// A live session's freshly written pages sit in the sibling `<uuid>.db-wal`
+// until SQLite checkpoints them, so both forms are scanned and a hit in
+// either names the SAME conversation: the reported path is always the plain
+// `<uuid>.db`, which sqlite3 reads through the WAL anyway. Emitting the
+// conversation once keeps the caller's one-candidate rule intact when both
+// forms match, and keeps prior-conversation exclusion keyed on one basename.
+const reported = new Set();
+for (const entry of entries) {
+  if (!entry.isFile()) continue;
+  const wal = entry.name.endsWith(".db-wal");
+  if (!wal && !entry.name.endsWith(".db")) continue;
+  const file = path.join(root, entry.name);
+  const conversation = wal ? file.slice(0, -"-wal".length) : file;
+  if (reported.has(conversation)) continue;
+  if (!recordsWorkspace(file)) continue;
+  reported.add(conversation);
+  process.stdout.write(`${conversation}\n`);
+}
+NODE
+}
+
+fm_busy_agy_cache_field() {  # <state-dir> <id> <key>
+  _fm_busy_agy_kv_field "$(fm_busy_agy_cache_path "$1" "$2")" "$3"
+}
+
+fm_busy_agy_cache_conversation() {  # <state-dir> <id> <conversation-path>
+  printf 'conversation=%s\n' "$3" > "$(fm_busy_agy_cache_path "$1" "$2")"
+}
+
+# fm_busy_agy_conversation: the ONE conversation database this pane owns, or
+# failure. A cached resolution is trusted as long as the file it names still
+# exists - agy's conversations directory is flat with no day-boundary
+# rotation to invalidate against, unlike muse's sessions tree - which keeps a
+# repeat fold from re-scanning every conversation database (some run several
+# MB) on every poll. Otherwise resolve fresh: every currently matching
+# conversation minus every one the binding recorded as already existing at
+# spawn time must leave exactly one candidate; zero or more than one is a
+# genuine ambiguity (no conversation started yet, or two tasks racing to
+# create their first conversation against the same workspace path in the same
+# window) and stays unresolved rather than guessing.
+fm_busy_agy_conversation() {  # <state-dir> <id>
+  local state=$1 id=$2 cached root ws candidate matched=0 result=
+  cached=$(fm_busy_agy_cache_field "$state" "$id" conversation 2>/dev/null || true)
+  if [ -n "$cached" ] && [ -f "$cached" ]; then
+    printf '%s' "$cached"
+    return 0
+  fi
+  root=$(fm_busy_agy_binding_field "$state" "$id" conversations_root 2>/dev/null) || return 1
+  ws=$(fm_busy_agy_binding_field "$state" "$id" workspace_root 2>/dev/null) || return 1
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    fm_busy_agy_binding_has_prior "$state" "$id" "$candidate" && continue
+    matched=$((matched + 1))
+    result=$candidate
+  done <<EOF
+$(fm_busy_agy_matching_conversations "$root" "$ws" || true)
+EOF
+  [ "$matched" -eq 1 ] || return 1
+  fm_busy_agy_cache_conversation "$state" "$id" "$result"
+  printf '%s' "$result"
+}
+
+# fm_busy_agy_run_state: busy when the LAST step recorded in <conversation-db>
+# is still running, idle when it has settled, unknown otherwise. The verdict
+# reads the (step_type, status) PAIR, because agy's busy code is step-type
+# dependent - status alone does not carry it. Live-verified (agy 1.1.28) by
+# polling a real multi-tool-call turn at 0.5s against known ground-truth
+# timing:
+#   (15, 8)   a text-generation step actually running   -> busy
+#   (132, 2)  a tool-call step actually running         -> busy
+#   (*, 3)    settled, for every observed step_type     -> idle
+# status 3 is the universal terminal value: it appeared as the dominant
+# terminal status across every step_type recorded on this machine (14, 15, 21,
+# 23, 33, 98, 101, 132, 139 and others), and it is also what a single Escape
+# settles the running row to, so interruption is covered the same way cursor's
+# transcript covers it and Claude's Stop hook does not. Every OTHER pair is
+# unknown rather than guessed - no meaning is invented for a step_type or
+# status outside the verified set.
+#
+# KNOWN LIMITATION, deliberately not solved here: a turn is a sequence of step
+# rows, and between one row settling and the next being inserted there is a
+# real window in which the last row reads settled while the turn is still
+# going. A poll landing in that window reports idle. Every other table in the
+# conversation database was inspected for a turn-level signal to close it -
+# trajectory_meta is static single-row metadata written once at conversation
+# creation, and executor_metadata, gen_metadata, parent_references and
+# battle_mode_infos are opaque protobuf blobs with no discoverable status
+# field or empty in every conversation inspected - and none exists. Treat this
+# as a documented gap in the same class as cursor's interrupt-ack timing
+# variability, not a closed guarantee.
+#
+# Read with sqlite3 -readonly, which shares the live WAL-mode file safely with
+# agy's own writer without needing a lock.
+fm_busy_agy_run_state() {  # <conversation-db>
+  local db=$1 row
+  [ -f "$db" ] || return 1
+  command -v sqlite3 >/dev/null 2>&1 || return 1
+  row=$(sqlite3 -readonly "$db" 'SELECT step_type, status FROM steps ORDER BY idx DESC LIMIT 1;' 2>/dev/null) || return 1
+  case "$row" in
+    *'|3') printf 'idle' ;;
+    '15|8'|'132|2') printf 'busy' ;;
+    *) return 1 ;;
+  esac
+}
+
 # fm_busy_grok_tail_busy: the Grok-only temporary rendered-tail fallback.
 # Consumes the tail on stdin; 0 when Grok's verified busy signature matches.
 # FM_BUSY_REGEX still globally overrides the signature, mirroring the
@@ -839,7 +1092,7 @@ fm_busy_grok_tail_busy() {
 # if available, else reports unknown capture-failed.
 fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
   local backend=$1 target=$2 harness=$3 id=$4 state=$5 tail40=${6-}
-  local out rc r_state r_source native log
+  local out rc r_state r_source native log db
   case "$harness" in
     kimi*)
       if ! fm_busy_kimi_verified; then
@@ -868,6 +1121,21 @@ fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
         busy) printf 'busy cursor-transcript' ;;
         settled) printf 'idle cursor-transcript' ;;
         *) printf 'unknown cursor-transcript' ;;
+      esac
+      return 0
+      ;;
+    agy*)
+      # Semantic, on demand: fold this task's bound conversation database.
+      # See fm_busy_agy_run_state above for the verified status mapping. The
+      # rendered `esc to cancel` footer is deliberately NOT consulted here.
+      if ! db=$(fm_busy_agy_conversation "$state" "$id"); then
+        printf 'unknown agy-conversation'
+        return 0
+      fi
+      case "$(fm_busy_agy_run_state "$db" 2>/dev/null)" in
+        busy) printf 'busy agy-conversation' ;;
+        idle) printf 'idle agy-conversation' ;;
+        *) printf 'unknown agy-conversation' ;;
       esac
       return 0
       ;;

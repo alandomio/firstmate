@@ -327,6 +327,94 @@ test_matrix_pi_separated_needs_identity() {
   pass "matrix: pi's separated composer needs identity + structure; the blank row alone never proves it"
 }
 
+# agy (Antigravity CLI) draws the identical separator-bounded shape but has no
+# blocked-menu-above-the-pair hazard of its own (verified live, agy 1.1.28).
+# Its identity comes from a real per-backend process probe
+# (bin/fm-tmux-lib.sh's fm_tmux_composer_identity, extended from pi-only),
+# never from structure alone - the same blank-row counterexample that refuses
+# pi above must also refuse a generic `none` identity here, and only an
+# actual `agy` identity tuple may classify the region between the rules,
+# however many rows the typed input wrapped onto.
+test_matrix_agy_separated_needs_identity() {
+  local screen typed wide wrapped agy_idle agy_working none
+  screen=$'transcript\n────────────────────────\n\n────────────────────────\n footer'
+  agy_idle=$(printf 'agy\tidle'); agy_working=$(printf 'agy\tworking')
+  none=$(printf 'zsh\t')
+  assert_screen "agy idle with identity" empty "$CAPS_STYLED" "$screen" '' "$agy_idle"
+  assert_screen "agy idle on tmux with identity" empty "$CAPS_TMUX" "$screen" 2 "$agy_idle"
+  assert_screen "agy pair without identity capability" unknown "$CAPS_STYLED_NOID" "$screen"
+  # The same live counterexample pi's own test pins: a plain shell's unrelated
+  # content drawing two divider-like lines around a blank one must never read
+  # empty just because a probe ran and found no pi - it must also find no agy.
+  assert_screen "sleep-pane counterexample stays unknown for agy too" unknown \
+    "$CAPS_TMUX" "$screen" 2 "$none"
+  assert_screen "probe-absent alone cannot prove blank pi-shaped pair" unknown \
+    "$CAPS_TMUX" "$screen" 2 probe-absent
+  typed=$'────────────────────────\nfix the flaky test\n────────────────────────'
+  assert_screen "agy typed" pending "$CAPS_STYLED" "$typed" '' "$agy_idle"
+  assert_screen "agy typed on tmux" pending "$CAPS_TMUX" "$typed" 1 "$agy_idle"
+  # An agy identity offers no proof for a busy turn's own composer row; the
+  # content itself still settles it (blank here), same as pi's working state
+  # would for content that happens to be genuinely blank.
+  assert_screen "agy working, composer content still classifies" empty \
+    "$CAPS_STYLED" "$screen" '' "$agy_working"
+  # Input longer than the pane WRAPS onto further rows between the same two
+  # rules (live-reproduced at 80 columns). Identity has already proven the pane
+  # is agy, so those rows must classify like any other composer content: a
+  # `pending` verdict is what keeps fm_tmux_submit_enter_core retrying a
+  # swallowed Enter, while `unknown` abandons the retry budget outright.
+  wrapped=$'────────────────────────\nrewrite the flaky delivery test so it stops depending on\nwall-clock ordering between the two panes\n────────────────────────'
+  assert_screen "agy wrapped input is pending, not unknown" pending \
+    "$CAPS_STYLED" "$wrapped" '' "$agy_idle"
+  assert_screen "agy wrapped input on tmux is pending" pending \
+    "$CAPS_TMUX" "$wrapped" 2 "$agy_idle"
+  # The same widened region, genuinely blank, is still proven empty - identity
+  # carries it, exactly as it does for the single-row shape.
+  wide=$'────────────────────────\n\n\n────────────────────────'
+  assert_screen "a wider blank pair with agy identity is empty" empty \
+    "$CAPS_STYLED" "$wide" '' "$agy_idle"
+  # Without a genuine agy identity that same wider pair stays unknown: the
+  # widened region is classified by IDENTITY, never by structure.
+  assert_screen "a wider blank pair without agy identity stays unknown" unknown \
+    "$CAPS_STYLED" "$wide" '' "$none"
+  pass "matrix: agy's separated composer needs a real identity, not structure alone"
+}
+
+# agy's BACKGROUND-TASK strip: while an async shell task runs, agy draws a
+# second rule-bounded region BELOW the live composer (a rule, a
+# `● [HH:MM:SS] <cmd> running` row, another rule). The scanner keeps only the
+# LAST pair it sees, so that strip displaced the composer's own pair and every
+# verdict degraded to `unknown` - which bin/fm-send.sh reports as
+# "text not submitted", inviting a resend of a steer that actually landed
+# (live-reproduced twice on agy 1.2.0). In cursor mode the pair the CURSOR is
+# inside is the composer's, however many pairs sit below it.
+test_matrix_agy_background_task_strip() {
+  local rule screen typed agy_idle
+  agy_idle=$(printf 'agy\tidle')
+  # Captured verbatim from a live agy 1.2.0 pane at 220 columns; the composer's
+  # own `>` row is row 7 (0-based), the strip's rules are rows 8 and 10.
+  rule=$(printf '─%.0s' $(seq 1 220))
+  screen="> Run the shell command 'sleep 90 && echo fixturebgdone' as a background task using your tools right now. Then just say fixtureok.
+
+● Bash(sleep 90 && echo fixturebgdone) (ctrl+o to expand)
+
+fixtureok
+
+$rule
+>
+$rule
+● [05:00:47] sleep 90 && echo fixturebgdone running
+$rule"
+  assert_screen "agy idle composer above a running-task strip is empty" empty \
+    "$CAPS_TMUX" "$screen" 7 "$agy_idle"
+  # The delivery-critical direction: unsent text in that same composer must
+  # still read pending so fm_tmux_submit_enter_core retries the swallowed Enter.
+  typed=${screen/$'\n>\n'/$'\n> ship the release notes\n'}
+  assert_screen "agy typed composer above a running-task strip is pending" pending \
+    "$CAPS_TMUX" "$typed" 7 "$agy_idle"
+  pass "matrix: agy's running-background-task strip cannot displace its own composer pair"
+}
+
 test_matrix_opencode_leftbar_signals() {
   # Real idle opencode: `┃`-prefixed rows holding the "Ask anything..." hint,
   # blanks, and a Build-mode footer. Two independent idle signals: the shared
@@ -618,6 +706,8 @@ test_matrix_muse_truecolor_glyph_survives_signal_loss
 test_matrix_cursor_reverse_video_placeholder_remnant
 test_matrix_herdr_halfblock_rule_bounds_bare_wrap
 test_matrix_pi_separated_needs_identity
+test_matrix_agy_separated_needs_identity
+test_matrix_agy_background_task_strip
 test_matrix_opencode_leftbar_signals
 test_matrix_grok_titled_bottom_border
 test_matrix_kimi_bordered_shell_glyph_box
