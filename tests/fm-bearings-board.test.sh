@@ -602,36 +602,64 @@ test_an_option_less_card_is_built_and_answerable_through_its_freeform_box() {
   pass "an option-less card is built and answerable through its freeform box"
 }
 
-# A bridge that takes the call and then fails it is as lossy as one that was
+# A bridge that takes the call and then throws is as lossy as one that was
 # never there, so both surfaces must refuse rather than claim a queued answer.
-test_a_failing_bridge_is_refused_like_a_missing_one() {
+test_a_throwing_bridge_is_refused_like_a_missing_one() {
   command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
-  local runtime data out kind
+  local runtime data out
   runtime="$TMP_ROOT/failing-bridge-runtime.js"
   extract_runtime_script "$ROOT/.agents/skills/bearings/assets/board-template.html" "$runtime"
 
   data="$TMP_ROOT/decision-payload.json"
   write_dom_decision_payload "$data"
-  for kind in throw reject; do
-    out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" "$kind" decision 2>&1) \
-      || fail "the DOM harness crashed on a queuePrompt that did $kind: $out"
-    [ "$(printf '%s' "$out" | jq -r .isQueued)" = "false" ] \
-      || fail "a decision card claimed queued though queuePrompt did $kind: $out"
-    [ "$(printf '%s' "$out" | jq -r .errorVisible)" = "true" ] \
-      || fail "no error was surfaced though queuePrompt did $kind: $out"
-  done
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" throw decision 2>&1) \
+    || fail "the DOM harness crashed on a queuePrompt that threw: $out"
+  [ "$(printf '%s' "$out" | jq -r .isQueued)" = "false" ] \
+    || fail "a decision card claimed queued though queuePrompt threw: $out"
+  [ "$(printf '%s' "$out" | jq -r .errorVisible)" = "true" ] \
+    || fail "no error was surfaced though queuePrompt threw: $out"
 
   data="$TMP_ROOT/dispatch-payload.json"
   write_dom_dispatch_payload "$data"
-  for kind in throw reject; do
-    out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" "$kind" dispatch 2>&1) \
-      || fail "the DOM harness crashed on a queuePrompt that did $kind: $out"
-    [ "$(printf '%s' "$out" | jq -r .isQueued)" = "false" ] \
-      || fail "the dispatch bar claimed queued though queuePrompt did $kind: $out"
-    [ "$(printf '%s' "$out" | jq -r .errorVisible)" = "true" ] \
-      || fail "no error was surfaced though queuePrompt did $kind: $out"
-  done
-  pass "a queuePrompt that throws or rejects is refused like a missing bridge"
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" throw dispatch 2>&1) \
+    || fail "the DOM harness crashed on a queuePrompt that threw: $out"
+  [ "$(printf '%s' "$out" | jq -r .isQueued)" = "false" ] \
+    || fail "the dispatch bar claimed queued though queuePrompt threw: $out"
+  [ "$(printf '%s' "$out" | jq -r .errorVisible)" = "true" ] \
+    || fail "no error was surfaced though queuePrompt threw: $out"
+  pass "a queuePrompt that throws is refused like a missing bridge"
+}
+
+# The queued mark belongs to the answer that was sent, so changing the
+# selection afterwards must take the mark - and the deal count - with it.
+test_changing_the_selection_drops_a_stale_queued_mark() {
+  command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
+  local runtime data out unanswered_stack
+  runtime="$TMP_ROOT/repick-runtime.js"
+  extract_runtime_script "$ROOT/.agents/skills/bearings/assets/board-template.html" "$runtime"
+
+  data="$TMP_ROOT/decision-payload.json"
+  write_dom_decision_payload "$data"
+  unanswered_stack=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" 0 decision 2>&1 | jq -r .stackText) \
+    || fail "the DOM harness crashed reading the unanswered stack header"
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" 1 decision-repick 2>&1) \
+    || fail "the DOM harness crashed repicking an answered card: $out"
+  [ "$(printf '%s' "$out" | jq -r .queueCalls)" = "1" ] \
+    || fail "repicking an option queued a second answer on its own: $out"
+  [ "$(printf '%s' "$out" | jq -r .isQueued)" = "false" ] \
+    || fail "a card kept its queued mark beside a selection it never sent: $out"
+  [ "$(printf '%s' "$out" | jq -r .stackText)" = "$unanswered_stack" ] \
+    || fail "the stack header still counted the repicked card as answered: $out"
+
+  data="$TMP_ROOT/dispatch-payload.json"
+  write_dom_dispatch_payload "$data"
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" 1 dispatch-repick 2>&1) \
+    || fail "the DOM harness crashed unpicking a dispatched item: $out"
+  [ "$(printf '%s' "$out" | jq -r .queueCalls)" = "1" ] \
+    || fail "changing the picks queued a second dispatch on its own: $out"
+  [ "$(printf '%s' "$out" | jq -r .isQueued)" = "false" ] \
+    || fail "the dispatch bar kept its queued mark beside picks it never sent: $out"
+  pass "changing the selection drops a stale queued mark"
 }
 
 test_build_refuses_a_template_without_exactly_one_slot() {
@@ -663,4 +691,5 @@ test_dispatch_bar_clears_a_stale_refusal_once_the_bridge_returns
 test_decision_card_drops_its_queued_mark_when_a_later_answer_is_refused
 test_dispatch_bar_drops_its_queued_mark_when_a_later_dispatch_is_refused
 test_an_option_less_card_is_built_and_answerable_through_its_freeform_box
-test_a_failing_bridge_is_refused_like_a_missing_one
+test_a_throwing_bridge_is_refused_like_a_missing_one
+test_changing_the_selection_drops_a_stale_queued_mark

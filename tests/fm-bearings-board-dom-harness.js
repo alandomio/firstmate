@@ -12,10 +12,9 @@
 // that shim, since Node's own global FormData does not support the browser's
 // `new FormData(formElement)` reflection.
 //
-// Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1|throw|reject> <mode:decision|decision-lost|dispatch|dispatch-regained|dispatch-lost>
+// Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1|throw> <mode:decision|decision-lost|decision-repick|dispatch|dispatch-regained|dispatch-lost|dispatch-repick>
 // The bridge argument picks what window.lavish.queuePrompt does: 0 withholds
-// the bridge entirely, 1 accepts the call, throw raises synchronously, and
-// reject returns an already-rejected promise.
+// the bridge entirely, 1 accepts the call, throw raises.
 // dispatch-regained is dispatch run with <bridge:0>, clicked once, then given
 // a bridge and clicked again - the captain retrying after the host runtime
 // came back. dispatch-lost is its mirror: run with <bridge:1>, clicked once,
@@ -23,18 +22,13 @@
 // lose-the-bridge-after-a-success sequence on a Captain's Call card.
 // Prints one JSON line: {"isQueued":bool,"errorVisible":bool,"errorText":str,"queueCalls":n}
 // (decision modes also report stackText, the deck header's card/answered
-// label), where errorVisible/errorText read the role="alert" .bb-limit
-// element of the surface under test. The line is printed after the
-// microtask queue drains, so a refusal routed through a rejected
-// queuePrompt promise is reflected in it.
+// label, plus hasFreeform and the text handed to queuePrompt), where
+// errorVisible/errorText read the role="alert" .bb-limit element of the
+// surface under test.
 
 "use strict";
 const fs = require("fs");
 const vm = require("vm");
-
-// a template that ignores a rejected queuePrompt is a finding for the
-// assertions to report, not a reason to take the harness down
-process.on("unhandledRejection", () => {});
 
 const [scriptFile, payloadFile, bridgeFlag, mode] = process.argv.slice(2);
 const scriptSrc = fs.readFileSync(scriptFile, "utf8");
@@ -148,7 +142,6 @@ function installBridge(kind) {
     queuePrompt: function () {
       queueCalls.push(Array.prototype.slice.call(arguments));
       if (kind === "throw") throw new Error("the bridge refused the prompt");
-      if (kind === "reject") return Promise.reject(new Error("the bridge dropped the prompt"));
       return undefined;
     },
   };
@@ -167,7 +160,7 @@ vm.createContext(sandbox);
 vm.runInContext(scriptSrc, sandbox, { filename: "board-template-runtime.js" });
 
 let snapshot;
-if (mode === "decision" || mode === "decision-lost") {
+if (mode === "decision" || mode === "decision-lost" || mode === "decision-repick") {
   const deck = registry["bb-call"];
   const card = deck.children[0];
   const form = findAll(card, (n) => n.tagName === "FORM")[0];
@@ -181,6 +174,16 @@ if (mode === "decision" || mode === "decision-lost") {
   if (mode === "decision-lost") {
     delete fakeWindow.lavish;
     form.dispatch("submit", { preventDefault() {} });
+  } else if (mode === "decision-repick") {
+    const others = findAll(form, (n) => n.tagName === "INPUT" && n.type === "radio");
+    if (others.length > 1) {
+      others[0].checked = false;
+      others[1].checked = true;
+      others[1].dispatch("change");
+    } else if (freeform) {
+      freeform.value = "on second thought";
+      freeform.dispatch("input");
+    }
   }
   const answerLimit = findAll(card, (n) => n.classList.contains("bb-limit"))[0];
   snapshot = () => ({
@@ -192,7 +195,8 @@ if (mode === "decision" || mode === "decision-lost") {
     queuedText: queueCalls.length ? String(queueCalls[queueCalls.length - 1][0]) : "",
     queueCalls: queueCalls.length,
   });
-} else if (mode === "dispatch" || mode === "dispatch-regained" || mode === "dispatch-lost") {
+} else if (mode === "dispatch" || mode === "dispatch-regained" || mode === "dispatch-lost" ||
+           mode === "dispatch-repick") {
   const bar = registry["bb-dispatch"];
   const barLimit = registry["bb-dispatch-limit"];
   const ch = registry["bb-charted"];
@@ -207,6 +211,9 @@ if (mode === "decision" || mode === "decision-lost") {
   } else if (mode === "dispatch-lost") {
     delete fakeWindow.lavish;
     barBtn.dispatch("click");
+  } else if (mode === "dispatch-repick") {
+    pick.checked = false;
+    pick.dispatch("change");
   }
   snapshot = () => ({
     isQueued: bar.classList.contains("is-queued"),
@@ -218,4 +225,4 @@ if (mode === "decision" || mode === "decision-lost") {
   throw new Error("unknown mode: " + mode);
 }
 
-setImmediate(() => process.stdout.write(JSON.stringify(snapshot()) + "\n"));
+process.stdout.write(JSON.stringify(snapshot()) + "\n");

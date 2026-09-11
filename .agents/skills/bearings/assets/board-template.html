@@ -507,11 +507,13 @@ __FM_BEARINGS_BOARD_DATA__
 
     var form = document.createElement("form");
     form.setAttribute("data-lavish-question", item.key);
+    var answerInputs = [];
     var opts = el("div", "bb-opts");
     item.options.forEach(function (o) {
       var lab = el("label", "bb-opt");
       var input = document.createElement("input");
       input.type = "radio"; input.name = "answer"; input.value = o.value;
+      answerInputs.push(input);
       lab.appendChild(input);
       var body = el("span", "bb-opt__body");
       body.appendChild(el("span", "bb-opt__label", o.label));
@@ -529,6 +531,7 @@ __FM_BEARINGS_BOARD_DATA__
     var ff = document.createElement("input");
     ff.type = "text"; ff.name = "note"; ff.className = "bb-freeform";
     ff.placeholder = item.freeform_hint || "or answer in your own words…";
+    answerInputs.push(ff);
     form.appendChild(ff);
 
     var foot = el("div", "bb-decision__foot");
@@ -552,6 +555,19 @@ __FM_BEARINGS_BOARD_DATA__
       showCard(active);
     }
 
+    /* the mark belongs to the answer that was sent: once the captain edits
+       the card again, it is no longer describing what is on screen */
+    answerInputs.forEach(function (input) {
+      ["change", "input"].forEach(function (evt) {
+        input.addEventListener(evt, function () {
+          answerLimit.classList.remove("is-visible");
+          if (!card.classList.contains("is-queued")) return;
+          card.classList.remove("is-queued");
+          showCard(cards.indexOf(card));
+        });
+      });
+    });
+
     form.addEventListener("submit", function (ev) {
       ev.preventDefault();
       answerLimit.classList.remove("is-visible");
@@ -573,9 +589,8 @@ __FM_BEARINGS_BOARD_DATA__
          captain-gated work item instead of completing a question task */
       var ctxData = { question: item.key, answer: answer };
       if (item.close) ctxData.close = item.close;
-      var handoff;
       try {
-        handoff = window.lavish.queuePrompt(
+        window.lavish.queuePrompt(
           "Captain's Call answer - " + item.title + ": " + answer,
           { tag: "choice", text: item.title + " -> " + answer, element: form,
             data: ctxData }
@@ -583,10 +598,6 @@ __FM_BEARINGS_BOARD_DATA__
       } catch (err) {
         refuseAnswer(ANSWER_BRIDGE_LOST);
         return;
-      }
-      /* a bridge that accepts the call and drops it later is still a loss */
-      if (handoff && typeof handoff.then === "function") {
-        handoff.then(null, function () { refuseAnswer(ANSWER_BRIDGE_LOST); });
       }
       card.classList.add("is-queued");
       /* deal the next card once this one is answered */
@@ -673,11 +684,14 @@ __FM_BEARINGS_BOARD_DATA__
   function pickedIds() {
     return Array.prototype.map.call(ch.querySelectorAll(".bb-pick:checked"), function (c) { return c.value; });
   }
+  /* the bar always describes the picks as they stand now, so a changed
+     selection drops the mark and the alert left by the previous one */
   function refreshBar() {
     var n = pickedIds().length;
     barCount.textContent = n ? n + " picked for dispatch" : "pick queued work to dispatch";
     barBtn.disabled = !n;
     barLimit.classList.remove("is-visible");
+    bar.classList.remove("is-queued");
   }
   /* the bar speaks its refusals through an alert of its own, so the count
      label never has to masquerade as an error */
@@ -732,7 +746,6 @@ __FM_BEARINGS_BOARD_DATA__
     refreshBar();
     barBtn.addEventListener("click", function () {
       refreshBar();
-      bar.classList.remove("is-queued");
       var ids = pickedIds();
       var dispatchAnswer = ids.join(",");
       if (!ids.length) return;
@@ -744,9 +757,8 @@ __FM_BEARINGS_BOARD_DATA__
         refuseDispatch(DISPATCH_BRIDGE_LOST);
         return;
       }
-      var handoff;
       try {
-        handoff = window.lavish.queuePrompt(
+        window.lavish.queuePrompt(
           "Dispatch order - start this queued work now: " + ids.join(", "),
           { tag: "choice", text: "Dispatch: " + ids.join(", "), element: bar,
             queueKey: "dispatch.charted",
@@ -755,13 +767,6 @@ __FM_BEARINGS_BOARD_DATA__
       } catch (err) {
         refuseDispatch(DISPATCH_BRIDGE_LOST);
         return;
-      }
-      /* a bridge that accepts the order and drops it later is still a loss */
-      if (handoff && typeof handoff.then === "function") {
-        handoff.then(null, function () {
-          bar.classList.remove("is-queued");
-          refuseDispatch(DISPATCH_BRIDGE_LOST);
-        });
       }
       bar.classList.add("is-queued");
     });
