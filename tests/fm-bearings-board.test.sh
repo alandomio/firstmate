@@ -453,6 +453,10 @@ test_dispatch_bar_refuses_to_queue_without_a_lavish_bridge() {
     || fail "the DOM harness crashed without a Lavish bridge: $out"
   [ "$(printf '%s' "$out" | jq -r .isQueued)" = "false" ] \
     || fail "the dispatch bar was marked queued with no Lavish bridge present: $out"
+  [ "$(printf '%s' "$out" | jq -r .errorVisible)" = "true" ] \
+    || fail "no error was surfaced when the Lavish bridge was missing: $out"
+  [ "$(printf '%s' "$out" | jq -r .errorText)" != "1 picked for dispatch" ] \
+    || fail "the dispatch bar kept its stale picked-count label instead of reporting the lost bridge: $out"
   [ "$(printf '%s' "$out" | jq -r .queueCalls)" = "0" ] \
     || fail "queuePrompt was somehow invoked with no bridge present: $out"
 
@@ -460,9 +464,11 @@ test_dispatch_bar_refuses_to_queue_without_a_lavish_bridge() {
     || fail "the DOM harness crashed with a Lavish bridge present: $out"
   [ "$(printf '%s' "$out" | jq -r .isQueued)" = "true" ] \
     || fail "the dispatch bar was not marked queued despite a working Lavish bridge: $out"
+  [ "$(printf '%s' "$out" | jq -r .errorVisible)" = "false" ] \
+    || fail "an error was surfaced despite a working Lavish bridge: $out"
   [ "$(printf '%s' "$out" | jq -r .queueCalls)" = "1" ] \
     || fail "queuePrompt was not invoked despite a working Lavish bridge: $out"
-  pass "the dispatch bar refuses to queue without a Lavish bridge"
+  pass "the dispatch bar refuses to queue and surfaces an error without a Lavish bridge"
 }
 
 test_build_refuses_a_template_without_exactly_one_slot() {

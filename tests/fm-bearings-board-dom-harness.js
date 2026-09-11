@@ -14,6 +14,10 @@
 //
 // Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1> <mode:decision|dispatch>
 // Prints one JSON line: {"isQueued":bool,"errorVisible":bool,"errorText":str,"queueCalls":n}
+// where errorVisible/errorText report the state of the alert element each mode
+// actually uses - the card's .bb-limit for decision mode, and the dispatch
+// bar's own count label (an error there replaces the picked-count text) for
+// dispatch mode.
 
 "use strict";
 const fs = require("fs");
@@ -164,10 +168,11 @@ if (mode === "decision") {
   pick.checked = true;
   pick.dispatch("change");
   const barBtn = registry["bb-dispatch-btn"];
+  const labelBeforeClick = barCount.textContent;
   barBtn.dispatch("click");
   result = {
     isQueued: bar.classList.contains("is-queued"),
-    errorVisible: false,
+    errorVisible: barCount.textContent !== labelBeforeClick,
     errorText: barCount.textContent,
     queueCalls: queueCalls.length,
   };
