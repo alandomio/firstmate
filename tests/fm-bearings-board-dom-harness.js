@@ -12,10 +12,11 @@
 // that shim, since Node's own global FormData does not support the browser's
 // `new FormData(formElement)` reflection.
 //
-// Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1> <mode:decision|dispatch|dispatch-regained>
+// Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1> <mode:decision|dispatch|dispatch-regained|dispatch-lost>
 // dispatch-regained is dispatch run with <bridge:0>, clicked once, then given
 // a bridge and clicked again - the captain retrying after the host runtime
-// came back.
+// came back. dispatch-lost is its mirror: run with <bridge:1>, clicked once,
+// then stripped of the bridge and clicked again.
 // Prints one JSON line: {"isQueued":bool,"errorVisible":bool,"errorText":str,"queueCalls":n}
 // where errorVisible/errorText report the state of the alert element each mode
 // actually uses - the card's .bb-limit for decision mode, and the dispatch
@@ -164,7 +165,7 @@ if (mode === "decision") {
     errorText: answerLimit.textContent,
     queueCalls: queueCalls.length,
   };
-} else if (mode === "dispatch" || mode === "dispatch-regained") {
+} else if (mode === "dispatch" || mode === "dispatch-regained" || mode === "dispatch-lost") {
   const bar = registry["bb-dispatch"];
   const barCount = registry["bb-dispatch-count"];
   const ch = registry["bb-charted"];
@@ -176,6 +177,9 @@ if (mode === "decision") {
   barBtn.dispatch("click");
   if (mode === "dispatch-regained") {
     installBridge();
+    barBtn.dispatch("click");
+  } else if (mode === "dispatch-lost") {
+    delete fakeWindow.lavish;
     barBtn.dispatch("click");
   }
   result = {

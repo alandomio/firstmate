@@ -695,6 +695,7 @@ __FM_BEARINGS_BOARD_DATA__
     refreshBar();
     barBtn.addEventListener("click", function () {
       refreshBar();
+      bar.classList.remove("is-queued");
       var ids = pickedIds();
       var dispatchAnswer = ids.join(",");
       if (!ids.length) return;
