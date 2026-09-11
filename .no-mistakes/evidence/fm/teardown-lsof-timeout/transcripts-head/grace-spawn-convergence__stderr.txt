@@ -1,0 +1,3 @@
+teardown: reaping leaked worktree process(es) for task-x1: 3214218
+teardown: reaping leaked worktree process(es) for task-x1: 3214437
+teardown: force-killing leaked worktree process(es) for task-x1: 3214437

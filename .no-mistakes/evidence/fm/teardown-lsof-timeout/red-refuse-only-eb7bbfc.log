@@ -1,0 +1,6 @@
+=== test_failed_or_capped_lsof_scan_falls_back_to_proc (bin/fm-teardown.sh @ eb7bbfc, refuse-only) ===
+not ok - lsof-capped-proc-fallback: teardown should complete through the /proc fallback: expected exit 0, got 1
+exit=1 elapsed=1s
+=== test_capped_proc_fallback_refuses_visibly (bin/fm-teardown.sh @ eb7bbfc, refuse-only) ===
+not ok - capped-proc-fallback-plain: stdout did not announce the switch to /proc
+exit=1 elapsed=2s

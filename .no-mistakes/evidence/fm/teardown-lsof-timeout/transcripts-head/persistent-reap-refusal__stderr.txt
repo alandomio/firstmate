@@ -1,0 +1,7 @@
+teardown: reaping leaked worktree process(es) for task-x1: 99999999
+teardown: force-killing leaked worktree process(es) for task-x1: 99999999
+teardown: reaping leaked worktree process(es) for task-x1: 99999999
+teardown: force-killing leaked worktree process(es) for task-x1: 99999999
+teardown: reaping leaked worktree process(es) for task-x1: 99999999
+teardown: force-killing leaked worktree process(es) for task-x1: 99999999
+REFUSED: leaked worktree processes for task-x1 remain after 3 reap attempts; preserving the worktree/tasktmp for manual inspection or retry.

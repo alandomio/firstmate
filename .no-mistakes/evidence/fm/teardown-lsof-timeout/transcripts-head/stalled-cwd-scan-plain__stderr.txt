@@ -1,0 +1,1 @@
+REFUSED: cannot determine leaked processes under /tmp/fm-teardown-tests.EXMyip/stalled-cwd-scan-plain/wt for task-x1 (lsof did not finish within 1s and /proc is not available to check directly); preserving the worktree/tasktmp for manual inspection or retry.

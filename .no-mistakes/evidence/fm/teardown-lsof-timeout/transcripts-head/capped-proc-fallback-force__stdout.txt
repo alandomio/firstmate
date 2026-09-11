@@ -1,0 +1,3 @@
+teardown: checking for leftover processes under /tmp/fm-teardown-tests.EXMyip/capped-proc-fallback-force/wt (each scan gives up after 1s)
+teardown: lsof did not finish within 1s, so the leftover-process check reads /tmp/fm-teardown-tests.EXMyip/capped-proc-fallback-force/fake-proc directly instead.
+teardown: the leftover-process check under /tmp/fm-teardown-tests.EXMyip/capped-proc-fallback-force/wt could not run: lsof did not finish within 1s and reading /proc directly did not finish within 1s. Cleanup refused, --force included, because a process may still be running in that copy; the worktree and task records are kept for a retry. FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS raises the cap.

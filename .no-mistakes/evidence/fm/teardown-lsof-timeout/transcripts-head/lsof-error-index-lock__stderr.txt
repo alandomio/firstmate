@@ -1,0 +1,10 @@
+fatal: Unable to create '/tmp/fm-teardown-tests.EXMyip/lsof-error-index-lock/project/.git/worktrees/wt/index.lock': File exists.
+teardown: worktree return failed with transient git lock (/tmp/fm-teardown-tests.EXMyip/lsof-error-index-lock/project/.git/worktrees/wt/index.lock); waiting 0s and retrying (1/3)
+fatal: Unable to create '/tmp/fm-teardown-tests.EXMyip/lsof-error-index-lock/project/.git/worktrees/wt/index.lock': File exists.
+teardown: worktree return failed with transient git lock (/tmp/fm-teardown-tests.EXMyip/lsof-error-index-lock/project/.git/worktrees/wt/index.lock); waiting 0s and retrying (2/3)
+fatal: Unable to create '/tmp/fm-teardown-tests.EXMyip/lsof-error-index-lock/project/.git/worktrees/wt/index.lock': File exists.
+teardown: worktree return failed with transient git lock (/tmp/fm-teardown-tests.EXMyip/lsof-error-index-lock/project/.git/worktrees/wt/index.lock); waiting 0s and retrying (3/3)
+fatal: Unable to create '/tmp/fm-teardown-tests.EXMyip/lsof-error-index-lock/project/.git/worktrees/wt/index.lock': File exists.
+teardown: lsof check failed: lsof: simulated failure for --
+teardown: worktree return failed: git lock /tmp/fm-teardown-tests.EXMyip/lsof-error-index-lock/project/.git/worktrees/wt/index.lock persisted across 3 retries (waiting 0s each) and is not provably stale (may belong to a live process); leaving it in place
+error: treehouse return failed for worktree /tmp/fm-teardown-tests.EXMyip/lsof-error-index-lock/wt; teardown aborted

@@ -1,0 +1,3 @@
+teardown: checking for leftover processes under /tmp/fm-teardown-tests.EXMyip/unreadable-proc-fallback-force/wt (each scan gives up after 30s)
+teardown: lsof failed, so the leftover-process check reads /tmp/fm-teardown-tests.EXMyip/unreadable-proc-fallback-force/fake-proc directly instead.
+teardown: the leftover-process check under /tmp/fm-teardown-tests.EXMyip/unreadable-proc-fallback-force/wt could not run: lsof failed and reading /proc directly failed. Cleanup refused, --force included, because a process may still be running in that copy; the worktree and task records are kept for a retry.

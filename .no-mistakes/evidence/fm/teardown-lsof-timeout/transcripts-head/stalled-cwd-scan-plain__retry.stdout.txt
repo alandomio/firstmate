@@ -1,0 +1,4 @@
+teardown: checking for leftover processes under /tmp/fm-teardown-tests.EXMyip/stalled-cwd-scan-plain/wt (each scan gives up after 30s)
+/tmp/fm-teardown-tests.EXMyip/stalled-cwd-scan-plain/project: already current
+teardown task-x1 complete (window firstmate:fm-task-x1, worktree /tmp/fm-teardown-tests.EXMyip/stalled-cwd-scan-plain/wt)
+Backlog: task-x1 just finished. Run tasks-axi done task-x1 --pr PR_URL, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.

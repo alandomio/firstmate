@@ -1,0 +1,2 @@
+teardown: checking for leftover processes under /tmp/fm-teardown-tests.EXMyip/stalled-cwd-scan-force/wt (each scan gives up after 1s)
+teardown: the leftover-process check under /tmp/fm-teardown-tests.EXMyip/stalled-cwd-scan-force/wt could not run: lsof did not finish within 1s and /proc is not available to check directly. Cleanup refused, --force included, because a process may still be running in that copy; the worktree and task records are kept for a retry. FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS raises the cap.

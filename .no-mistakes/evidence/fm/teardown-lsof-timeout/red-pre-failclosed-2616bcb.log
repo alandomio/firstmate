@@ -1,0 +1,3 @@
+=== test_unreadable_proc_fallback_refuses_visibly (bin/fm-teardown.sh @ 2616bcb, before fail-closed fix) ===
+not ok - unreadable-proc-fallback-plain: teardown should refuse when no /proc cwd link could be read: expected exit 1, got 0
+exit=1 elapsed=1s

@@ -1,0 +1,1 @@
+REFUSED: cannot determine leaked processes under /tmp/fm-teardown-tests.EXMyip/unreadable-proc-fallback-force/wt for task-x1 (lsof failed and reading /proc directly failed); preserving the worktree/tasktmp for manual inspection or retry.

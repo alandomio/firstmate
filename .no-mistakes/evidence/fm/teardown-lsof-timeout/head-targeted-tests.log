@@ -1,0 +1,17 @@
+ok - a stalled cwd scan is capped, refuses visibly on stdout, and releases the lifecycle lock (with and without --force)
+ok - a failed or capped lsof scan falls back to /proc once, still reaps the leftover process, and completes
+ok - a /proc read that stalls after a capped lsof refuses visibly within its caps (with and without --force)
+ok - a /proc read that could not read any cwd link refuses visibly instead of reporting no processes (with and without --force)
+ok - a killed teardown's lifecycle lock refuses a rival while the holder lives and is reclaimed once it dies
+ok - lsof errors leave worktree index.lock in place and refuse teardown
+ok - an erroring lsof scan with no /proc to fall back on refuses teardown and preserves the task
+ok - missing lsof falls back to reaping the tmux pane process group
+ok - a leaked descendant process rooted under the task's worktree is reaped by teardown, not left surviving
+ok - a leaked descendant process rooted under the task's per-task tasktmp is reaped by teardown too
+ok - a reused pid with a different start time is never force-killed
+ok - an exec change preserves birth identity and the process is reaped
+ok - a process spawned during grace is reaped on a later pass
+ok - persistent leaked processes refuse teardown after bounded retries
+ok - a process exiting during identity lookup does not block teardown
+ok - the run abort and the leaked-process reap both complete before the destructive worktree return
+runner finished in 51s; "ok" lines: 16, "not ok" lines: 0

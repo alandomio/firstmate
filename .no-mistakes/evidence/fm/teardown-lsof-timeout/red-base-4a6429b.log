@@ -1,0 +1,9 @@
+=== test_stalled_cwd_scan_is_bounded_and_refuses_visibly (bin/fm-teardown.sh @ 4a6429b, base) ===
+not ok - stalled-cwd-scan-plain: teardown hung on a stalled cwd scan until the 40s test guard killed it
+exit=1 elapsed=41s
+=== test_failed_or_capped_lsof_scan_falls_back_to_proc (bin/fm-teardown.sh @ 4a6429b, base) ===
+not ok - lsof-capped-proc-fallback: teardown hung until the 40s test guard killed it
+exit=1 elapsed=40s
+=== test_lsof_error_never_clears_index_lock (bin/fm-teardown.sh @ 4a6429b, base) ===
+ok - lsof errors leave worktree index.lock in place and refuse teardown
+exit=0 elapsed=1s

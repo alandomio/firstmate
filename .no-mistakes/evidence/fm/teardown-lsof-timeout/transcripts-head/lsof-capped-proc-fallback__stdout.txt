@@ -1,0 +1,5 @@
+teardown: checking for leftover processes under /tmp/fm-teardown-tests.EXMyip/lsof-capped-proc-fallback/wt (each scan gives up after 1s)
+teardown: lsof did not finish within 1s, so the leftover-process check reads /proc directly instead.
+/tmp/fm-teardown-tests.EXMyip/lsof-capped-proc-fallback/project: already current
+teardown task-x1 complete (window firstmate:fm-task-x1, worktree /tmp/fm-teardown-tests.EXMyip/lsof-capped-proc-fallback/wt)
+Backlog: task-x1 just finished. Run tasks-axi done task-x1 --pr PR_URL, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.

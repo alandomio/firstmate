@@ -1,0 +1,2 @@
+teardown: no-mistakes run for task-x1 is parked at a gate; aborting before the worker is removed
+teardown: reaping leaked worktree process(es) for task-x1: 3216704

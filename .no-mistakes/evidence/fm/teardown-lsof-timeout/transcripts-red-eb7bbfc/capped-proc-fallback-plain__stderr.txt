@@ -1,0 +1,1 @@
+REFUSED: cannot determine leaked processes under /tmp/fm-teardown-tests.uujCb0/capped-proc-fallback-plain/wt for task-x1 (lsof did not finish within 1s); preserving the worktree/tasktmp for manual inspection or retry.

@@ -1,0 +1,39 @@
+### stalled-cwd-scan-plain__stdout.txt
+teardown: the leftover-process check under /tmp/fm-teardown-tests.EXMyip/stalled-cwd-scan-plain/wt could not run: lsof did not finish within 1s and /proc is not available to check directly. Cleanup refused, --force included, because a process may still be running in that copy; the worktree and task records are kept for a retry. FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS raises the cap.
+### stalled-cwd-scan-plain__stderr.txt
+REFUSED: cannot determine leaked processes under /tmp/fm-teardown-tests.EXMyip/stalled-cwd-scan-plain/wt for task-x1 (lsof did not finish within 1s and /proc is not available to check directly); preserving the worktree/tasktmp for manual inspection or retry.
+
+### stalled-cwd-scan-force__stdout.txt
+teardown: the leftover-process check under /tmp/fm-teardown-tests.EXMyip/stalled-cwd-scan-force/wt could not run: lsof did not finish within 1s and /proc is not available to check directly. Cleanup refused, --force included, because a process may still be running in that copy; the worktree and task records are kept for a retry. FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS raises the cap.
+### stalled-cwd-scan-force__stderr.txt
+REFUSED: cannot determine leaked processes under /tmp/fm-teardown-tests.EXMyip/stalled-cwd-scan-force/wt for task-x1 (lsof did not finish within 1s and /proc is not available to check directly); preserving the worktree/tasktmp for manual inspection or retry.
+
+### lsof-capped-proc-fallback__stdout.txt
+teardown: lsof did not finish within 1s, so the leftover-process check reads /proc directly instead.
+teardown task-x1 complete (window firstmate:fm-task-x1, worktree /tmp/fm-teardown-tests.EXMyip/lsof-capped-proc-fallback/wt)
+### lsof-capped-proc-fallback__stderr.txt
+teardown: reaping leaked worktree process(es) for task-x1: 3176293
+
+### lsof-failed-proc-fallback__stdout.txt
+teardown: lsof failed, so the leftover-process check reads /proc directly instead.
+teardown task-x1 complete (window firstmate:fm-task-x1, worktree /tmp/fm-teardown-tests.EXMyip/lsof-failed-proc-fallback/wt)
+### lsof-failed-proc-fallback__stderr.txt
+teardown: reaping leaked worktree process(es) for task-x1: 3186671
+
+### capped-proc-fallback-force__stdout.txt
+teardown: lsof did not finish within 1s, so the leftover-process check reads /tmp/fm-teardown-tests.EXMyip/capped-proc-fallback-force/fake-proc directly instead.
+teardown: the leftover-process check under /tmp/fm-teardown-tests.EXMyip/capped-proc-fallback-force/wt could not run: lsof did not finish within 1s and reading /proc directly did not finish within 1s. Cleanup refused, --force included, because a process may still be running in that copy; the worktree and task records are kept for a retry. FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS raises the cap.
+### capped-proc-fallback-force__stderr.txt
+REFUSED: cannot determine leaked processes under /tmp/fm-teardown-tests.EXMyip/capped-proc-fallback-force/wt for task-x1 (lsof did not finish within 1s and reading /proc directly did not finish within 1s); preserving the worktree/tasktmp for manual inspection or retry.
+
+### unreadable-proc-fallback-force__stdout.txt
+teardown: lsof failed, so the leftover-process check reads /tmp/fm-teardown-tests.EXMyip/unreadable-proc-fallback-force/fake-proc directly instead.
+teardown: the leftover-process check under /tmp/fm-teardown-tests.EXMyip/unreadable-proc-fallback-force/wt could not run: lsof failed and reading /proc directly failed. Cleanup refused, --force included, because a process may still be running in that copy; the worktree and task records are kept for a retry.
+### unreadable-proc-fallback-force__stderr.txt
+REFUSED: cannot determine leaked processes under /tmp/fm-teardown-tests.EXMyip/unreadable-proc-fallback-force/wt for task-x1 (lsof failed and reading /proc directly failed); preserving the worktree/tasktmp for manual inspection or retry.
+
+### lsof-error-refusal__stdout.txt
+teardown: the leftover-process check under /tmp/fm-teardown-tests.EXMyip/lsof-error-refusal/wt could not run: lsof failed and /proc is not available to check directly. Cleanup refused, --force included, because a process may still be running in that copy; the worktree and task records are kept for a retry.
+### lsof-error-refusal__stderr.txt
+REFUSED: cannot determine leaked processes under /tmp/fm-teardown-tests.EXMyip/lsof-error-refusal/wt for task-x1 (lsof failed and /proc is not available to check directly); preserving the worktree/tasktmp for manual inspection or retry.
+

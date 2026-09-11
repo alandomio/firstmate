@@ -1,0 +1,4 @@
+teardown: the leftover-process check under /tmp/fm-teardown-tests.EXMyip/lsof-absent-process-group-reap/wt was skipped because lsof is not installed; background processes started there may survive cleanup, and only the task terminal's own process group is reaped where the runtime allows it.
+/tmp/fm-teardown-tests.EXMyip/lsof-absent-process-group-reap/project: already current
+teardown task-x1 complete (window firstmate:fm-task-x1, worktree /tmp/fm-teardown-tests.EXMyip/lsof-absent-process-group-reap/wt)
+Backlog: task-x1 just finished. Update data/backlog.md - move task-x1 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.

@@ -1,0 +1,2 @@
+teardown: checking for leftover processes under /tmp/fm-teardown-tests.uujCb0/capped-proc-fallback-plain/wt (each scan gives up after 1s)
+teardown: the leftover-process check under /tmp/fm-teardown-tests.uujCb0/capped-proc-fallback-plain/wt did not finish within 1s and was stopped; cleanup refused; the worktree and task records are kept for a retry (FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS raises the cap).

@@ -1,0 +1,1 @@
+REFUSED: cannot determine leaked processes under /tmp/fm-teardown-tests.EXMyip/lsof-error-refusal/wt for task-x1 (lsof failed and /proc is not available to check directly); preserving the worktree/tasktmp for manual inspection or retry.
