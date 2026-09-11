@@ -550,17 +550,20 @@ __FM_BEARINGS_BOARD_DATA__
         answerLimit.classList.add("is-visible");
         return;
       }
-      if (window.lavish && window.lavish.queuePrompt) {
-        /* close carries the composer-declared close mode: "release" frees a
-           captain-gated work item instead of completing a question task */
-        var ctxData = { question: item.key, answer: answer };
-        if (item.close) ctxData.close = item.close;
-        window.lavish.queuePrompt(
-          "Captain's Call answer - " + item.title + ": " + answer,
-          { tag: "choice", text: item.title + " -> " + answer, element: form,
-            data: ctxData }
-        );
+      if (!window.lavish || !window.lavish.queuePrompt) {
+        answerLimit.textContent = "Answer not sent - the board's connection is unavailable. Reload the board and try again.";
+        answerLimit.classList.add("is-visible");
+        return;
       }
+      /* close carries the composer-declared close mode: "release" frees a
+         captain-gated work item instead of completing a question task */
+      var ctxData = { question: item.key, answer: answer };
+      if (item.close) ctxData.close = item.close;
+      window.lavish.queuePrompt(
+        "Captain's Call answer - " + item.title + ": " + answer,
+        { tag: "choice", text: item.title + " -> " + answer, element: form,
+          data: ctxData }
+      );
       card.classList.add("is-queued");
       /* deal the next card once this one is answered */
       setTimeout(function () { showCard(active < cards.length - 1 ? active + 1 : active); }, 450);
@@ -698,14 +701,16 @@ __FM_BEARINGS_BOARD_DATA__
         refreshBar("Selection is too long to queue (512 bytes maximum). ");
         return;
       }
-      if (window.lavish && window.lavish.queuePrompt) {
-        window.lavish.queuePrompt(
-          "Dispatch order - start this queued work now: " + ids.join(", "),
-          { tag: "choice", text: "Dispatch: " + ids.join(", "), element: bar,
-            queueKey: "dispatch.charted",
-            data: { question: "dispatch.charted", answer: dispatchAnswer } }
-        );
+      if (!window.lavish || !window.lavish.queuePrompt) {
+        refreshBar("Dispatch not sent - the board's connection is unavailable. Reload the board and try again.");
+        return;
       }
+      window.lavish.queuePrompt(
+        "Dispatch order - start this queued work now: " + ids.join(", "),
+        { tag: "choice", text: "Dispatch: " + ids.join(", "), element: bar,
+          queueKey: "dispatch.charted",
+          data: { question: "dispatch.charted", answer: dispatchAnswer } }
+      );
       bar.classList.add("is-queued");
     });
   }

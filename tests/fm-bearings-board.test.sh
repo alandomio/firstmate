@@ -358,6 +358,113 @@ test_rebuild_is_idempotent_and_does_not_double_arm() {
   pass "rebuild refreshes the board in place without double-arming"
 }
 
+extract_runtime_script() {  # <template-path> <out-file>
+  # The template carries exactly two <script> blocks: the id="bearings-data"
+  # JSON payload slot, and the unlabeled runtime script this pulls out.
+  awk '/^<script>$/ { flag = 1; next } /^<\/script>$/ { if (flag) exit } flag' "$1" > "$2"
+}
+
+write_dom_decision_payload() {  # <path>
+  cat > "$1" <<'EOF'
+{
+  "schema": "fm-bearings-board.v1",
+  "home": "dom-test",
+  "generated": "2026-09-11T00:00Z",
+  "prs_live": false,
+  "captains_call": [
+    {
+      "key": "dom-harness-decision",
+      "type": "decision",
+      "repo": "sample",
+      "title": "Pick one",
+      "options": [
+        { "value": "yes", "label": "Yes" },
+        { "value": "no", "label": "No" }
+      ],
+      "allow_freeform": true
+    }
+  ],
+  "underway": [],
+  "landed": [],
+  "charted": [],
+  "charted_more": 0
+}
+EOF
+}
+
+write_dom_dispatch_payload() {  # <path>
+  cat > "$1" <<'EOF'
+{
+  "schema": "fm-bearings-board.v1",
+  "home": "dom-test",
+  "generated": "2026-09-11T00:00Z",
+  "prs_live": false,
+  "captains_call": [],
+  "underway": [],
+  "landed": [],
+  "charted": [
+    { "id": "dom-harness-charted", "repo": "sample", "title": "Queued work", "reason": "", "dispatchable": true }
+  ],
+  "charted_more": 0
+}
+EOF
+}
+
+# A lost Lavish bridge (window.lavish or window.lavish.queuePrompt absent)
+# must never let the UI claim an answer was queued: these run the template's
+# REAL runtime script, extracted verbatim, inside a minimal DOM shim
+# (fm-bearings-board-dom-harness.js) so the assertions exercise actual
+# behavior rather than the source text.
+test_decision_card_refuses_to_queue_without_a_lavish_bridge() {
+  command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
+  local runtime data out
+  runtime="$TMP_ROOT/decision-runtime.js"
+  data="$TMP_ROOT/decision-payload.json"
+  extract_runtime_script "$ROOT/.agents/skills/bearings/assets/board-template.html" "$runtime"
+  write_dom_decision_payload "$data"
+
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" 0 decision 2>&1) \
+    || fail "the DOM harness crashed without a Lavish bridge: $out"
+  [ "$(printf '%s' "$out" | jq -r .isQueued)" = "false" ] \
+    || fail "a decision card was marked queued with no Lavish bridge present: $out"
+  [ "$(printf '%s' "$out" | jq -r .errorVisible)" = "true" ] \
+    || fail "no error was surfaced when the Lavish bridge was missing: $out"
+  [ "$(printf '%s' "$out" | jq -r .queueCalls)" = "0" ] \
+    || fail "queuePrompt was somehow invoked with no bridge present: $out"
+
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" 1 decision 2>&1) \
+    || fail "the DOM harness crashed with a Lavish bridge present: $out"
+  [ "$(printf '%s' "$out" | jq -r .isQueued)" = "true" ] \
+    || fail "a decision card was not marked queued despite a working Lavish bridge: $out"
+  [ "$(printf '%s' "$out" | jq -r .queueCalls)" = "1" ] \
+    || fail "queuePrompt was not invoked despite a working Lavish bridge: $out"
+  pass "a decision card refuses to queue and surfaces an error without a Lavish bridge"
+}
+
+test_dispatch_bar_refuses_to_queue_without_a_lavish_bridge() {
+  command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
+  local runtime data out
+  runtime="$TMP_ROOT/dispatch-runtime.js"
+  data="$TMP_ROOT/dispatch-payload.json"
+  extract_runtime_script "$ROOT/.agents/skills/bearings/assets/board-template.html" "$runtime"
+  write_dom_dispatch_payload "$data"
+
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" 0 dispatch 2>&1) \
+    || fail "the DOM harness crashed without a Lavish bridge: $out"
+  [ "$(printf '%s' "$out" | jq -r .isQueued)" = "false" ] \
+    || fail "the dispatch bar was marked queued with no Lavish bridge present: $out"
+  [ "$(printf '%s' "$out" | jq -r .queueCalls)" = "0" ] \
+    || fail "queuePrompt was somehow invoked with no bridge present: $out"
+
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" 1 dispatch 2>&1) \
+    || fail "the DOM harness crashed with a Lavish bridge present: $out"
+  [ "$(printf '%s' "$out" | jq -r .isQueued)" = "true" ] \
+    || fail "the dispatch bar was not marked queued despite a working Lavish bridge: $out"
+  [ "$(printf '%s' "$out" | jq -r .queueCalls)" = "1" ] \
+    || fail "queuePrompt was not invoked despite a working Lavish bridge: $out"
+  pass "the dispatch bar refuses to queue without a Lavish bridge"
+}
+
 test_build_refuses_a_template_without_exactly_one_slot() {
   local home data rc out
   home=$(make_home badslot)
@@ -381,3 +488,5 @@ test_registration_cannot_consume_before_any_origin_binding
 test_build_does_not_bind_or_arm_when_session_start_fails
 test_rebuild_is_idempotent_and_does_not_double_arm
 test_build_refuses_a_template_without_exactly_one_slot
+test_decision_card_refuses_to_queue_without_a_lavish_bridge
+test_dispatch_bar_refuses_to_queue_without_a_lavish_bridge
