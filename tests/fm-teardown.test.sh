@@ -486,10 +486,17 @@ SH
   chmod +x "$case_dir/fakebin/lsof"
 }
 
+# fakebin/lsof stub: every lock-holder query errors. The cwd scan is a separate
+# successful empty query, so the lock check - not the leftover-process scan,
+# whose own failure falls back to /proc on Linux and refuses elsewhere - is what
+# the error reaches on every platform.
 add_lsof_error() {
   local case_dir=$1
   cat > "$case_dir/fakebin/lsof" <<'SH'
 #!/usr/bin/env bash
+case " $* " in
+  *" -d cwd "*) exit 0 ;;
+esac
 echo "lsof: simulated failure for ${1:-unknown}" >&2
 exit 2
 SH
@@ -1038,8 +1045,10 @@ test_lsof_error_never_clears_index_lock() {
   set -e
 
   expect_code 1 "$rc" "lsof-error-index-lock: teardown should refuse when lsof errors"
-  assert_grep "REFUSED: cannot determine leaked processes" "$case_dir/stderr" \
+  assert_grep "lsof check failed: lsof: simulated failure for --" "$case_dir/stderr" \
     "lsof-error-index-lock: teardown did not report the lsof failure"
+  assert_grep "is not provably stale (may belong to a live process); leaving it in place" "$case_dir/stderr" \
+    "lsof-error-index-lock: teardown did not refuse on the unproven lock"
   assert_not_contains "$(cat "$case_dir/stderr")" "removed provably-stale git lock" \
     "lsof-error-index-lock: teardown removed a lock after lsof failed"
   [ -e "$lock" ] || fail "lsof-error-index-lock: lock file was removed after lsof failed"
@@ -2316,16 +2325,20 @@ printf 'return\n' >> "$case_dir/treehouse.log"
 EOF
   chmod +x "$case_dir/fakebin/lsof" "$case_dir/fakebin/treehouse"
 
+  # No /proc to fall back on, as on macOS.
   rc=0
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  FM_PROC_ROOT_OVERRIDE="$case_dir/no-proc" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
 
   expect_code 1 "$rc" "lsof-error-refusal: teardown should refuse"
-  assert_grep "REFUSED: cannot determine leaked processes under $case_dir/wt for task-x1 (lsof failed)" "$case_dir/stderr" \
+  assert_grep "REFUSED: cannot determine leaked processes under $case_dir/wt for task-x1 (lsof failed and /proc is not available to check directly)" "$case_dir/stderr" \
     "lsof-error-refusal: teardown did not explain the lsof refusal"
+  assert_grep "leftover-process check under $case_dir/wt could not run: lsof failed and /proc is not available to check directly. Cleanup refused, --force included" "$case_dir/stdout" \
+    "lsof-error-refusal: stdout did not say which check could not run and its consequence"
   assert_present "$case_dir/wt" "lsof-error-refusal: teardown removed the worktree"
   assert_present "$case_dir/state/task-x1.meta" "lsof-error-refusal: teardown removed task metadata"
   assert_absent "$case_dir/treehouse.log" "lsof-error-refusal: teardown returned the worktree"
-  pass "an erroring lsof scan refuses teardown and preserves the task"
+  pass "an erroring lsof scan with no /proc to fall back on refuses teardown and preserves the task"
 }
 
 test_reused_pid_identity_is_not_force_killed() {
@@ -2545,11 +2558,11 @@ assert_stalled_scans_gone() {  # <case-dir> <label>
 }
 
 # A cwd scan that never answers must not wedge teardown, with or without
-# --force: the scan runs with lsof -b under a hard cap, stdout names the check
-# that did not run and its consequence, the task is preserved, and the
-# lifecycle lock is released so the retry completes instead of being refused as
-# "already running". Against an unbounded scan this case hangs until the test
-# guard kills it.
+# --force: the scan runs with lsof -b under a hard cap and, with no /proc to
+# fall back on (as on macOS), stdout names the check that did not run and its
+# consequence, the task is preserved, and the lifecycle lock is released so the
+# retry completes instead of being refused as "already running". Against an
+# unbounded scan this case hangs until the test guard kills it.
 test_stalled_cwd_scan_is_bounded_and_refuses_visibly() {
   local case_dir rc start elapsed mode label
   for mode in plain force; do
@@ -2570,7 +2583,7 @@ EOF
     start=$(date +%s)
     fm_run_timed 40 env FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$case_dir/state" \
       FM_CONFIG_OVERRIDE="$case_dir/config" PATH="$case_dir/fakebin:$PATH" \
-      FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS=1 \
+      FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS=1 FM_PROC_ROOT_OVERRIDE="$case_dir/no-proc" \
       "$TEARDOWN" task-x1 "$@" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
     elapsed=$(( $(date +%s) - start ))
 
@@ -2579,11 +2592,11 @@ EOF
     [ "$elapsed" -lt 20 ] || fail "$label: a 1s scan cap took ${elapsed}s to refuse"
     grep -Eq '(^| )-b( |$)' "$case_dir/lsof-args" \
       || fail "$label: the cwd scan did not ask lsof to avoid blocking kernel calls (-b)"
-    assert_grep "leftover-process check under $case_dir/wt did not finish within 1s" "$case_dir/stdout" \
+    assert_grep "leftover-process check under $case_dir/wt could not run: lsof did not finish within 1s and /proc is not available to check directly" "$case_dir/stdout" \
       "$label: stdout did not say which check was capped"
-    assert_grep "cleanup refused; the worktree and task records are kept" "$case_dir/stdout" \
+    assert_grep "Cleanup refused, --force included, because a process may still be running in that copy; the worktree and task records are kept for a retry." "$case_dir/stdout" \
       "$label: stdout did not state the consequence of the capped check"
-    assert_grep "REFUSED: cannot determine leaked processes under $case_dir/wt for task-x1 (lsof did not finish within 1s)" "$case_dir/stderr" \
+    assert_grep "REFUSED: cannot determine leaked processes under $case_dir/wt for task-x1 (lsof did not finish within 1s and /proc is not available to check directly)" "$case_dir/stderr" \
       "$label: stderr did not carry the refusal"
     assert_present "$case_dir/wt" "$label: teardown removed the worktree"
     assert_present "$case_dir/state/task-x1.meta" "$label: teardown removed task metadata"
@@ -2600,6 +2613,150 @@ EOF
       "$label: retry did not complete teardown"
   done
   pass "a stalled cwd scan is capped, refuses visibly on stdout, and releases the lifecycle lock (with and without --force)"
+}
+
+# fakebin/lsof stub whose cwd scan fails straight away, recording its argv and
+# pid like add_lsof_stall.
+add_lsof_failing() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/lsof" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> '$case_dir/lsof-args'
+printf '%s\n' "\$\$" >> '$case_dir/lsof-pids'
+exit 1
+EOF
+  chmod +x "$case_dir/fakebin/lsof"
+}
+
+# On Linux a failed or capped lsof scan must not strand cleanup: the rest of
+# the run reads each process's cwd under the real /proc instead, still finds
+# and reaps a leftover process in the worktree, and completes. lsof is waited
+# for once rather than on every rescan, and the switch is announced once on
+# stdout. Against a refuse-only scan both cases refuse; against an unbounded
+# scan the capped case hangs until the test guard kills it.
+test_failed_or_capped_lsof_scan_falls_back_to_proc() {
+  local case_dir rc start elapsed mode label pid survived problem
+  if [ ! -L /proc/self/cwd ]; then
+    echo "skip: no /proc on this host; the /proc fallback is Linux-only and its absence is covered by the refusal cases"
+    return 0
+  fi
+  for mode in capped failed; do
+    label="lsof-$mode-proc-fallback"
+    case_dir=$(make_case "$label")
+    write_meta "$case_dir" no-mistakes ship
+    land_shippable_commit "$case_dir"
+    if [ "$mode" = capped ]; then
+      add_lsof_stall "$case_dir"
+      problem="lsof did not finish within 1s"
+    else
+      add_lsof_failing "$case_dir"
+      problem="lsof failed"
+    fi
+    cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf 'return\n' >> "$case_dir/treehouse.log"
+EOF
+    chmod +x "$case_dir/fakebin/treehouse"
+    ( cd "$case_dir/wt" && exec sleep 300 ) &
+    pid=$!
+    disown
+    sleep 0.3
+    kill -0 "$pid" 2>/dev/null || fail "$label: setup sleeper did not start"
+
+    rc=0
+    start=$(date +%s)
+    fm_run_timed 40 env FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$case_dir/state" \
+      FM_CONFIG_OVERRIDE="$case_dir/config" PATH="$case_dir/fakebin:$PATH" \
+      FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS=1 \
+      "$TEARDOWN" task-x1 > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    elapsed=$(( $(date +%s) - start ))
+
+    survived=0
+    if kill -0 "$pid" 2>/dev/null; then
+      survived=1
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+    [ "$rc" -ne 124 ] || fail "$label: teardown hung until the 40s test guard killed it"
+    expect_code 0 "$rc" "$label: teardown should complete through the /proc fallback"
+    [ "$elapsed" -lt 20 ] || fail "$label: the /proc fallback took ${elapsed}s"
+    [ "$survived" -eq 0 ] || fail "$label: the leftover process in the worktree survived teardown"
+    assert_grep "teardown: $problem, so the leftover-process check reads /proc directly instead." "$case_dir/stdout" \
+      "$label: stdout did not announce the switch to /proc"
+    [ "$(grep -c 'reads /proc directly instead' "$case_dir/stdout")" = 1 ] \
+      || fail "$label: the switch to /proc was announced more than once"
+    [ "$(wc -l < "$case_dir/lsof-pids" | tr -d ' ')" = 1 ] \
+      || fail "$label: lsof was run again after it had already $mode"
+    assert_grep "reaping leaked worktree process" "$case_dir/stderr" \
+      "$label: teardown did not reap the leftover process"
+    assert_no_grep "REFUSED" "$case_dir/stderr" "$label: teardown refused despite the /proc fallback"
+    assert_present "$case_dir/treehouse.log" "$label: teardown did not return the worktree"
+    assert_grep "teardown task-x1 complete" "$case_dir/stdout" "$label: teardown did not complete"
+    assert_stalled_scans_gone "$case_dir" "$label"
+  done
+  pass "a failed or capped lsof scan falls back to /proc once, still reaps the leftover process, and completes"
+}
+
+# When the /proc read that replaces a capped lsof stalls too, teardown must
+# still refuse within its caps, --force included, naming both checks that did
+# not finish, and leave no stalled read behind. A fake /proc root keeps this
+# case portable; the readlink stub stalls only on that root's links and records
+# its pid with the stalled lsof's so both are checked for leftovers.
+test_capped_proc_fallback_refuses_visibly() {
+  local case_dir rc start elapsed mode label proc_root real_readlink
+  real_readlink=$(command -v readlink)
+  for mode in plain force; do
+    label="capped-proc-fallback-$mode"
+    case_dir=$(make_case "$label")
+    write_meta "$case_dir" no-mistakes ship
+    land_shippable_commit "$case_dir"
+    add_lsof_stall "$case_dir"
+    proc_root="$case_dir/fake-proc"
+    mkdir -p "$proc_root/self" "$proc_root/4242"
+    ln -s "$case_dir" "$proc_root/self/cwd"
+    ln -s "$case_dir/wt" "$proc_root/4242/cwd"
+    cat > "$case_dir/fakebin/readlink" <<EOF
+#!/usr/bin/env bash
+case "\${1:-}" in
+  '$proc_root'/*)
+    printf '%s\n' "\$\$" >> '$case_dir/lsof-pids'
+    exec sleep 300
+    ;;
+esac
+exec '$real_readlink' "\$@"
+EOF
+    cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf 'return\n' >> "$case_dir/treehouse.log"
+EOF
+    chmod +x "$case_dir/fakebin/readlink" "$case_dir/fakebin/treehouse"
+    set --
+    [ "$mode" = plain ] || set -- --force
+
+    rc=0
+    start=$(date +%s)
+    fm_run_timed 40 env FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$case_dir/state" \
+      FM_CONFIG_OVERRIDE="$case_dir/config" PATH="$case_dir/fakebin:$PATH" \
+      FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS=1 FM_PROC_ROOT_OVERRIDE="$proc_root" \
+      "$TEARDOWN" task-x1 "$@" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    elapsed=$(( $(date +%s) - start ))
+
+    [ "$rc" -ne 124 ] || fail "$label: teardown hung on a stalled /proc read until the 40s test guard killed it"
+    expect_code 1 "$rc" "$label: teardown should refuse when the /proc read is capped too"
+    [ "$elapsed" -lt 20 ] || fail "$label: two 1s caps took ${elapsed}s to refuse"
+    assert_grep "teardown: lsof did not finish within 1s, so the leftover-process check reads $proc_root directly instead." "$case_dir/stdout" \
+      "$label: stdout did not announce the switch to /proc"
+    assert_grep "leftover-process check under $case_dir/wt could not run: lsof did not finish within 1s and reading /proc directly did not finish within 1s. Cleanup refused, --force included" "$case_dir/stdout" \
+      "$label: stdout did not name both checks that did not finish"
+    assert_grep "REFUSED: cannot determine leaked processes under $case_dir/wt for task-x1 (lsof did not finish within 1s and reading /proc directly did not finish within 1s)" "$case_dir/stderr" \
+      "$label: stderr did not carry the refusal"
+    assert_present "$case_dir/wt" "$label: teardown removed the worktree"
+    assert_present "$case_dir/state/task-x1.meta" "$label: teardown removed task metadata"
+    assert_absent "$case_dir/treehouse.log" "$label: teardown returned the worktree"
+    [ "$(wc -l < "$case_dir/lsof-pids" | tr -d ' ')" -ge 2 ] \
+      || fail "$label: the /proc read never ran after lsof was capped"
+    assert_stalled_scans_gone "$case_dir" "$label"
+  done
+  pass "a /proc read that stalls after a capped lsof refuses visibly within its caps (with and without --force)"
 }
 
 # A teardown killed outright (SIGKILL, so its EXIT trap never runs) while its
@@ -2798,6 +2955,8 @@ test_exec_changed_process_is_still_reaped
 test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
 test_stalled_cwd_scan_is_bounded_and_refuses_visibly
+test_failed_or_capped_lsof_scan_falls_back_to_proc
+test_capped_proc_fallback_refuses_visibly
 test_killed_teardown_lock_is_reclaimed_only_after_holder_dies
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
