@@ -436,6 +436,8 @@ test_decision_card_refuses_to_queue_without_a_lavish_bridge() {
     || fail "the DOM harness crashed with a Lavish bridge present: $out"
   [ "$(printf '%s' "$out" | jq -r .isQueued)" = "true" ] \
     || fail "a decision card was not marked queued despite a working Lavish bridge: $out"
+  [ "$(printf '%s' "$out" | jq -r .errorVisible)" = "false" ] \
+    || fail "an error was left visible on the card despite a working Lavish bridge: $out"
   [ "$(printf '%s' "$out" | jq -r .queueCalls)" = "1" ] \
     || fail "queuePrompt was not invoked despite a working Lavish bridge: $out"
   pass "a decision card refuses to queue and surfaces an error without a Lavish bridge"
@@ -455,8 +457,6 @@ test_dispatch_bar_refuses_to_queue_without_a_lavish_bridge() {
     || fail "the dispatch bar was marked queued with no Lavish bridge present: $out"
   [ "$(printf '%s' "$out" | jq -r .errorVisible)" = "true" ] \
     || fail "no error was surfaced when the Lavish bridge was missing: $out"
-  [ "$(printf '%s' "$out" | jq -r .errorText)" != "1 picked for dispatch" ] \
-    || fail "the dispatch bar kept its stale picked-count label instead of reporting the lost bridge: $out"
   [ "$(printf '%s' "$out" | jq -r .queueCalls)" = "0" ] \
     || fail "queuePrompt was somehow invoked with no bridge present: $out"
 
@@ -469,6 +469,27 @@ test_dispatch_bar_refuses_to_queue_without_a_lavish_bridge() {
   [ "$(printf '%s' "$out" | jq -r .queueCalls)" = "1" ] \
     || fail "queuePrompt was not invoked despite a working Lavish bridge: $out"
   pass "the dispatch bar refuses to queue and surfaces an error without a Lavish bridge"
+}
+
+# A bridge that comes back mid-session must leave the bar telling one story:
+# the earlier refusal cannot outlive the dispatch that then really queued.
+test_dispatch_bar_clears_a_stale_refusal_once_the_bridge_returns() {
+  command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
+  local runtime data out
+  runtime="$TMP_ROOT/dispatch-runtime.js"
+  data="$TMP_ROOT/dispatch-payload.json"
+  extract_runtime_script "$ROOT/.agents/skills/bearings/assets/board-template.html" "$runtime"
+  write_dom_dispatch_payload "$data"
+
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" 0 dispatch-regained 2>&1) \
+    || fail "the DOM harness crashed when the bridge returned mid-session: $out"
+  [ "$(printf '%s' "$out" | jq -r .queueCalls)" = "1" ] \
+    || fail "the retried dispatch did not reach queuePrompt once the bridge returned: $out"
+  [ "$(printf '%s' "$out" | jq -r .isQueued)" = "true" ] \
+    || fail "the dispatch bar was not marked queued once the bridge returned: $out"
+  [ "$(printf '%s' "$out" | jq -r .errorVisible)" = "false" ] \
+    || fail "the dispatch bar still showed the earlier refusal beside its queued mark: $out"
+  pass "the dispatch bar drops a stale refusal once the bridge returns"
 }
 
 test_build_refuses_a_template_without_exactly_one_slot() {
@@ -496,3 +517,4 @@ test_rebuild_is_idempotent_and_does_not_double_arm
 test_build_refuses_a_template_without_exactly_one_slot
 test_decision_card_refuses_to_queue_without_a_lavish_bridge
 test_dispatch_bar_refuses_to_queue_without_a_lavish_bridge
+test_dispatch_bar_clears_a_stale_refusal_once_the_bridge_returns

@@ -12,7 +12,10 @@
 // that shim, since Node's own global FormData does not support the browser's
 // `new FormData(formElement)` reflection.
 //
-// Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1> <mode:decision|dispatch>
+// Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1> <mode:decision|dispatch|dispatch-regained>
+// dispatch-regained is dispatch run with <bridge:0>, clicked once, then given
+// a bridge and clicked again - the captain retrying after the host runtime
+// came back.
 // Prints one JSON line: {"isQueued":bool,"errorVisible":bool,"errorText":str,"queueCalls":n}
 // where errorVisible/errorText report the state of the alert element each mode
 // actually uses - the card's .bb-limit for decision mode, and the dispatch
@@ -130,9 +133,10 @@ FormDataShim.prototype.get = function (name) {
 
 const queueCalls = [];
 const fakeWindow = {};
-if (bridgeFlag === "1") {
+function installBridge() {
   fakeWindow.lavish = { queuePrompt: function () { queueCalls.push(Array.prototype.slice.call(arguments)); } };
 }
+if (bridgeFlag === "1") installBridge();
 
 const sandbox = {
   document: fakeDocument,
@@ -160,7 +164,7 @@ if (mode === "decision") {
     errorText: answerLimit.textContent,
     queueCalls: queueCalls.length,
   };
-} else if (mode === "dispatch") {
+} else if (mode === "dispatch" || mode === "dispatch-regained") {
   const bar = registry["bb-dispatch"];
   const barCount = registry["bb-dispatch-count"];
   const ch = registry["bb-charted"];
@@ -170,6 +174,10 @@ if (mode === "decision") {
   const barBtn = registry["bb-dispatch-btn"];
   const labelBeforeClick = barCount.textContent;
   barBtn.dispatch("click");
+  if (mode === "dispatch-regained") {
+    installBridge();
+    barBtn.dispatch("click");
+  }
   result = {
     isQueued: bar.classList.contains("is-queued"),
     errorVisible: barCount.textContent !== labelBeforeClick,
