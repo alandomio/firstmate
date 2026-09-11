@@ -1,0 +1,17 @@
+### Regression proof: same DOM harness, same payloads, PRE-fix vs POST-fix template runtime
+
+-- bridge ABSENT, mode=decision
+   pre-fix  : {"isQueued":true,"errorVisible":false,"errorText":"","stackText":"card 1 of 1 · 1 answered","hasFreeform":true,"queuedText":"","queueCalls":0}
+   post-fix : {"isQueued":false,"errorVisible":true,"errorText":"Answer not sent - the board's connection is unavailable. Reload the board and try again.","stackText":"card 1 of 1","hasFreeform":true,"queuedText":"","queueCalls":0}
+-- bridge THROWS, mode=decision
+   pre-fix  : UNCAUGHT Error: the bridge refused the prompt (handler aborts -> no queued mark, no error shown: the silent no-op)
+   post-fix : {"isQueued":false,"errorVisible":true,"errorText":"Answer not sent - the board's connection is unavailable. Reload the board and try again.","stackText":"card 1 of 1","hasFreeform":true,"queuedText":"Captain's Call answer - Pick one: yes","queueCalls":1}
+-- bridge ABSENT, mode=dispatch
+   pre-fix  : {"isQueued":true,"errorVisible":false,"errorText":"","queueCalls":0}
+   post-fix : {"isQueued":false,"errorVisible":true,"errorText":"Dispatch not sent - the board's connection is unavailable. Reload the board and try again.","queueCalls":0}
+-- bridge THROWS, mode=dispatch
+   pre-fix  : UNCAUGHT Error: the bridge refused the prompt (handler aborts -> no queued mark, no error shown: the silent no-op)
+   post-fix : {"isQueued":false,"errorVisible":true,"errorText":"Dispatch not sent - the board's connection is unavailable. Reload the board and try again.","queueCalls":1}
+-- card with options:[] and no allow_freeform flag reaching the renderer (mode=decision, bridge present)
+   pre-fix  : {"isQueued":false,"errorVisible":false,"errorText":"","stackText":"card 1 of 1","hasFreeform":false,"queuedText":"","queueCalls":0}
+   post-fix : {"isQueued":true,"errorVisible":false,"errorText":"","stackText":"card 1 of 1 · 1 answered","hasFreeform":true,"queuedText":"Captain's Call answer - Say it in your own words: hold this course","queueCalls":1}

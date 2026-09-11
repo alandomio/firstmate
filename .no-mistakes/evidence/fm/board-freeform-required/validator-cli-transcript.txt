@@ -1,0 +1,19 @@
+$ fm-bearings-board.sh build valid-payload.json      # all three cards carry allow_freeform: true
+  board: /tmp/fmbb.GaApS7/home/.lavish/bearings-board.html
+  served: /tmp/fmbb.GaApS7/home/.lavish/bearings-board.html
+  bound: lavish-49f440ee3d54e83b
+  already-armed: lavish-49f440ee3d54e83b
+  [exit 0]
+
+$ jq "del(.captains_call[1].allow_freeform)" valid-payload.json > no-flag.json
+$ fm-bearings-board.sh build no-flag.json
+  fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /tmp/fmbb.GaApS7/board-noflag.json
+  [exit 1]
+
+$ jq ".captains_call[1].allow_freeform = false" valid-payload.json > false-flag.json
+$ fm-bearings-board.sh build false-flag.json
+  fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /tmp/fmbb.GaApS7/board-false.json
+  [exit 1]
+
+# both refusals happened before the board on disk was touched:
+  the board on disk is still byte-identical to the one the accepted payload built
