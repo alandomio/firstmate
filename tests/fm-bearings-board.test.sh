@@ -492,6 +492,32 @@ test_dispatch_bar_clears_a_stale_refusal_once_the_bridge_returns() {
   pass "the dispatch bar drops a stale refusal once the bridge returns"
 }
 
+# The card's own mirror case: an answer the bridge refused cannot leave the
+# card - or the deal count in the stack header - claiming an earlier one.
+test_decision_card_drops_its_queued_mark_when_a_later_answer_is_refused() {
+  command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
+  local runtime data out unanswered_stack
+  runtime="$TMP_ROOT/decision-runtime.js"
+  data="$TMP_ROOT/decision-payload.json"
+  extract_runtime_script "$ROOT/.agents/skills/bearings/assets/board-template.html" "$runtime"
+  write_dom_decision_payload "$data"
+
+  unanswered_stack=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" 0 decision 2>&1 | jq -r .stackText) \
+    || fail "the DOM harness crashed reading the unanswered stack header"
+
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" 1 decision-lost 2>&1) \
+    || fail "the DOM harness crashed when the bridge died mid-session: $out"
+  [ "$(printf '%s' "$out" | jq -r .queueCalls)" = "1" ] \
+    || fail "the refused resubmit still reached queuePrompt after the bridge died: $out"
+  [ "$(printf '%s' "$out" | jq -r .errorVisible)" = "true" ] \
+    || fail "no error was surfaced when the bridge died after an earlier answer: $out"
+  [ "$(printf '%s' "$out" | jq -r .isQueued)" = "false" ] \
+    || fail "the earlier answer left its queued mark standing beside the refusal: $out"
+  [ "$(printf '%s' "$out" | jq -r .stackText)" = "$unanswered_stack" ] \
+    || fail "the stack header still counted the refused card as answered: $out"
+  pass "a decision card drops its queued mark when a later answer is refused"
+}
+
 # The mirror case: a bridge lost after a dispatch went through must not leave
 # the queued mark standing next to the refusal of the dispatch that did not.
 test_dispatch_bar_drops_its_queued_mark_when_a_later_dispatch_is_refused() {
@@ -539,4 +565,5 @@ test_build_refuses_a_template_without_exactly_one_slot
 test_decision_card_refuses_to_queue_without_a_lavish_bridge
 test_dispatch_bar_refuses_to_queue_without_a_lavish_bridge
 test_dispatch_bar_clears_a_stale_refusal_once_the_bridge_returns
+test_decision_card_drops_its_queued_mark_when_a_later_answer_is_refused
 test_dispatch_bar_drops_its_queued_mark_when_a_later_dispatch_is_refused

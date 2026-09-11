@@ -12,11 +12,12 @@
 // that shim, since Node's own global FormData does not support the browser's
 // `new FormData(formElement)` reflection.
 //
-// Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1> <mode:decision|dispatch|dispatch-regained|dispatch-lost>
+// Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1> <mode:decision|decision-lost|dispatch|dispatch-regained|dispatch-lost>
 // dispatch-regained is dispatch run with <bridge:0>, clicked once, then given
 // a bridge and clicked again - the captain retrying after the host runtime
 // came back. dispatch-lost is its mirror: run with <bridge:1>, clicked once,
-// then stripped of the bridge and clicked again.
+// then stripped of the bridge and clicked again; decision-lost is the same
+// lose-the-bridge-after-a-success sequence on a Captain's Call card.
 // Prints one JSON line: {"isQueued":bool,"errorVisible":bool,"errorText":str,"queueCalls":n}
 // where errorVisible/errorText report the state of the alert element each mode
 // actually uses - the card's .bb-limit for decision mode, and the dispatch
@@ -144,25 +145,30 @@ const sandbox = {
   window: fakeWindow,
   FormData: FormDataShim,
   TextEncoder,
-  setTimeout: () => {},
+  setTimeout: (fn) => fn(),
   console,
 };
 vm.createContext(sandbox);
 vm.runInContext(scriptSrc, sandbox, { filename: "board-template-runtime.js" });
 
 let result;
-if (mode === "decision") {
+if (mode === "decision" || mode === "decision-lost") {
   const deck = registry["bb-call"];
   const card = deck.children[0];
   const form = findAll(card, (n) => n.tagName === "FORM")[0];
   const radio = findAll(form, (n) => n.tagName === "INPUT" && n.type === "radio")[0];
   radio.checked = true;
   form.dispatch("submit", { preventDefault() {} });
+  if (mode === "decision-lost") {
+    delete fakeWindow.lavish;
+    form.dispatch("submit", { preventDefault() {} });
+  }
   const answerLimit = findAll(card, (n) => n.classList.contains("bb-limit"))[0];
   result = {
     isQueued: card.classList.contains("is-queued"),
     errorVisible: answerLimit.classList.contains("is-visible"),
     errorText: answerLimit.textContent,
+    stackText: registry["bb-stack-count"].textContent,
     queueCalls: queueCalls.length,
   };
 } else if (mode === "dispatch" || mode === "dispatch-regained" || mode === "dispatch-lost") {

@@ -536,6 +536,15 @@ __FM_BEARINGS_BOARD_DATA__
     foot.appendChild(answerLimit);
     form.appendChild(foot);
 
+    /* a refused answer never reached the bridge, so the card must stop
+       claiming the one it queued earlier - and the deal count with it */
+    function refuseAnswer(message) {
+      answerLimit.textContent = message;
+      answerLimit.classList.add("is-visible");
+      card.classList.remove("is-queued");
+      showCard(active);
+    }
+
     form.addEventListener("submit", function (ev) {
       ev.preventDefault();
       answerLimit.classList.remove("is-visible");
@@ -546,13 +555,11 @@ __FM_BEARINGS_BOARD_DATA__
       var answer = value ? (note ? value + " - " + note : value) : note;
       if (!answer) return;
       if (utf8ByteLength(answer) > 512) {
-        answerLimit.textContent = "Answer is too long to queue (512 bytes maximum).";
-        answerLimit.classList.add("is-visible");
+        refuseAnswer("Answer is too long to queue (512 bytes maximum).");
         return;
       }
       if (!window.lavish || !window.lavish.queuePrompt) {
-        answerLimit.textContent = "Answer not sent - the board's connection is unavailable. Reload the board and try again.";
-        answerLimit.classList.add("is-visible");
+        refuseAnswer("Answer not sent - the board's connection is unavailable. Reload the board and try again.");
         return;
       }
       /* close carries the composer-declared close mode: "release" frees a
