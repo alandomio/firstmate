@@ -33,7 +33,9 @@
 # Captain's Call item explicitly carries `repo`; the composer fills it from the
 # snapshot and task records wherever known, and uses null or an empty string
 # only as the deliberate genuinely-no-repo marker. In that exceptional case
-# the template may display the routing id. Anything else refuses before the
+# the template may display the routing id. Every Captain's Call item also
+# carries `allow_freeform: true`; there is no card the composer may render
+# without an open response textbox. Anything else refuses before the
 # existing board is touched.
 #
 # The board path is stable - $FM_HOME/.lavish/bearings-board.html - so a
@@ -86,7 +88,6 @@ validate_payload() {  # <data.json>
       and repo_marker
       and (.title | nonempty_string)
       and (.options | type == "array")
-      and ((.options | length) > 0 or .allow_freeform == true)
       and ([.options[]
         | type == "object"
           and (.value | slug(128))
@@ -98,7 +99,7 @@ validate_payload() {  # <data.json>
       and (optional_https_url("pr_url"))
       and (optional_string("freeform_hint"))
       and ((has("close") | not) or (.close == "done" or .close == "release"))
-      and ((has("allow_freeform") | not) or (.allow_freeform | type == "boolean"))
+      and (.allow_freeform == true)
       and ((has("recommend_value") | not)
         or ((.recommend_value | slug(128))
           and (.recommend_value as $recommend | [.options[].value] | index($recommend) != null)))

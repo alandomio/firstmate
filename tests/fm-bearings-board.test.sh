@@ -165,10 +165,14 @@ test_build_refuses_malformed_payloads_before_touching_the_board() {
   [ "$rc" -ne 0 ] || fail "a non-boolean renderer field was accepted"
 
   write_valid_payload "$data"
-  jq '.captains_call[0].options = [] | .captains_call[0].allow_freeform = false' "$data" > "$data.tmp" \
-    && mv "$data.tmp" "$data"
+  jq 'del(.captains_call[0].allow_freeform)' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
   set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
-  [ "$rc" -ne 0 ] || fail "an unanswerable captains_call item was accepted"
+  [ "$rc" -ne 0 ] || fail "a captains_call item with no allow_freeform was accepted"
+
+  write_valid_payload "$data"
+  jq '.captains_call[0].allow_freeform = false' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a captains_call item with allow_freeform false was accepted"
 
   write_valid_payload "$data"
   jq '.captains_call[1].pr_url = "javascript:alert(1)"' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
