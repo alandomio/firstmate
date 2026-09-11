@@ -333,6 +333,7 @@ a { color: inherit; text-decoration: none; }
       <div class="bb-rows" id="bb-charted"></div>
       <div class="bb-dispatch" id="bb-dispatch" hidden>
         <span class="bb-dispatch__count" id="bb-dispatch-count">nothing picked</span>
+        <span class="bb-limit" id="bb-dispatch-limit" role="alert"></span>
         <span class="bb-queued" id="bb-dispatch-queued">
           <svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
           queued
@@ -458,6 +459,12 @@ __FM_BEARINGS_BOARD_DATA__
   document.getElementById("bb-call-sub").textContent =
     callTotal ? callTotal + " item" + (callTotal === 1 ? "" : "s") + " wait on you, captain" : "nothing needs you, captain";
 
+  /* Reload, not rebuild: window.lavish is injected by the Lavish host runtime,
+     and rebuilding the board re-establishes that session - the very action
+     that was seen orphaning a queued answer live. renderBoardError's "ask
+     firstmate to rebuild" idiom is therefore wrong advice on this path. */
+  var ANSWER_BRIDGE_LOST = "Answer not sent - the board's connection is unavailable. Reload the board and try again.";
+
   /* Captain's Call deck: every item renders as the same full card */
   var deck = document.getElementById("bb-call");
   function ctxRow(k, v, rec) {
@@ -517,12 +524,12 @@ __FM_BEARINGS_BOARD_DATA__
     });
     form.appendChild(opts);
 
-    if (item.allow_freeform) {
-      var ff = document.createElement("input");
-      ff.type = "text"; ff.name = "note"; ff.className = "bb-freeform";
-      ff.placeholder = item.freeform_hint || "or answer in your own words…";
-      form.appendChild(ff);
-    }
+    /* every card carries the box: the payload contract requires it, and a
+       payload that somehow lost the flag still must not strand the captain */
+    var ff = document.createElement("input");
+    ff.type = "text"; ff.name = "note"; ff.className = "bb-freeform";
+    ff.placeholder = item.freeform_hint || "or answer in your own words…";
+    form.appendChild(ff);
 
     var foot = el("div", "bb-decision__foot");
     var btn = el("button", "fm-btn fm-btn--sm " + (item.type === "merge" ? "fm-btn--gold" : "fm-btn--primary"), "Queue answer");
@@ -559,18 +566,28 @@ __FM_BEARINGS_BOARD_DATA__
         return;
       }
       if (!window.lavish || !window.lavish.queuePrompt) {
-        refuseAnswer("Answer not sent - the board's connection is unavailable. Reload the board and try again.");
+        refuseAnswer(ANSWER_BRIDGE_LOST);
         return;
       }
       /* close carries the composer-declared close mode: "release" frees a
          captain-gated work item instead of completing a question task */
       var ctxData = { question: item.key, answer: answer };
       if (item.close) ctxData.close = item.close;
-      window.lavish.queuePrompt(
-        "Captain's Call answer - " + item.title + ": " + answer,
-        { tag: "choice", text: item.title + " -> " + answer, element: form,
-          data: ctxData }
-      );
+      var handoff;
+      try {
+        handoff = window.lavish.queuePrompt(
+          "Captain's Call answer - " + item.title + ": " + answer,
+          { tag: "choice", text: item.title + " -> " + answer, element: form,
+            data: ctxData }
+        );
+      } catch (err) {
+        refuseAnswer(ANSWER_BRIDGE_LOST);
+        return;
+      }
+      /* a bridge that accepts the call and drops it later is still a loss */
+      if (handoff && typeof handoff.then === "function") {
+        handoff.then(null, function () { refuseAnswer(ANSWER_BRIDGE_LOST); });
+      }
       card.classList.add("is-queued");
       /* deal the next card once this one is answered */
       setTimeout(function () { showCard(active < cards.length - 1 ? active + 1 : active); }, 450);
@@ -649,17 +666,29 @@ __FM_BEARINGS_BOARD_DATA__
   var ch = document.getElementById("bb-charted");
   var bar = document.getElementById("bb-dispatch");
   var barCount = document.getElementById("bb-dispatch-count");
+  var barLimit = document.getElementById("bb-dispatch-limit");
   var barBtn = document.getElementById("bb-dispatch-btn");
   var anyPickable = false;
 
   function pickedIds() {
     return Array.prototype.map.call(ch.querySelectorAll(".bb-pick:checked"), function (c) { return c.value; });
   }
-  function refreshBar(limitMessage) {
+  function refreshBar() {
     var n = pickedIds().length;
-    barCount.textContent = limitMessage || (n ? n + " picked for dispatch" : "pick queued work to dispatch");
+    barCount.textContent = n ? n + " picked for dispatch" : "pick queued work to dispatch";
     barBtn.disabled = !n;
+    barLimit.classList.remove("is-visible");
   }
+  /* the bar speaks its refusals through an alert of its own, so the count
+     label never has to masquerade as an error */
+  function refuseDispatch(message) {
+    barLimit.textContent = message;
+    barLimit.classList.add("is-visible");
+  }
+  /* same reason the card says reload rather than rebuild: a rebuild restarts
+     the Lavish session that carries the queue, and that is what was seen
+     orphaning an order live */
+  var DISPATCH_BRIDGE_LOST = "Dispatch not sent - the board's connection is unavailable. Reload the board and try again.";
 
   if (!data.charted.length) ch.appendChild(el("div", "bb-empty", "Nothing is queued."));
   data.charted.forEach(function (t) {
@@ -672,7 +701,8 @@ __FM_BEARINGS_BOARD_DATA__
       pick.addEventListener("change", function () {
         if (pick.checked && utf8ByteLength(pickedIds().join(",")) > 512) {
           pick.checked = false;
-          refreshBar("Selection limit reached (512 bytes maximum). ");
+          refreshBar();
+          refuseDispatch("Selection limit reached (512 bytes maximum).");
           return;
         }
         refreshBar();
@@ -707,19 +737,32 @@ __FM_BEARINGS_BOARD_DATA__
       var dispatchAnswer = ids.join(",");
       if (!ids.length) return;
       if (utf8ByteLength(dispatchAnswer) > 512) {
-        refreshBar("Selection is too long to queue (512 bytes maximum). ");
+        refuseDispatch("Selection is too long to queue (512 bytes maximum).");
         return;
       }
       if (!window.lavish || !window.lavish.queuePrompt) {
-        refreshBar("Dispatch not sent - the board's connection is unavailable. Reload the board and try again.");
+        refuseDispatch(DISPATCH_BRIDGE_LOST);
         return;
       }
-      window.lavish.queuePrompt(
-        "Dispatch order - start this queued work now: " + ids.join(", "),
-        { tag: "choice", text: "Dispatch: " + ids.join(", "), element: bar,
-          queueKey: "dispatch.charted",
-          data: { question: "dispatch.charted", answer: dispatchAnswer } }
-      );
+      var handoff;
+      try {
+        handoff = window.lavish.queuePrompt(
+          "Dispatch order - start this queued work now: " + ids.join(", "),
+          { tag: "choice", text: "Dispatch: " + ids.join(", "), element: bar,
+            queueKey: "dispatch.charted",
+            data: { question: "dispatch.charted", answer: dispatchAnswer } }
+        );
+      } catch (err) {
+        refuseDispatch(DISPATCH_BRIDGE_LOST);
+        return;
+      }
+      /* a bridge that accepts the order and drops it later is still a loss */
+      if (handoff && typeof handoff.then === "function") {
+        handoff.then(null, function () {
+          bar.classList.remove("is-queued");
+          refuseDispatch(DISPATCH_BRIDGE_LOST);
+        });
+      }
       bar.classList.add("is-queued");
     });
   }

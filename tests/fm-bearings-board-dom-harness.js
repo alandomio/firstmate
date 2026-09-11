@@ -12,21 +12,29 @@
 // that shim, since Node's own global FormData does not support the browser's
 // `new FormData(formElement)` reflection.
 //
-// Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1> <mode:decision|decision-lost|dispatch|dispatch-regained|dispatch-lost>
+// Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1|throw|reject> <mode:decision|decision-lost|dispatch|dispatch-regained|dispatch-lost>
+// The bridge argument picks what window.lavish.queuePrompt does: 0 withholds
+// the bridge entirely, 1 accepts the call, throw raises synchronously, and
+// reject returns an already-rejected promise.
 // dispatch-regained is dispatch run with <bridge:0>, clicked once, then given
 // a bridge and clicked again - the captain retrying after the host runtime
 // came back. dispatch-lost is its mirror: run with <bridge:1>, clicked once,
 // then stripped of the bridge and clicked again; decision-lost is the same
 // lose-the-bridge-after-a-success sequence on a Captain's Call card.
 // Prints one JSON line: {"isQueued":bool,"errorVisible":bool,"errorText":str,"queueCalls":n}
-// where errorVisible/errorText report the state of the alert element each mode
-// actually uses - the card's .bb-limit for decision mode, and the dispatch
-// bar's own count label (an error there replaces the picked-count text) for
-// dispatch mode.
+// (decision modes also report stackText, the deck header's card/answered
+// label), where errorVisible/errorText read the role="alert" .bb-limit
+// element of the surface under test. The line is printed after the
+// microtask queue drains, so a refusal routed through a rejected
+// queuePrompt promise is reflected in it.
 
 "use strict";
 const fs = require("fs");
 const vm = require("vm");
+
+// a template that ignores a rejected queuePrompt is a finding for the
+// assertions to report, not a reason to take the harness down
+process.on("unhandledRejection", () => {});
 
 const [scriptFile, payloadFile, bridgeFlag, mode] = process.argv.slice(2);
 const scriptSrc = fs.readFileSync(scriptFile, "utf8");
@@ -102,7 +110,7 @@ function findAll(root, pred, out) {
 const registry = {};
 ["bb-provenance", "bb-stats", "bb-call-sub", "bb-call", "bb-stack-count", "bb-stack-prev",
   "bb-stack-next", "bb-underway", "bb-landed", "bb-charted", "bb-charted-sub", "bb-dispatch",
-  "bb-dispatch-count", "bb-dispatch-btn"].forEach((id) => { registry[id] = new FakeNode("div"); });
+  "bb-dispatch-count", "bb-dispatch-limit", "bb-dispatch-btn"].forEach((id) => { registry[id] = new FakeNode("div"); });
 // stackNav = stackCount.parentNode in the real script - give it a wrapper so
 // that property resolves the same way it would in the shipped page.
 const stackNav = new FakeNode("div");
@@ -135,10 +143,17 @@ FormDataShim.prototype.get = function (name) {
 
 const queueCalls = [];
 const fakeWindow = {};
-function installBridge() {
-  fakeWindow.lavish = { queuePrompt: function () { queueCalls.push(Array.prototype.slice.call(arguments)); } };
+function installBridge(kind) {
+  fakeWindow.lavish = {
+    queuePrompt: function () {
+      queueCalls.push(Array.prototype.slice.call(arguments));
+      if (kind === "throw") throw new Error("the bridge refused the prompt");
+      if (kind === "reject") return Promise.reject(new Error("the bridge dropped the prompt"));
+      return undefined;
+    },
+  };
 }
-if (bridgeFlag === "1") installBridge();
+if (bridgeFlag !== "0") installBridge(bridgeFlag);
 
 const sandbox = {
   document: fakeDocument,
@@ -151,51 +166,56 @@ const sandbox = {
 vm.createContext(sandbox);
 vm.runInContext(scriptSrc, sandbox, { filename: "board-template-runtime.js" });
 
-let result;
+let snapshot;
 if (mode === "decision" || mode === "decision-lost") {
   const deck = registry["bb-call"];
   const card = deck.children[0];
   const form = findAll(card, (n) => n.tagName === "FORM")[0];
   const radio = findAll(form, (n) => n.tagName === "INPUT" && n.type === "radio")[0];
-  radio.checked = true;
+  const freeform = findAll(form, (n) => n.classList.contains("bb-freeform"))[0];
+  // an option card is answered by its radio; an option-less one can only be
+  // answered through the freeform box, which is the point of that shape
+  if (radio) radio.checked = true;
+  else if (freeform) freeform.value = "hold this course";
   form.dispatch("submit", { preventDefault() {} });
   if (mode === "decision-lost") {
     delete fakeWindow.lavish;
     form.dispatch("submit", { preventDefault() {} });
   }
   const answerLimit = findAll(card, (n) => n.classList.contains("bb-limit"))[0];
-  result = {
+  snapshot = () => ({
     isQueued: card.classList.contains("is-queued"),
     errorVisible: answerLimit.classList.contains("is-visible"),
     errorText: answerLimit.textContent,
     stackText: registry["bb-stack-count"].textContent,
+    hasFreeform: Boolean(freeform),
+    queuedText: queueCalls.length ? String(queueCalls[queueCalls.length - 1][0]) : "",
     queueCalls: queueCalls.length,
-  };
+  });
 } else if (mode === "dispatch" || mode === "dispatch-regained" || mode === "dispatch-lost") {
   const bar = registry["bb-dispatch"];
-  const barCount = registry["bb-dispatch-count"];
+  const barLimit = registry["bb-dispatch-limit"];
   const ch = registry["bb-charted"];
   const pick = findAll(ch, (n) => n.classList.contains("bb-pick"))[0];
   pick.checked = true;
   pick.dispatch("change");
   const barBtn = registry["bb-dispatch-btn"];
-  const labelBeforeClick = barCount.textContent;
   barBtn.dispatch("click");
   if (mode === "dispatch-regained") {
-    installBridge();
+    installBridge("1");
     barBtn.dispatch("click");
   } else if (mode === "dispatch-lost") {
     delete fakeWindow.lavish;
     barBtn.dispatch("click");
   }
-  result = {
+  snapshot = () => ({
     isQueued: bar.classList.contains("is-queued"),
-    errorVisible: barCount.textContent !== labelBeforeClick,
-    errorText: barCount.textContent,
+    errorVisible: barLimit.classList.contains("is-visible"),
+    errorText: barLimit.textContent,
     queueCalls: queueCalls.length,
-  };
+  });
 } else {
   throw new Error("unknown mode: " + mode);
 }
 
-process.stdout.write(JSON.stringify(result) + "\n");
+setImmediate(() => process.stdout.write(JSON.stringify(snapshot()) + "\n"));

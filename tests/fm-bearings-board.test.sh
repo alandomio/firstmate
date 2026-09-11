@@ -392,6 +392,34 @@ write_dom_decision_payload() {  # <path>
 EOF
 }
 
+# The shape the freeform rule unlocks: no options at all, answerable only
+# through the response box every card must carry.
+write_dom_freeform_only_payload() {  # <path>
+  cat > "$1" <<'EOF'
+{
+  "schema": "fm-bearings-board.v1",
+  "home": "dom-test",
+  "generated": "2026-09-11T00:00Z",
+  "prs_live": false,
+  "captains_call": [
+    {
+      "key": "dom-harness-freeform-only",
+      "type": "decision",
+      "repo": "sample",
+      "title": "Say it in your own words",
+      "options": [],
+      "allow_freeform": true,
+      "freeform_hint": "your orders, captain"
+    }
+  ],
+  "underway": [],
+  "landed": [],
+  "charted": [],
+  "charted_more": 0
+}
+EOF
+}
+
 write_dom_dispatch_payload() {  # <path>
   cat > "$1" <<'EOF'
 {
@@ -539,6 +567,73 @@ test_dispatch_bar_drops_its_queued_mark_when_a_later_dispatch_is_refused() {
   pass "the dispatch bar drops its queued mark when a later dispatch is refused"
 }
 
+test_an_option_less_card_is_built_and_answerable_through_its_freeform_box() {
+  local home data rc out
+  home=$(make_home freeformonly)
+  data="$home/payload.json"
+  write_dom_freeform_only_payload "$data"
+  set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
+  [ "$rc" -eq 0 ] || fail "a captains_call item with no options but allow_freeform was refused: $out"
+
+  command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
+  local runtime
+  runtime="$TMP_ROOT/freeform-only-runtime.js"
+  extract_runtime_script "$ROOT/.agents/skills/bearings/assets/board-template.html" "$runtime"
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" 1 decision 2>&1) \
+    || fail "the DOM harness crashed on an option-less card: $out"
+  [ "$(printf '%s' "$out" | jq -r .hasFreeform)" = "true" ] \
+    || fail "an option-less card rendered without a response box: $out"
+  [ "$(printf '%s' "$out" | jq -r .queueCalls)" = "1" ] \
+    || fail "a freeform-only answer never reached queuePrompt: $out"
+  [ "$(printf '%s' "$out" | jq -r .isQueued)" = "true" ] \
+    || fail "a freeform-only card was not marked queued after answering: $out"
+  case "$(printf '%s' "$out" | jq -r .queuedText)" in
+    *"hold this course"*) : ;;
+    *) fail "the queued answer did not carry the words typed into the box: $out" ;;
+  esac
+
+  # the validator keeps allow_freeform out of a composer's hands, but a card
+  # reaching the renderer without it must still give the captain the box
+  jq 'del(.captains_call[0].allow_freeform)' "$data" > "$data.noflag"
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data.noflag" 1 decision 2>&1) \
+    || fail "the DOM harness crashed on a card with no allow_freeform flag: $out"
+  [ "$(printf '%s' "$out" | jq -r .hasFreeform)" = "true" ] \
+    || fail "a card reaching the renderer without allow_freeform lost its response box: $out"
+  pass "an option-less card is built and answerable through its freeform box"
+}
+
+# A bridge that takes the call and then fails it is as lossy as one that was
+# never there, so both surfaces must refuse rather than claim a queued answer.
+test_a_failing_bridge_is_refused_like_a_missing_one() {
+  command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
+  local runtime data out kind
+  runtime="$TMP_ROOT/failing-bridge-runtime.js"
+  extract_runtime_script "$ROOT/.agents/skills/bearings/assets/board-template.html" "$runtime"
+
+  data="$TMP_ROOT/decision-payload.json"
+  write_dom_decision_payload "$data"
+  for kind in throw reject; do
+    out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" "$kind" decision 2>&1) \
+      || fail "the DOM harness crashed on a queuePrompt that did $kind: $out"
+    [ "$(printf '%s' "$out" | jq -r .isQueued)" = "false" ] \
+      || fail "a decision card claimed queued though queuePrompt did $kind: $out"
+    [ "$(printf '%s' "$out" | jq -r .errorVisible)" = "true" ] \
+      || fail "no error was surfaced though queuePrompt did $kind: $out"
+  done
+
+  data="$TMP_ROOT/dispatch-payload.json"
+  write_dom_dispatch_payload "$data"
+  for kind in throw reject; do
+    out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" "$kind" dispatch 2>&1) \
+      || fail "the DOM harness crashed on a queuePrompt that did $kind: $out"
+    [ "$(printf '%s' "$out" | jq -r .isQueued)" = "false" ] \
+      || fail "the dispatch bar claimed queued though queuePrompt did $kind: $out"
+    [ "$(printf '%s' "$out" | jq -r .errorVisible)" = "true" ] \
+      || fail "no error was surfaced though queuePrompt did $kind: $out"
+  done
+  pass "a queuePrompt that throws or rejects is refused like a missing bridge"
+}
+
 test_build_refuses_a_template_without_exactly_one_slot() {
   local home data rc out
   home=$(make_home badslot)
@@ -567,3 +662,5 @@ test_dispatch_bar_refuses_to_queue_without_a_lavish_bridge
 test_dispatch_bar_clears_a_stale_refusal_once_the_bridge_returns
 test_decision_card_drops_its_queued_mark_when_a_later_answer_is_refused
 test_dispatch_bar_drops_its_queued_mark_when_a_later_dispatch_is_refused
+test_an_option_less_card_is_built_and_answerable_through_its_freeform_box
+test_a_failing_bridge_is_refused_like_a_missing_one
