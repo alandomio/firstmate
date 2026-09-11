@@ -2759,6 +2759,64 @@ EOF
   pass "a /proc read that stalls after a capped lsof refuses visibly within its caps (with and without --force)"
 }
 
+# A /proc read that could not read a single cwd link has not answered, so it
+# must refuse like any other failed scan, --force included, rather than report
+# no leftover processes and return a worktree a process may still be running
+# in. The readlink stub fails every link under the fake /proc root.
+test_unreadable_proc_fallback_refuses_visibly() {
+  local case_dir rc mode label proc_root real_readlink
+  real_readlink=$(command -v readlink)
+  for mode in plain force; do
+    label="unreadable-proc-fallback-$mode"
+    case_dir=$(make_case "$label")
+    write_meta "$case_dir" no-mistakes ship
+    land_shippable_commit "$case_dir"
+    add_lsof_failing "$case_dir"
+    proc_root="$case_dir/fake-proc"
+    mkdir -p "$proc_root/self" "$proc_root/4242"
+    ln -s "$case_dir" "$proc_root/self/cwd"
+    ln -s "$case_dir/wt" "$proc_root/4242/cwd"
+    cat > "$case_dir/fakebin/readlink" <<EOF
+#!/usr/bin/env bash
+case "\${1:-}" in
+  '$proc_root'/*)
+    printf '%s\n' "\$1" >> '$case_dir/readlink.log'
+    exit 1
+    ;;
+esac
+exec '$real_readlink' "\$@"
+EOF
+    cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf 'return\n' >> "$case_dir/treehouse.log"
+EOF
+    chmod +x "$case_dir/fakebin/readlink" "$case_dir/fakebin/treehouse"
+    set --
+    [ "$mode" = plain ] || set -- --force
+
+    rc=0
+    fm_run_timed 40 env FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$case_dir/state" \
+      FM_CONFIG_OVERRIDE="$case_dir/config" PATH="$case_dir/fakebin:$PATH" \
+      FM_PROC_ROOT_OVERRIDE="$proc_root" \
+      "$TEARDOWN" task-x1 "$@" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+    [ "$rc" -ne 124 ] || fail "$label: teardown hung until the 40s test guard killed it"
+    expect_code 1 "$rc" "$label: teardown should refuse when no /proc cwd link could be read"
+    assert_grep "$proc_root/4242/cwd" "$case_dir/readlink.log" \
+      "$label: the /proc read never tried the fake process's cwd link"
+    assert_grep "teardown: lsof failed, so the leftover-process check reads $proc_root directly instead." "$case_dir/stdout" \
+      "$label: stdout did not announce the switch to /proc"
+    assert_grep "leftover-process check under $case_dir/wt could not run: lsof failed and reading /proc directly failed. Cleanup refused, --force included" "$case_dir/stdout" \
+      "$label: stdout did not say the /proc read failed and its consequence"
+    assert_grep "REFUSED: cannot determine leaked processes under $case_dir/wt for task-x1 (lsof failed and reading /proc directly failed)" "$case_dir/stderr" \
+      "$label: stderr did not carry the refusal"
+    assert_present "$case_dir/wt" "$label: teardown removed the worktree"
+    assert_present "$case_dir/state/task-x1.meta" "$label: teardown removed task metadata"
+    assert_absent "$case_dir/treehouse.log" "$label: teardown returned the worktree"
+  done
+  pass "a /proc read that could not read any cwd link refuses visibly instead of reporting no processes (with and without --force)"
+}
+
 # A teardown killed outright (SIGKILL, so its EXIT trap never runs) while its
 # scan is stalled leaves its lifecycle lock on disk. While that holder is
 # alive a second teardown must be refused without touching the task; once the
@@ -2957,6 +3015,7 @@ test_persistent_scan_refuses_after_bounded_retries
 test_stalled_cwd_scan_is_bounded_and_refuses_visibly
 test_failed_or_capped_lsof_scan_falls_back_to_proc
 test_capped_proc_fallback_refuses_visibly
+test_unreadable_proc_fallback_refuses_visibly
 test_killed_teardown_lock_is_reclaimed_only_after_holder_dies
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal

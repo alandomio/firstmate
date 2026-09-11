@@ -125,7 +125,10 @@
 #     silent no-op. The scan still visits every open file of every process, and
 #     -b alone has not kept it from stalling for minutes, so each scan is also
 #     capped at FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS (whole seconds, default
-#     30). When lsof fails or hits that cap, the rest of the run reads each
+#     30). The cap bounds a scan that can be killed; an lsof stuck in
+#     uninterruptible kernel sleep can still hold teardown past it, because the
+#     timeout runner waits for the killed scan to exit. When lsof fails or hits
+#     that cap, the rest of the run reads each
 #     process's cwd link under /proc instead, under the same cap; that read
 #     never stats other open files and sees the cwd of the same processes lsof
 #     run as the same user can. Only when that read is unavailable (no /proc,
@@ -1005,8 +1008,9 @@ if ! retry_wait_secs_is_valid "$TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS"; then
 fi
 # Compatibility alias used by the safety-check wait path and older call sites.
 STALE_WORKTREE_LOCK_RETRY_WAIT_SECS=$TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS
-# Hard cap, in whole seconds, on each leftover-process scan (Fix 2). Zero is
-# rejected because fm_run_timed treats a zero bound as no bound.
+# Cap, in whole seconds, on each leftover-process scan (Fix 2); it bounds
+# scans that can be killed, not one stuck in uninterruptible kernel sleep. Zero
+# is rejected because fm_run_timed treats a zero bound as no bound.
 PROCESS_SCAN_TIMEOUT_SECS=${FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS:-30}
 if ! [[ "$PROCESS_SCAN_TIMEOUT_SECS" =~ ^[1-9][0-9]*$ ]]; then
   echo "teardown: invalid leftover-process scan cap '$PROCESS_SCAN_TIMEOUT_SECS'; using 30s" >&2
@@ -1321,9 +1325,11 @@ conclude_task_no_mistakes_run() {  # <worktree>
 # PROCESS_SCAN_LSOF_RC and PROCESS_SCAN_PROC_STATE then say why. The /proc
 # reader keeps each link target byte-exact (a trailing newline in a directory
 # name is not stripped) and replaces any newline inside it, so a path can
-# neither forge a p/n record nor pass for a sibling of the worktree.
+# neither forge a p/n record nor pass for a sibling of the worktree. It fails
+# when it could read no process's cwd link at all, so an empty answer is never
+# mistaken for "no leftover processes".
 # shellcheck disable=SC2016 # Expanded by the bounded child shell, not here.
-PROC_CWD_READER='for d in "$1"/[0-9]*; do t=$(readlink "$d/cwd" 2>/dev/null && printf x) || continue; t=${t%?x}; t=${t//$'"'"'\n'"'"'/?}; printf "p%s\nn%s\n" "${d##*/}" "$t"; done'
+PROC_CWD_READER='n=0; for d in "$1"/[0-9]*; do t=$(readlink "$d/cwd" 2>/dev/null && printf x) || continue; t=${t%?x}; t=${t//$'"'"'\n'"'"'/?}; printf "p%s\nn%s\n" "${d##*/}" "$t"; n=1; done; [ "$n" = 1 ]'
 process_cwd_scan() {  # <out-file>
   local out=$1 rc=0 proc_root=${FM_PROC_ROOT_OVERRIDE:-/proc}
   if [ "$PROCESS_SCAN_LSOF_RC" -eq 0 ]; then
