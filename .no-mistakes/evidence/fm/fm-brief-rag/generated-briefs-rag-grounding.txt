@@ -1,0 +1,109 @@
+===== $ fm-brief.sh task-1 gh-proj --mode no-mistakes   (exit=0)
+forbidden-term matches (PP Brain|search_knowledge|pp-brain|auth_missing): 0
+--- # Grounding section:
+# Grounding
+Before your first substantive action, search the RAG (`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
+Treat the `# Task` section above as firstmate's assembly of that context, a starting point rather than a substitute.
+When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+Report what you found and what it changed in your next status line, or state plainly that both were silent.
+--- Rule 4 durable-findings / shared-memory line(s):
+  20:When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+  58:   firstmate promotes them, and you must never write to the RAG or any shared memory directly.
+
+===== $ fm-brief.sh task-2 gh-proj --mode direct-PR   (exit=0)
+forbidden-term matches (PP Brain|search_knowledge|pp-brain|auth_missing): 0
+--- # Grounding section:
+# Grounding
+Before your first substantive action, search the RAG (`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
+Treat the `# Task` section above as firstmate's assembly of that context, a starting point rather than a substitute.
+When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+Report what you found and what it changed in your next status line, or state plainly that both were silent.
+--- Rule 4 durable-findings / shared-memory line(s):
+  20:When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+  57:   firstmate promotes them, and you must never write to the RAG or any shared memory directly.
+
+===== $ fm-brief.sh task-3 gh-proj --mode local-only   (exit=0)
+forbidden-term matches (PP Brain|search_knowledge|pp-brain|auth_missing): 0
+--- # Grounding section:
+# Grounding
+Before your first substantive action, search the RAG (`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
+Treat the `# Task` section above as firstmate's assembly of that context, a starting point rather than a substitute.
+When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+Report what you found and what it changed in your next status line, or state plainly that both were silent.
+--- Rule 4 durable-findings / shared-memory line(s):
+  20:When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+  57:   firstmate promotes them, and you must never write to the RAG or any shared memory directly.
+
+===== $ fm-brief.sh task-4 gh-proj --scout   (exit=0)
+forbidden-term matches (PP Brain|search_knowledge|pp-brain|auth_missing): 0
+--- # Grounding section:
+# Grounding
+Before your first substantive action, search the RAG (`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
+Treat the `# Task` section above as firstmate's assembly of that context, a starting point rather than a substitute.
+When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+Report what you found and what it changed in your next status line, or state plainly that both were silent.
+--- Rule 4 durable-findings / shared-memory line(s):
+  20:When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+
+===== $ fm-brief.sh task-5 gh-proj --mode no-mistakes --herdr-lab   (exit=0)
+forbidden-term matches (PP Brain|search_knowledge|pp-brain|auth_missing): 0
+--- # Grounding section:
+# Grounding
+Before your first substantive action, search the RAG (`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
+Treat the `# Task` section above as firstmate's assembly of that context, a starting point rather than a substitute.
+When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+Report what you found and what it changed in your next status line, or state plainly that both were silent.
+--- Rule 4 durable-findings / shared-memory line(s):
+  20:When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+  72:   firstmate promotes them, and you must never write to the RAG or any shared memory directly.
+
+===== $ fm-brief.sh task-6 gh-proj --mode direct-PR --herdr-lab   (exit=0)
+forbidden-term matches (PP Brain|search_knowledge|pp-brain|auth_missing): 0
+--- # Grounding section:
+# Grounding
+Before your first substantive action, search the RAG (`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
+Treat the `# Task` section above as firstmate's assembly of that context, a starting point rather than a substitute.
+When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+Report what you found and what it changed in your next status line, or state plainly that both were silent.
+--- Rule 4 durable-findings / shared-memory line(s):
+  20:When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+  71:   firstmate promotes them, and you must never write to the RAG or any shared memory directly.
+
+===== $ fm-brief.sh task-7 gh-proj --mode local-only --herdr-lab   (exit=0)
+forbidden-term matches (PP Brain|search_knowledge|pp-brain|auth_missing): 0
+--- # Grounding section:
+# Grounding
+Before your first substantive action, search the RAG (`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
+Treat the `# Task` section above as firstmate's assembly of that context, a starting point rather than a substitute.
+When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+Report what you found and what it changed in your next status line, or state plainly that both were silent.
+--- Rule 4 durable-findings / shared-memory line(s):
+  20:When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+  71:   firstmate promotes them, and you must never write to the RAG or any shared memory directly.
+
+===== $ fm-brief.sh task-8 gh-proj --scout --herdr-lab   (exit=0)
+forbidden-term matches (PP Brain|search_knowledge|pp-brain|auth_missing): 0
+--- # Grounding section:
+# Grounding
+Before your first substantive action, search the RAG (`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
+Treat the `# Task` section above as firstmate's assembly of that context, a starting point rather than a substitute.
+When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+Report what you found and what it changed in your next status line, or state plainly that both were silent.
+--- Rule 4 durable-findings / shared-memory line(s):
+  20:When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+
+===== $ fm-brief.sh sm-1 --secondmate --no-projects   (exit=0)
+forbidden-term matches (PP Brain|search_knowledge|pp-brain|auth_missing): 0
+has # Grounding section: 0 (expected 0: charter omits it)
+
+===== $ fm-brief.sh --help | grep -iE 'RAG|grounding|pp.?brain|search_knowledge|auth_missing'
+Ship and scout briefs include a Grounding section requiring a search of the RAG
+(the rag_qdrant_server MCP server's query_rag_hybrid or query_rag tool) and the
+a check of the RAG before working around any gotcha (citing it, or filing a
+note: CANDIDATE when it is silent, never writing to the RAG or any shared
+A ship brief additionally widens the Grounding CANDIDATE channel above from an undocumented
+Grounding, because it is required content of that line rather than a separate search-report
+action, and a secondmate charter omits it for the same reason Grounding is omitted there: its
+Task and Grounding, with {RECALL_FOUND} and {RECALL_CHANGED} placeholders that
+is a first-class answer. It exists because the worker's own Grounding runs after
+the section for the same reason it omits Grounding.

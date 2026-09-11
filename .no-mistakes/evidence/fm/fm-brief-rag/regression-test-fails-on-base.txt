@@ -1,0 +1,9 @@
+$ bash tests/fm-brief.test.sh  # only test_briefs_name_rag_not_pp_brain, against BASE 4a6429b bin/fm-brief.sh
+not ok - brief with --mode no-mistakes lost the RAG grounding search
+exit=1
+
+Offending lines in the base-generated no-mistakes brief:
+18:Before your first substantive action, search PP Brain (`search_knowledge` with both `query` and `prompt` populated - one alone kills two of six retrieval pat
+20:When you hit an obstacle, surprising behavior, or trap, check PP Brain before working around it - cite it if documented, or append `note: CANDIDATE - {findin
+22:If the session-start banner reports `pp-brain: auth_missing`, or anything else suggests PP Brain is unauthenticated, treat that alone as a known false positi
+61:   firstmate promotes them, and you must never write to PP Brain or any shared memory directly.
