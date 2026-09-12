@@ -787,7 +787,7 @@ test_scout_and_secondmate_load_decision_hold_policy() {
 }
 
 # The captain's instruction (2026-09-01) requires workers to ground themselves
-# in PP Brain and the local memory store before acting, not just when a skill
+# in the RAG and the local memory store before acting, not just when a skill
 # they happen to invoke requires it. This section belongs in ship and scout
 # briefs, whose worker performs the task's first substantive action directly;
 # a secondmate charter routes work to its own crewmates, who each get their
@@ -803,8 +803,8 @@ test_grounding_section_requires_search_and_reporting() {
   brief="$home/data/$id/brief.md"
   assert_grep "# Grounding" "$brief" "ship brief missing the Grounding section"
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'both `query` and `prompt` populated' "$brief" \
-    "ship brief Grounding section did not require both PP Brain retrieval fields"
+  assert_grep 'search the RAG (`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set' "$brief" \
+    "ship brief Grounding section did not name the RAG search tools and their query field"
   assert_grep "the local memory store" "$brief" \
     "ship brief Grounding section did not mention the local memory store"
   assert_grep "Report what you found and what it changed" "$brief" \
@@ -814,9 +814,9 @@ test_grounding_section_requires_search_and_reporting() {
   assert_grep "search again whenever a new obstacle or subject comes up" "$brief" \
     "ship brief Grounding section did not frame search as repeatable, not one-shot"
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'check PP Brain before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not' "$brief" \
-    "ship brief Grounding section did not require checking PP Brain for gotchas before working around them"
-  assert_grep "never write to PP Brain or any shared memory directly, only firstmate promotes candidates" "$brief" \
+  assert_grep 'check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not' "$brief" \
+    "ship brief Grounding section did not require checking the RAG for gotchas before working around them"
+  assert_grep "never write to the RAG or any shared memory directly, only firstmate promotes candidates" "$brief" \
     "ship brief Grounding section invited a gotcha candidate without forbidding a direct shared-store write"
 
   id="brief-grounding-scout"
@@ -828,9 +828,9 @@ test_grounding_section_requires_search_and_reporting() {
   assert_grep "search again whenever a new obstacle or subject comes up" "$brief" \
     "scout brief Grounding section did not frame search as repeatable, not one-shot"
   # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'check PP Brain before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not' "$brief" \
-    "scout brief Grounding section did not require checking PP Brain for gotchas before working around them"
-  assert_grep "never write to PP Brain or any shared memory directly, only firstmate promotes candidates" "$brief" \
+  assert_grep 'check the RAG before working around it - cite it if documented, or append `note: CANDIDATE - {finding}` if it is not' "$brief" \
+    "scout brief Grounding section did not require checking the RAG for gotchas before working around them"
+  assert_grep "never write to the RAG or any shared memory directly, only firstmate promotes candidates" "$brief" \
     "scout brief Grounding section invited a gotcha candidate without forbidding a direct shared-store write"
   assert_grep "States: working, note, needs-decision, blocked, paused, done, failed." "$brief" \
     "scout brief Grounding section instructs a note: line but Rule 4 omits note from its states enumeration"
@@ -842,7 +842,38 @@ test_grounding_section_requires_search_and_reporting() {
   assert_no_grep "# Grounding" "$brief" \
     "secondmate charter should not duplicate the Grounding section its own crewmates already carry"
 
-  pass "fm-brief.sh: ship and scout briefs require Brain/memory grounding with reported outcome; secondmate charter does not duplicate it"
+  pass "fm-brief.sh: ship and scout briefs require RAG/memory grounding with reported outcome; secondmate charter does not duplicate it"
+}
+
+# This installation's shared knowledge store is the RAG (MCP server
+# rag_qdrant_server); it was once called PP Brain here (captain, 2026-09-11), so
+# no generated brief may carry the old name, its search tool, or its
+# auth-banner handling, which has no RAG equivalent.
+test_briefs_name_rag_not_pp_brain() {
+  local home id brief args
+  # Neutral ids and home: each brief embeds its own status-file path.
+  home="$TMP_ROOT/rag-rename-home"
+  mkdir -p "$home/data"
+  write_project_clone "$home" gh-proj https://github.com/acme/gh-proj.git
+  id=0
+  for args in "--mode no-mistakes" "--mode direct-PR" "--mode local-only" "--scout" \
+    "--mode no-mistakes --herdr-lab" "--scout --herdr-lab"; do
+    id=$((id + 1))
+    # shellcheck disable=SC2086 # args is a deliberate word-split flag list
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "brief-rag-$id" gh-proj $args >/dev/null 2>&1
+    brief="$home/data/brief-rag-$id/brief.md"
+    assert_present "$brief" "brief with $args was not scaffolded"
+    assert_grep "search the RAG" "$brief" "brief with $args lost the RAG grounding search"
+    ! grep -iE 'pp.?brain|search_knowledge|auth_missing' "$brief" >/dev/null \
+      || fail "brief with $args still mentions PP Brain, search_knowledge, or its auth banner"
+  done
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='sample domain' \
+    "$ROOT/bin/fm-brief.sh" brief-rag-secondmate --secondmate --no-projects >/dev/null 2>&1
+  brief="$home/data/brief-rag-secondmate/brief.md"
+  assert_present "$brief" "secondmate charter was not scaffolded"
+  ! grep -iE 'pp.?brain|search_knowledge|auth_missing' "$brief" >/dev/null \
+    || fail "secondmate charter still mentions PP Brain, search_knowledge, or its auth banner"
+  pass "fm-brief.sh: generated briefs name the RAG and carry no PP Brain text"
 }
 
 # Firstmate fixes a task's shape - project, base branch, delivery mode, scope -
@@ -949,9 +980,8 @@ test_skill_declaration_required_in_first_status_line() {
 }
 
 # The worker-operating contracts added on 2026-09-02 are ship-only where they
-# govern the crewmate that performs the task itself: the auth-banner false
-# positive, the degraded-mode blocked: template, the colleague-approval pause,
-# and the Rule 4 durable-findings CANDIDATE paragraph. A scout produces a
+# govern the crewmate that performs the task itself: the colleague-approval
+# pause and the Rule 4 durable-findings CANDIDATE paragraph. A scout produces a
 # written report and a secondmate charter routes work to its own crewmates,
 # whose generated ship briefs already carry those, so neither may duplicate
 # them. The scout brief does legitimately share the Grounding note: CANDIDATE
@@ -963,29 +993,12 @@ test_ship_worker_operating_contracts() {
   home="$TMP_ROOT/worker-contracts-home"
   mkdir -p "$home/data"
   dod="$TMP_ROOT/worker-contracts-dod.txt"
-  ship_only_candidate_rule="firstmate promotes them, and you must never write to PP Brain"
+  ship_only_candidate_rule="firstmate promotes them, and you must never write to the RAG"
 
   write_project_clone "$home" gh-proj https://github.com/acme/gh-proj.git
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-contracts-gh gh-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/brief-contracts-gh/brief.md"
   assert_present "$brief" "ship no-mistakes brief was not scaffolded"
-
-  # A pp-brain auth warning in the session-start banner is a known false
-  # positive, so only one real live call counts as evidence either way.
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'If the session-start banner reports `pp-brain: auth_missing`' "$brief" \
-    "ship brief did not name the pp-brain auth banner as the warning to verify"
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'known false positive: make ONE real `search_knowledge` call before acting on it' "$brief" \
-    "ship brief did not require one live search_knowledge call before believing the banner"
-  assert_grep 'Only a failing live call is evidence - never stop, and never proceed without org context, on the banner alone.' "$brief" \
-    "ship brief did not forbid both stopping and proceeding on the banner alone"
-
-  # Degraded mode reuses an existing classifier verb with a fixed template, so
-  # the supervisor classifies the outage instead of parsing invented prose.
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'append `blocked: <server> unreachable (confirmed by a live call, not the startup banner)` to the status file and stop' "$brief" \
-    "ship brief did not carry the typed degraded-mode blocked: template"
 
   # Durable findings travel as supervisor-promoted candidates on the existing
   # status channel, never as worker writes into a shared store.
@@ -1015,8 +1028,8 @@ test_ship_worker_operating_contracts() {
     "ship brief did not declare a note: line nonterminal, so a worker may stop on one and look wedged"
   assert_grep 'you record candidates, only' "$brief" \
     "ship brief did not reserve promotion of candidates to firstmate"
-  assert_grep 'never write to PP Brain or any shared memory directly.' "$brief" \
-    "ship brief did not forbid direct writes to PP Brain or any shared memory"
+  assert_grep 'never write to the RAG or any shared memory directly.' "$brief" \
+    "ship brief did not forbid direct writes to the RAG or any shared memory"
   assert_no_grep 'beyond this workstation' "$brief" \
     "ship brief still qualifies the shared-memory ban, licensing workstation-local memory writes"
   assert_no_grep 'narrow exception' "$brief" \
@@ -1327,6 +1340,7 @@ test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_grounding_section_requires_search_and_reporting
+test_briefs_name_rag_not_pp_brain
 test_firstmate_recall_section
 test_skill_declaration_required_in_first_status_line
 test_ship_worker_operating_contracts
