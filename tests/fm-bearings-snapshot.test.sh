@@ -1940,6 +1940,45 @@ EOF
   pass "main and secondmate captain actionability use the same blocker readiness"
 }
 
+# The kernel caps one argv string at 128KB (MAX_ARG_STRLEN). A real home with a
+# ~72KB backlog.md derived more backlog JSON than that and jq died with
+# "Argument list too long", so bearings printed nothing.
+test_backlog_beyond_argv_string_limit() {
+  local home fakebin i snap bytes json
+  home=$(make_home argv-limit)
+  fakebin=$(make_fakebin "$home")
+  {
+    printf '## Queued\n'
+    i=1
+    while [ "$i" -le 1500 ]; do
+      printf -- '- [ ] bulk-%s - Bulk queued item %s with a deliberately long title so the derived backlog JSON outgrows a single argv string (repo: firstmate) (kind: ship)\n' "$i" "$i"
+      i=$((i + 1))
+    done
+  } > "$home/data/backlog.md"
+  snap=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SNAPSHOT_NOW=2026-07-11T18:00:00Z "$ROOT/bin/fm-fleet-snapshot.sh" --json) \
+    || fail "fleet snapshot failed on a backlog beyond the argv string limit"
+  bytes=$(printf '%s' "$snap" | jq -c '.backlog' | LC_ALL=C wc -c | tr -d ' ')
+  [ "$bytes" -gt 131072 ] || fail "fixture backlog JSON is only $bytes bytes; the regression would be vacuous"
+  printf '%s' "$snap" | jq -e '[.backlog.records[] | select(.state == "queued")] | length == 1500' >/dev/null \
+    || fail "large backlog records were lost"
+  json=$(run "$home" "$fakebin" --json) || fail "bearings failed on a backlog beyond the argv string limit"
+  printf '%s' "$json" | jq -e '.schema == "fm-bearings.v1"' >/dev/null || fail "bearings output invalid: $json"
+  pass "a backlog deriving more than 128KB of JSON still snapshots and renders bearings"
+}
+
+# Moving a value from argv to jq stdin must not change a single output byte.
+test_stdin_spill_is_byte_identical() {
+  local home fakebin inline spilled
+  home=$(make_home spill-parity); write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  inline=$(FM_JQ_INLINE_MAX=100000000 run "$home" "$fakebin" --json --include-prs) || fail "inline bearings run failed"
+  spilled=$(FM_JQ_INLINE_MAX=0 run "$home" "$fakebin" --json --include-prs) || fail "spilled bearings run failed"
+  [ "$inline" = "$spilled" ] || fail "stdin spill changed bearings output"
+  pass "values moved off argv produce byte-identical bearings output"
+}
+
+test_backlog_beyond_argv_string_limit
+test_stdin_spill_is_byte_identical
 test_domain_alpha_stale_parent_event_does_not_become_current_work
 test_gnu_stat_uses_file_formats_without_bsd_fallback_pollution
 test_parent_activity_evidence_is_bounded_and_disclosed
