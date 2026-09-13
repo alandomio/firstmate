@@ -1,0 +1,8 @@
+$ FM_HOME=/home/alan/firstmate <base cf5bed9>/bin/fm-bearings-snapshot.sh --json
+/tmp/fm-old3.yqfi/bin/fm-fleet-snapshot.sh: line 635: /usr/bin/jq: Argument list too long
+fm-fleet-snapshot: main inventory summary failed
+exit=
+
+$ FM_HOME=/home/alan/firstmate <target 791a1ac>/bin/fm-bearings-snapshot.sh --json | jq '{schema, in_flight: (.in_flight|length)}'
+{"schema":"fm-bearings.v1","home":"alan/firstmate","in_flight":6}
+exit=

@@ -1,0 +1,85 @@
+$ FM_HOME=/home/alan/firstmate bin/fm-bearings-snapshot.sh   (target 791a1ac)
+schema: fm-bearings.v1
+home: alan/firstmate
+generated: "2026-09-13T20:24:37Z"
+prs: "not_requested (run: /bearings include PRs)"
+in_flight[6]{id,kind,state,doing}:
+  fm-bearings-argmax,ship,working,validating (running)
+  gop-stato-utenza-doc,ship,unknown,harness state unavailable (unknown missing)
+  gop270-pipeline-immagine,ship,paused,MR 93 merged into its target on 2026-09-13; cleanup of this copy waits on the captain's au…
+  gop274-voiceai-slots,ship,paused,MR 95 merged into test on 2026-09-10; cleanup of this copy waits on the captain's authoriz…
+  gop275-port-test,ship,done,"run passed: PR merged/closed"
+  ottogas-map-castel-morrone,ship,paused,MR 102 merged into test on 2026-09-12; cleanup of this copy waits on the captain's authori…
+secondmates[1]{id,state,doing,provenance,freshness,age_seconds,contradiction,reason}:
+  android,captain_decision,"GOP-252 MR !5: new retry path shares action=syncPosizioni with the existing push path",structured-home,fresh,0,true,"-"
+decisions_open[20]{id,key,verb,summary,owner}:
+  mail-clienti-php8,mail-clienti-php8,captain-hold,"Mail ai clienti sul lavoro fatto su php8: Bozza pronta in data/mail-clienti-php8/bozza.md.…",(main)
+  rag-cap-fusione,rag-cap-fusione,captain-hold,"RAG: alzare i cap di fusione/rerank e rimisurare, prima di valutare un reranker esterno: m…",(main)
+  gop-metrics-jsonl-conflitti,gop-metrics-jsonl-conflitti,captain-hold,"GOPlanner: tasks/model-metrics.jsonl versionato genera conflitti su ogni ramo: va deciso s…",(main)
+  goplanner-clone-su-master,goplanner-clone-su-master,captain-hold,"Allineare il clone locale di GOPlanner da master a php8: il clone della flotta e' fermo su…",(main)
+  fm-mrstat-gitlab,fm-mrstat-gitlab,captain-hold,"Uno strumento che legge davvero lo stato di una merge request GitLab: va deciso se costrui…",(main)
+  gop62-slots-config-data,gop62-slots-config-data,captain-hold,"GOP-62: inserire le righe calendar_slots_config per lotto su sg_italgas e sg_italgas_test:…",(main)
+  gop269-injection-pattern-diffuso,gop269-injection-pattern-diffuso,captain-hold,"Stesso schema di injection su date presente 21 volte in json.php, oltre l'endpoint corrett…",(main)
+  jira-triage-da-rifare,jira-triage-da-rifare,captain-hold,"Ricognizione ticket Da completare da rifare: il primo tentativo ha prodotto 5 chiusure fal…",(main)
+  gop270-log-mobile-infra,gop270-log-mobile-infra,captain-hold,"GOP-270: decide mobile CloudWatch fix path (infra, not app code): Root cause is infra/depl…",(main)
+  gop-jira-triage-v2-calls,gop-jira-triage-v2-calls,captain-hold,"Audit Jira GOP: 6 chiamate al capitano dalla seconda passata: Report: /home/alan/firstmate…",(main)
+  gop272-followup-allowlist-tabelle,gop272-followup-allowlist-tabelle,captain-hold,"GOP-272 seguito: la lista bianca della vista a mappa puo referenziare tabelle non unite da…",(main)
+  json-admin-senza-auth,json-admin-senza-auth,captain-hold,"SICUREZZA: json_admin.php raggiunge put_intervento/put_utenza/put_misurazione senza autent…",(main)
+  gop242-sim-id-test,gop242-sim-id-test,captain-hold,"GOP-242 punto 2: che fare del sentinella sim_id='test': GOP-242 chiede insieme di non romp…",(main)
+  gop242-scope-put-intervento,gop242-scope-put-intervento,captain-hold,"GOP-242: decidere se estendere la MR !94 ai ~20 campi ancora iniettabili di put_intervento…",(main)
+  gop275-seguito-permessi-admin,gop275-seguito-permessi-admin,captain-hold,"GOP-275 seguito: json_admin.php e ora autenticato ma non ristretto agli amministratori: De…",(main)
+  pulizia-postazioni-goplanner,pulizia-postazioni-goplanner,captain-hold,Autorizzare la pulizia delle copie di lavoro GOPlanner bloccate dai due residui non versio…,(main)
+  rag-mcp-lavoratori,rag-mcp-lavoratori,captain-hold,"Rendere il RAG disponibile ai lavoratori nelle loro copie isolate: Il server MCP rag_qdran…",(main)
+  retrospective-pp-brain-rag,retrospective-pp-brain-rag,captain-hold,"Skill retrospective: rinominare anche li' PP Brain in RAG?: Il capitano ha chiesto l'11/09…",(main)
+  gop280-worker-rollout-calls,gop280-worker-rollout-calls,captain-hold,"GOP-280: due scelte del capitano dopo la prova di compatibilita' dei worker: Prova di comp…",(main)
+  ottogas-campi-misuratore,ottogas-campi-misuratore,captain-hold,"Ottogas: i campi tecnici del misuratore vanno salvati nel caricamento?: Domanda rimasta ap…",(main)
+landed[6]{id,what,artifact,owner}:
+  gop279-endpoint-non-autenticati,"GOP-279 SICUREZZA: json_timbratori.php e api.php senza autenticazione,…","-",(main)
+  android-rebase-release-line,"Rebase the release line (gestione-avvisi, 14 commits ahead, versionCod…","-",android
+  ener-mms-photo-loss,Investigate whether photos can be lost on Android app after a DNS/netw…,data/ener-mms-photo-loss/report.md,android
+  android-mr4-mr5-conflict-resolve,Rebase fm/gop251-android-gps-tracking-restart (MR4) onto the current m…,"-",android
+  android-diagnostics-metrics,Investigate app-side diagnostic signals for a new ticket on incident-d…,data/android-diagnostics-metrics/report.md,android
+  android-changelog-versioning,Automate changelog and semantic version bump for goplanner-android (An…,"-",android
+gates[20]{id,title,blocked_by,reason,owner}:
+  (main-inventory),in-flight backlog item has no child metadata,"-",main inventory,(main)
+  chatbot-chiavi-swarm,"Indagine: perche' il chatbot su Swarm ha perso le chiavi; so…","-","Ripristino chatbot su Swarm: due guasti …",(main)
+  agy,Ottimizzazione della pipeline RAG a partire dal notebook Not…,"-",Indagine completata,(main)
+  in2-credenziali-ssm,"IN-2: inventario delle credenziali in chiaro e disegno del p…","-",Inventario IN-2 completo in data/in2-cre…,(main)
+  gop238-pagina-esportazione,"GOP-238: pagina File > Esportazione secondo il mockup Indust…","-","MR 69 aperta e in attesa del merge: pagi…",(main)
+  gop234-overlay-avviso,"GOP-234: overlay foto lato server con data avviso arretrata …","-",Superata dalla MR 64 su master. La MR ht…,(main)
+  gop226-php-target,"GOP-226: Chiarire versione PHP target fra AGENTS.md e contai…","-",Consegna completata e rilievo bloccante …,(main)
+  gop218-toolbar-filters,"GOP-218: Ricerca Avanzata, addToolbarFilters non si attiva m…","-","Revisione indipendente: APPROVE WITH NIT…",(main)
+  gop219-advfilters-sqli,"GOP-219: SICUREZZA: adv_filters accetta nomi di campo dal cl…","-","Revisione indipendente: APPROVE",(main)
+  gop233-doc-regole-stile,Documentare le regole di stile trasversali del tema Industry,"-",Correzione del rilievo bloccante gia' sp…,(main)
+  gop230-ruoloservice-perf,"GOP-230: RuoloService::salva() O(n^2) sui permessi, ~150s pe…","-",In attesa del via al merge dal capitano.…,(main)
+  gop227-lotti-entity,"GOP-227: gestione lotti come entita' reale (Flexigrid+modale…","-",In attesa della decisione del capitano s…,(main)
+  gop228-user-modal-redesign,"GOP-228: redesign modale Dati utente - ruoli per tenant, ten…",gop227-lotti-entity,"-",(main)
+  gop-ritiro-users-tipo,Ritiro progressivo di users.tipo a favore di RBAC,"-","-",(main)
+  secondmate-android-charter,Proporre al capitano la lettera di incarico per un secondo u…,"android-kb-skill,android-emulator-test-scout","-",(main)
+  jsoncontroller-users-sqli,"SICUREZZA: json.php?action=users permette a un admin di qual…","-","-",(main)
+  infra-ticket-audit,Verificare quali dei dieci ticket di infrastruttura siano gi…,"-","-",(main)
+  gop-ticket-cleanup-audit,"Verificare GOP-203, 215, 223 e 225 prima di chiuderli","-","-",(main)
+  rag-parametri-rifiutati,Il RAG rifiuta le query con 'Invalid request parameters' anc…,"-","-",(main)
+  gop244-campi-iniettabili,"GOP-244: ripulire q, uid, matr, gcm, coordinate mappautenti,…","-","-",(main)
+reports: []
+recorded_prs[5]{id,url}:
+  gop-stato-utenza-doc,"https://gitlab.com/alandomio/GOPlannerWeb/-/merge_requests/83"
+  gop270-pipeline-immagine,"https://gitlab.com/alandomio/GOPlannerWeb/-/merge_requests/93"
+  gop274-voiceai-slots,"https://gitlab.com/alandomio/GOPlannerWeb/-/merge_requests/95"
+  gop275-port-test,"https://gitlab.com/alandomio/GOPlannerWeb/-/merge_requests/98"
+  ottogas-map-castel-morrone,"https://gitlab.com/alandomio/GOPlannerWeb/-/merge_requests/102"
+omitted[13]{surface,reveal}:
+  backlog item bodies,"--fields bodies"
+  task paths,"--fields paths"
+  watch/steer actions,"--fields actions"
+  healthy endpoint detail,"--fields endpoints"
+  full scout-report inventory,"--all-reports"
+  superseded or prose-deferred queued items,"--all-queued"
+  landed showing 6 of 7 (incl. 1 secondmate home(s)),"--all-landed"
+  landed per-home capped at 6 for 1 home(s),"--all-landed"
+  secondmate home Done capped at the snapshot layer for 1 home(s),"--all-landed"
+  "main in-flight backlog item(s) have no child metadata: 2",inspect main data/backlog.md In flight vs state/*.meta
+  decisions_open showing 20 of 23,"--all-decisions"
+  gates showing 20 of 39,"--all-queued"
+  live PR discovery + checks,"--include-prs"
+exit=0

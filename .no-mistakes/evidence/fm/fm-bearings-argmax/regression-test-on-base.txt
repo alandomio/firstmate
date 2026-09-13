@@ -1,0 +1,5 @@
+# new regression test run against BASE bin/ (cf5bed9)
+/tmp/fm-old.8XuD/bin/fm-fleet-snapshot.sh: line 635: /usr/bin/jq: Argument list too long
+fm-fleet-snapshot: main inventory summary failed
+not ok - fleet snapshot failed on a backlog beyond the argv string limit
+exit=
