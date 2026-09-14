@@ -1160,15 +1160,9 @@ test_exited_declared_pause_is_bounded_but_live_gate_surfaces() {
   pass "exited declared-pause and captain-held panes use bounded pause cadence while a live decision gate still surfaces once"
 }
 
-# A live harness footer (rate-window countdown, usage bars) changes the raw
-# pane hash on every poll. Root cause 2026-09-14 (watch-paused-reflagged-as-
-# stale): once pause_state_class's declared-pause recovery expired, a still-
-# ALIVE ordinary crew fell back to `none`, which the stale path bare-surfaces
-# and re-primes .paused-<key> for - so the very next churn cycle repeats the
-# whole thing, forever, every ~STALE_ESCALATE_SECS. The fix keeps an already-
-# surfaced-once live pause classified `paused` (only crew_absorb_class=working
-# may lift it), so hash churn takes the bounded PAUSE_RESURFACE_SECS recheck
-# cadence like a dead-agent or secondmate pause already did.
+# A ticking harness footer changes the raw pane hash every poll. Before the fix a
+# still-alive crew's established pause reclassified `none`, bare-surfacing and
+# re-priming .paused-<key> so the cycle repeated forever every ~STALE_ESCALATE_SECS.
 test_nonterminal_stale_paused_live_churning_hash_uses_bounded_cadence() {
   local dir state fakebin out statusf window key counter pid back round wakes bare
   dir=$(make_case nonterminal-stale-paused-churn); state="$dir/state"; fakebin="$dir/fakebin"

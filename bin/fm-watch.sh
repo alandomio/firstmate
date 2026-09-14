@@ -487,9 +487,8 @@ clear_pause_tracking() {  # <window-key>
 }
 
 # Reconcile a declared pause or captain-held status with authoritative crew state.
-# After fm-crew-state has fallen back to stopped or unknown, paused classification is
-# recovered for a confidently dead ordinary crew, a secondmate (endpoint liveness
-# deliberately never read), or an ordinary crew already surfaced once as paused.
+# Once crew state falls back to stopped/unknown, paused is recovered only for a dead
+# ordinary crew, a secondmate (liveness never read), or a crew already surfaced paused.
 pause_state_class() {  # <window> <task>
   local win=$1 task=$2 key last recheck_file class agent_alive kind known_paused
   key=$(window_key "$win")
@@ -504,9 +503,9 @@ pause_state_class() {  # <window> <task>
   # so a mate's stale poll costs one metadata scan rather than one per gate, and the
   # far more common no-declaration path above still costs none.
   kind=$(window_kind "$win")
-  # known_paused: past the one-time live-agent surface below, so liveness alone
-  # no longer forces `none` - only crew_absorb_class=working lifts the pause.
-  # Otherwise a ticking footer hash repeatedly re-triggers that first-sight surface.
+  # known_paused: past the one-time live-agent surface, so liveness alone no longer
+  # forces `none`; only crew_absorb_class=working lifts it, checked once per
+  # STALE_ESCALATE_SECS. Otherwise a ticking footer hash re-triggers that surface.
   [ -e "$STATE/.paused-$key" ] && known_paused=1 || known_paused=0
   if [ "$known_paused" -eq 1 ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
     printf 'paused'
