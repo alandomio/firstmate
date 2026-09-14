@@ -1,0 +1,13 @@
+# Same scenario (live claude agent, paused: status, pre-established .paused marker, footer ticks every 4 polls) against base vs target bin/fm-watch.sh
+
+[base-c0974ec] watcher exit rc=0 after 3 capture-pane polls; pause marker present: yes
+[base-c0974ec] wake reason printed by fm-watch.sh:
+    stale: test:fm-churn
+[base-c0974ec] durable wake queue entries:
+    1789389971	1	stale	test:fm-churn	stale: test:fm-churn
+
+[target-18c59cc] watcher exit rc=0 after 1 capture-pane polls; pause marker present: yes
+[target-18c59cc] wake reason printed by fm-watch.sh:
+    stale: test:fm-churn (paused 503s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+[target-18c59cc] durable wake queue entries:
+    1789389977	1	stale	test:fm-churn	stale: test:fm-churn (paused 503s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
