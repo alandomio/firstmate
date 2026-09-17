@@ -44,11 +44,17 @@ If the worktree or ownership cannot be reconciled safely, leave all state intact
 Escalate in order:
 
 1. Peek the pane.
+   A pane can hold a bare shell instead of an agent, so read it before sending anything.
+   The tells are a shell prompt, a `quote>` continuation line, or an agent frame that never redraws.
+   Text sent to a bare shell is typed in as a command, and an apostrophe leaves zsh in an unterminated quote that a later apostrophe would execute, so clear it with two `bin/fm-send.sh <id> --key C-c` and write steers without apostrophes.
+   `fm-send`'s `verdict=pending` or `verdict=unknown` means not delivered: confirm from the task's status log, never from the command's own output.
 2. If the crewmate is waiting on a question its brief already answers, answer in one line via `FM_HOME=<this-firstmate-home> bin/fm-send.sh` from an active firstmate session unless `FM_HOME` is already set to the active firstmate home.
 3. If the crewmate is confused or looping, interrupt with `FM_HOME=<this-firstmate-home> bin/fm-control.sh <task-id> interrupt`, then redirect with one corrective line through `fm-send`.
 4. If the crewmate is genuinely wedged after redirection, relaunch it with `FM_HOME=<this-firstmate-home> bin/fm-control.sh <task-id> relaunch --note '<progress so far>'`, which stops the agent, carries the brief plus that note into a replacement in the same local copy, and restores the prior record if the replacement cannot start.
    Pass `--harness`, `--model`, or `--effort` on that same command when the worker should come back on a different runtime.
    Genuine wedging means looping, unresponsive, repeating the same obstacle, or truly dead.
    A low context reading is not wedging; modern harnesses auto-compact and keep going.
+   An agent sitting at an empty prompt after a connection error is not wedging either, and relaunching it is waste: send it back to re-read its brief, because its uncommitted work is intact.
+   The control plane refuses a relaunch while the endpoint's shell sits outside the recorded worktree, so move that shell into the recorded copy first.
    The worktree and commits persist, so relaunch is cheap.
 5. If a second relaunch fails too, write `failed` to the backlog and tell the captain the plain failure, preserved work, and consequence using `AGENTS.md` section 9; do not mention metadata, harness, window, or worktree unless the path itself is needed for action.
