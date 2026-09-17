@@ -1160,6 +1160,91 @@ test_exited_declared_pause_is_bounded_but_live_gate_surfaces() {
   pass "exited declared-pause and captain-held panes use bounded pause cadence while a live decision gate still surfaces once"
 }
 
+# A ticking harness footer changes the raw pane hash every poll. Before the fix a
+# still-alive crew's established pause reclassified `none`, bare-surfacing and
+# re-priming .paused-<key> so the cycle repeated forever every ~STALE_ESCALATE_SECS.
+test_nonterminal_stale_paused_live_churning_hash_uses_bounded_cadence() {
+  local dir state fakebin out statusf window key counter pid back round wakes bare
+  dir=$(make_case nonterminal-stale-paused-churn); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; statusf="$state/churn.status"; window="test:fm-churn"
+  counter="$dir/tick"
+
+  # Override make_case's static cat-a-file capture-pane fake: every call returns
+  # a new value, so the raw pane hash never repeats across polls.
+  cat > "$fakebin/tmux" <<TMUX
+#!/usr/bin/env bash
+set -u
+case "\${1:-}" in
+  list-windows) printf '%s\n' "\${FM_FAKE_TMUX_WINDOW#*:}"; exit 0 ;;
+  capture-pane)
+    n=\$(( \$(cat "$counter" 2>/dev/null || echo 0) + 1 ))
+    echo "\$n" > "$counter"
+    printf 'idle, awaiting external (tick %s)\n' "\$n"
+    exit 0 ;;
+  display-message)
+    case "\$*" in *pane_current_command*) printf '%s\n' "\${FM_FAKE_TMUX_CURRENT_COMMAND:-}"; exit 0 ;; esac ;;
+esac
+exit 1
+TMUX
+  chmod +x "$fakebin/tmux"
+
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/churn.meta"
+  printf 'paused: awaiting the upstream release\n' > "$statusf"
+  back=$(( $(date +%s) - 500 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
+  else touch -m -d "@$back" "$statusf"; fi
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  # Pre-established: this window already took its one-time live-agent surface,
+  # matching the real recurring case (already-declared, already-classified once).
+  : > "$state/.paused-$key"
+
+  # Cadence is driven by backdating the resurface throttle's mtime (like the
+  # rest of this suite), never by a real sleep - a slow CI box cannot flake it.
+  round=1
+  while [ "$round" -le 4 ]; do
+    if [ $((round % 2)) -eq 1 ]; then
+      back=$(( $(date +%s) - 500 ))
+      if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$state/.paused-resurfaced-$key" 2>/dev/null || true
+      else touch -m -d "@$back" "$state/.paused-resurfaced-$key" 2>/dev/null || true; fi
+    fi
+    sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-churn_status"
+    : > "$out"
+    PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+      FM_FAKE_CREW_STATE='state: paused · source: status-log · awaiting the upstream release' \
+      FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+      FM_PAUSE_RESURFACE_SECS=60 FM_STALE_ESCALATE_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >> "$out" &
+    pid=$!
+    # Every round's own output is checked directly (never the durable queue,
+    # which ack_stopped_cycle below drains back to empty each round): a bare
+    # exact "stale: <window>" line is the undecorated wake the bug produced.
+    if [ $((round % 2)) -eq 1 ]; then
+      # Odd rounds start with the throttle backdated past PAUSE_RESURFACE_SECS:
+      # each must decorate-recheck.
+      wait_for_exit "$pid" 100 || fail "round $round (churning hash) never rechecked the declared pause"
+      grep -qx "stale: $window" "$out" \
+        && fail "round $round (churning hash) emitted a bare stale wake: $(cat "$out")"
+      grep -qF "awaiting external" "$out" \
+        || fail "round $round (churning hash) did not decorate-recheck the declared pause: $(cat "$out")"
+    else
+      # Even rounds run right after an odd round re-stamped the throttle to
+      # now: still inside the cadence, so the churning hash must be absorbed
+      # silently, never a fresh surface of any kind.
+      if ! wait_poll_cycle "$state" "$pid"; then
+        reap "$pid"; fail "round $round (churning hash) surfaced within the same cadence window: $(cat "$out")"
+      fi
+      reap "$pid"
+      [ ! -s "$out" ] || fail "round $round (churning hash) printed a wake reason while absorbed: $(cat "$out")"
+    fi
+    # Every round - absorbed or not - must ack, or the next restart's startup
+    # sees this round's still-pending downtime marker and misfires its own
+    # unrelated recovery re-arm before ever reaching the stale-pane path.
+    ack_stopped_cycle "$state" || fail "could not acknowledge churn round $round"
+    round=$((round + 1))
+  done
+  pass "a live agent's declared pause with a churning pane hash uses the bounded recheck cadence, never a bare stale wake"
+}
+
 test_secondmate_paused_resurfaces_in_normal_mode() {
   local dir state fakebin out capture_file statusf window key pane_hash sig pid back
   dir=$(make_case secondmate-paused-resurface); state="$dir/state"; fakebin="$dir/fakebin"
@@ -2690,6 +2775,7 @@ test_busy_declared_pause_is_rechecked_not_wedge_escalated
 test_nonterminal_stale_not_working_surfaced
 test_nonterminal_stale_paused_absorbed_then_resurfaced
 test_exited_declared_pause_is_bounded_but_live_gate_surfaces
+test_nonterminal_stale_paused_live_churning_hash_uses_bounded_cadence
 test_secondmate_paused_resurfaces_in_normal_mode
 test_secondmate_captain_held_resurfaces_in_normal_mode
 test_secondmate_nonpaused_stale_remains_suppressed
