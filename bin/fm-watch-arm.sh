@@ -67,16 +67,34 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WATCH="$SCRIPT_DIR/fm-watch.sh"
 WATCH_LOCK="$STATE/.watch.lock"
 BEAT="$STATE/.last-watcher-beat"
+# A forked child's own pre-lock progress marker (bin/fm-watch.sh touches it
+# before its migration scan, before ever taking the lock). Deliberately never
+# read by healthy_watcher/fm_watcher_healthy or any other liveness gate - only
+# by child_startup_progress below, which extends this arm's OWN confirmation
+# wait for a child it itself forked, never a global health verdict.
+STARTING_BEAT="$STATE/.watch-starting-beat"
 # "Fresh" reuses the guard's threshold so there is one definition of liveness.
 GRACE=${FM_GUARD_GRACE:-300}
 # How long to wait for a freshly forked watcher to acquire the lock and beat.
 # Git Bash/MSYS pays a much higher fork cost while the watcher completes its
 # required pre-lock migration, so its bounded default covers that cold start.
+# The non-Windows default covers a pre-lock migration scan (bin/fm-pr-check-migrate.sh
+# --checks-safe) running slow under load - measured at 15s against ~30 registered
+# checks - with headroom; a scan that size is rare, and STARTUP_GRACE below covers
+# a still slower one on top of any caller-supplied CONFIRM_TIMEOUT.
 case "${OSTYPE:-}" in
   msys*|mingw*|cygwin*) ARM_CONFIRM_DEFAULT=30 ;;
-  *) ARM_CONFIRM_DEFAULT=10 ;;
+  *) ARM_CONFIRM_DEFAULT=60 ;;
 esac
 CONFIRM_TIMEOUT=${FM_ARM_CONFIRM_TIMEOUT:-$ARM_CONFIRM_DEFAULT}
+# Bounded grace granted only on positive startup-liveness evidence: the forked
+# child is still alive AND has touched its own pre-lock progress marker
+# (STARTING_BEAT above) at or after this cycle began. That is progress evidence
+# for a slow-but-healthy scan, not proof of full health (the lock is not held
+# yet), so it only ever extends the wait past CONFIRM_TIMEOUT once, up to this
+# separate bound - it never shortens or replaces CONFIRM_TIMEOUT, and a child
+# with no such evidence still fails at the ordinary deadline.
+STARTUP_GRACE=${FM_ARM_STARTUP_GRACE:-60}
 # Poll interval while attached to an existing healthy watcher.
 ATTACH_POLL=${FM_ARM_ATTACH_POLL:-0.5}
 CYCLE_LOG="$STATE/.watch-cycle-exits.log"
@@ -110,6 +128,8 @@ cycle_watcher_identity=none
 cycle_origin=unknown
 cycle_started_at=0
 cycle_lock_before='pid:none|identity:none'
+cycle_startup_scan_secs=unknown
+cycle_startup_lock_secs=unknown
 
 cycle_begin() {
   cycle_watcher_pid=$1
@@ -117,7 +137,22 @@ cycle_begin() {
   cycle_watcher_identity=$3
   cycle_started_at=$(date +%s)
   cycle_lock_before=$(lock_snapshot)
+  cycle_startup_scan_secs=unknown
+  cycle_startup_lock_secs=unknown
   cycle_active=1
+}
+
+# Fold the startup durations bin/fm-watch.sh recorded in the lock directory
+# (state/.watch.lock/startup-scan-secs, startup-lock-secs) into this cycle's
+# ledger row, once, for a child this arm actually forked and just confirmed as
+# the healthy watcher. Best-effort: an absent or malformed value stays "unknown"
+# rather than blocking the confirmation it is only diagnostic evidence for.
+cycle_record_startup_durations() {
+  local value
+  value=$(cat "$WATCH_LOCK/startup-scan-secs" 2>/dev/null || true)
+  case "$value" in ''|*[!0-9]*) ;; *) cycle_startup_scan_secs=$value ;; esac
+  value=$(cat "$WATCH_LOCK/startup-lock-secs" 2>/dev/null || true)
+  case "$value" in ''|*[!0-9]*) ;; *) cycle_startup_lock_secs=$value ;; esac
 }
 
 cycle_refresh_lock_before() {
@@ -151,7 +186,10 @@ cycle_log_append() {
     sleep 0.02
     i=$((i + 1))
   done
-  printf 'arm_pid=%s\twatcher_pid=%s\torigin=%s\tstarted_at=%s\tended_at=%s\texit_code=%s\tsignal=%s\treason=%s\tbeacon_age=%s\tlock_before=%s\tlock_after=%s\tsuccessor=%s\n' \
+  # successor=%s must stay the LAST field: cycle_mark_predecessor_successor's
+  # rewrite matches it with a `$`-anchored end-of-line pattern, so anything
+  # appended after it here would silently break that predecessor-linking rewrite.
+  printf 'arm_pid=%s\twatcher_pid=%s\torigin=%s\tstarted_at=%s\tended_at=%s\texit_code=%s\tsignal=%s\treason=%s\tbeacon_age=%s\tlock_before=%s\tlock_after=%s\tstartup_scan_secs=%s\tstartup_lock_secs=%s\tsuccessor=%s\n' \
     "$ARM_PID" \
     "$(cycle_clean_field "$cycle_watcher_pid")" \
     "$(cycle_clean_field "$cycle_origin")" \
@@ -163,6 +201,8 @@ cycle_log_append() {
     "$beacon_age" \
     "$(cycle_clean_field "$cycle_lock_before")" \
     "$(cycle_clean_field "$lock_after")" \
+    "$(cycle_clean_field "$cycle_startup_scan_secs")" \
+    "$(cycle_clean_field "$cycle_startup_lock_secs")" \
     "$(cycle_clean_field "$successor")" >> "$CYCLE_LOG" 2>/dev/null || true
 
   size=$(wc -c < "$CYCLE_LOG" 2>/dev/null | tr -d '[:space:]')
@@ -252,6 +292,25 @@ report_attached() {
   local age
   age=$(fm_path_age "$BEAT")
   echo "watcher: attached pid=$HEALTHY_PID (beacon ${age}s)"
+}
+
+# Startup-progress evidence for a freshly forked child that has not yet taken
+# the lock, so healthy_watcher (strict: lock held + identity-matched + fresh
+# beacon) cannot see it. Deliberately weaker than healthy_watcher - it never
+# reports "started" or "attached", and it never reads or writes the shared
+# state/.last-watcher-beat that healthy_watcher and every other liveness gate
+# trust - it only tells the confirmation wait below whether it is looking at a
+# live child mid-scan or something already dead or stuck before ever reaching
+# its own preflight: the child process named by <pid> is still alive, AND its
+# own pre-lock progress marker (STARTING_BEAT; bin/fm-watch.sh touches it right
+# before its migration scan) has an mtime at or after <since>, so the touch is
+# this cycle's own, not a stale leftover from an earlier attempt.
+child_startup_progress() {  # <pid> <since>
+  local pid=$1 since=$2 mtime
+  fm_pid_alive "$pid" || return 1
+  mtime=$(fm_path_mtime "$STARTING_BEAT") || return 1
+  case "$mtime" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$mtime" -ge "$since" ]
 }
 
 # Give a successor the same bounded confirmation window used for a fresh child.
@@ -557,10 +616,13 @@ owned_child_finished() {
 # date(1) exposes whole seconds. Keep the configured confirmation budget from
 # collapsing when startup begins just before the next second boundary.
 deadline=$(( $(date +%s) + CONFIRM_TIMEOUT + 1 ))
+startup_grace_deadline=$(( $(date +%s) + STARTUP_GRACE + 1 ))
+startup_grace_since=$cycle_started_at
 while :; do
   if healthy_watcher; then
     if [ "$HEALTHY_PID" = "$child" ]; then
       cycle_refresh_lock_before
+      cycle_record_startup_durations
       if ! handling_generation=$(handling_successor_generation); then
         cleanup_child
         wait "$child" 2>/dev/null || true
@@ -592,7 +654,21 @@ while :; do
     owned_child_finished "$rc"
     exit $?
   fi
-  [ "$(date +%s)" -ge "$deadline" ] && break
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    # Past the ordinary confirmation budget. A child that is still alive and
+    # has touched its own pre-lock progress marker (STARTING_BEAT) at or after
+    # this cycle began is evidence of a slow-but-healthy pre-lock scan, not a
+    # wedge: keep waiting up to the separate, bounded STARTUP_GRACE instead of
+    # killing it here. A child with no such evidence (dead, or never touched
+    # the marker at all) gets none of this and fails at the ordinary deadline
+    # exactly as before.
+    if [ "$(date +%s)" -lt "$startup_grace_deadline" ] \
+      && child_startup_progress "$child" "$startup_grace_since"; then
+      sleep 0.2
+      continue
+    fi
+    break
+  fi
   sleep 0.2
 done
 

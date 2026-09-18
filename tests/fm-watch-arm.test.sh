@@ -155,6 +155,56 @@ start_rearm_arm() {  # <home> <state> <fakebin> <arm-out> [predecessor-arm-pid]
   return 0
 }
 
+test_arm_confirms_a_slow_but_healthy_startup_scan() {
+  local dir state fakebin slow_migrate armout watch_pid i
+  dir=$(make_case slow-startup-scan)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  slow_migrate="$dir/slow-migrate.sh"
+  armout="$dir/arm.out"
+  cat > "$slow_migrate" <<'SH'
+#!/usr/bin/env bash
+sleep 12
+exit 0
+SH
+  chmod +x "$slow_migrate"
+
+  # FM_ARM_CONFIRM_TIMEOUT is deliberately far below the 12s pre-lock scan this
+  # fixture simulates: with no startup-liveness credit at all, the pre-fix arm
+  # would have killed this child around this bound (10s, ARM_CONFIRM_DEFAULT's
+  # old value) long before the scan below ever finishes. Confirming anyway
+  # proves the pre-lock progress marker bin/fm-watch.sh touches before the
+  # scan - not just a bigger default - is what the arm's confirmation wait
+  # actually honors.
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_ARM_CONFIRM_TIMEOUT=3 \
+    FM_PR_CHECK_MIGRATE_OVERRIDE="$slow_migrate" \
+    "$WATCH_ARM" > "$armout" &
+  ARM_PID=$!
+
+  i=0
+  while [ "$i" -lt 200 ]; do
+    grep -q '^watcher: started ' "$armout" 2>/dev/null && break
+    is_live_non_zombie "$ARM_PID" || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+
+  grep -q '^watcher: started ' "$armout" \
+    || fail "arm did not confirm a watcher whose pre-lock scan took 12s: $(cat "$armout")"
+  watch_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+  is_live_non_zombie "$watch_pid" || fail "confirmed watcher process is not actually live"
+
+  # The ledger row for this cycle is written only when the cycle actually
+  # closes (bin/fm-watch-arm.sh's cycle_log_append), not at the moment it is
+  # confirmed, so end the cycle before reading it.
+  kill -TERM "$watch_pid" 2>/dev/null || true
+  wait "$ARM_PID" 2>/dev/null || true
+  grep -Eq 'startup_scan_secs=1[0-9]' "$state/.watch-cycle-exits.log" \
+    || fail "confirmed cycle did not record its pre-lock scan duration in the lifecycle ledger: $(cat "$state/.watch-cycle-exits.log" 2>/dev/null)"
+  pass "watch-arm: a slow-but-healthy pre-lock startup scan is confirmed instead of killed at the confirmation timeout"
+}
+
 test_attached_arm_reports_the_delivered_wake() {
   local dir state fakebin out armout status
   dir=$(make_case attached-delivered-wake)
@@ -242,7 +292,7 @@ test_attached_arm_still_fails_on_a_wake_it_did_not_deliver() {
 }
 
 test_rearm_resurfaces_durable_queue_and_remote_open_decision() {
-  local dir home state fakebin result armout drainout status watcher_pid sequence generation decision_recovery_arm decision_successor
+  local dir home state fakebin result armout drainout status watcher_pid sequence generation decision_recovery_arm decision_successor rearm_i
   dir=$(make_case rearm-resurface)
   home="$dir/home"
   state="$dir/state"
@@ -287,7 +337,16 @@ test_rearm_resurfaces_durable_queue_and_remote_open_decision() {
   append_wake "$state" check startup-network 'check: startup-network'
 
   start_rearm_arm "$home" "$state" "$fakebin" "$armout"
-  sleep 0.25
+  # Printing the reason line and the process actually finishing its exit are
+  # not atomic, so give a short bounded window for that ordinary exit to be
+  # reaped before concluding the arm never surfaced the recovery wake at all;
+  # a single instantaneous liveness sample can otherwise race a normal fast
+  # close and misreport it as staying live.
+  rearm_i=0
+  while [ "$rearm_i" -lt 20 ] && is_live_non_zombie "$ARM_PID"; do
+    sleep 0.1
+    rearm_i=$((rearm_i + 1))
+  done
   if is_live_non_zombie "$ARM_PID"; then
     # End the fixture through an ordinary actionable status transition so this
     # failing pre-fix path leaves no child behind.
@@ -804,6 +863,7 @@ test_downtime_marker_does_not_follow_symlink() {
   pass "watch-arm: downtime marker publication does not follow symlinks"
 }
 
+test_arm_confirms_a_slow_but_healthy_startup_scan
 test_attached_arm_reports_the_delivered_wake
 test_attached_arm_reports_the_delivered_wake_after_drain
 test_attached_arm_still_fails_on_a_wake_it_did_not_deliver
