@@ -51,6 +51,7 @@
 #
 # prendi takes the lease BEFORE downloading, so a crash in between leaves this
 # home refused rather than working on stale data; rerunning prendi finishes.
+# Until it does, consegna, backup, and check refuse to upload over the bucket.
 # Before replacing data/ it compares data/ with the manifest recorded at this
 # machine's last sync, and refuses when there are unuploaded local changes
 # unless --replace-local is given. Every download first copies the current
@@ -87,8 +88,9 @@
 # riprendi is captain-authorized per occasion: firstmate runs it only on the
 # captain's explicit word. It needs ec2_instance_id, ec2_machine, ec2_home, and
 # ec2_user in config. It lists the EC2 home's in-flight tasks first (through SSM
-# `inflight`) and stops when there are any unless --leave, then runs `consegna`
-# there through SSM, `prendi` here, and `aws ec2 stop-instances`.
+# `inflight`) and stops when there are any unless --leave, refuses over local
+# unuploaded data/ changes unless --replace-local before touching EC2, then runs
+# `consegna` there through SSM, `prendi` here, and `aws ec2 stop-instances`.
 #
 # Exit codes: 0 success/allowed/idle, 1 refused/failed/busy, 2 usage or not enabled.
 #
