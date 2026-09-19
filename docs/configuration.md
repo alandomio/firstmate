@@ -416,6 +416,49 @@ The sweep must finish inside `FM_CHECK_TIMEOUT` (default 30), because a run the 
 So a budget larger than that timeout allows is cut down to what fits instead of being refused, and the cut is reported in the report line.
 A budget that is not a whole number from 1 to 120 is still refused outright.
 
+## Machine handoff (config/handoff-s3)
+
+One firstmate home can move between machines, such as the captain's laptop and an EC2 instance, through an S3 bucket, and is never active on two of them at once.
+The feature is off by default and does nothing unless the local, gitignored `config/handoff-s3` exists.
+[`bin/fm-handoff.sh`](../bin/fm-handoff.sh) owns the commands, the lease verdicts, the bucket layout, and the local records; this section owns the config schema and the operator contract.
+
+`config/handoff-s3` holds one `key=value` per line; blank lines and `#` comments are ignored, and an unknown key is refused.
+
+- `bucket` (required) is the bucket name; the bucket should have versioning on, because that is what makes a synced deletion or overwrite recoverable.
+- `machine` (required) is this machine's name in the lease, such as `laptop` or `ec2`, made of letters, digits, `.`, `_`, and `-`.
+- `prefix` (optional, default `firstmate`) is the key prefix inside the bucket.
+- `region` and `profile` (optional) are passed to every `aws` call.
+- `ec2_instance_id`, `ec2_machine`, `ec2_home`, and `ec2_user` (optional, all four together) enable the return flow on the machine that takes the helm back from EC2: the instance, its `machine` name, the absolute path of its firstmate home, and the user that runs it.
+- `idle_activity` (optional, repeatable) is a path whose recent change counts as activity for the idle probe, such as the directory where the primary harness writes its session transcripts.
+
+Only `data/` moves; `state/`, `projects/`, and `config/` never leave the machine, so each machine keeps its own clones, runtime records, and configuration.
+The bucket holds a `lease` object naming the machine that holds the helm, a `last-upload` object naming who uploaded `data/` last and when, and the `data/` copy itself, synced with `aws s3 sync --delete`.
+
+At session start, when the file exists, the lock stage reads the lease before claiming the session lock.
+A machine that does not hold the lease starts in the ordinary lock-refused read-only mode, and the refusal names the holder, the last upload, how many local `data/` changes were never uploaded, and the exact commands that end it.
+The lease read is the one bounded network call on the session-start blocking path, and only when the feature is enabled.
+When the bucket cannot be reached, a machine proceeds only if its own record says it took the lease and never released it, so the laptop keeps working offline; any other machine stays read-only.
+
+- `bin/fm-handoff.sh prendi` takes the helm: it takes the lease, downloads `data/`, and arms the periodic backup; a bucket that has never received an upload is seeded from this machine instead.
+- `bin/fm-handoff.sh consegna` hands it over: it uploads `data/` and releases the lease, refusing while tasks are in flight unless `--leave`, which records in each backlog item that the task stays on this machine.
+- `bin/fm-handoff.sh prendi --force` takes the lease from a machine that never handed over, only on the captain's explicit word, and records the forced takeover and the upload it started from in `data/handoff-log.md`.
+- `bin/fm-handoff.sh riprendi` is the return flow from EC2, only on the captain's explicit word for that occasion: it lists the EC2 home's in-flight tasks, runs `consegna` there through SSM, runs `prendi` here, and stops the instance.
+
+No command overwrites unuploaded local `data/` changes silently.
+`prendi` refuses over them until `--replace-local`, and every download first copies the previous `data/` under `state/handoff-backups/`, so wanted changes can be merged back by hand; `bin/fm-handoff.sh diff` lists them and compares with the bucket copy.
+After taking the helm, rerun `bin/fm-session-start.sh` so the session acquires the lock.
+
+The periodic backup is a registered watcher check, `state/handoff-backup.check.sh`, bound through `bin/fm-check-register.sh` like the watched-tool check above.
+It uploads, without releasing the lease, when `data/` changed since the last sync and either `data/backlog.md` changed or `FM_HANDOFF_BACKUP_INTERVAL` (default 900 seconds) has passed, so a backlog update is uploaded within one watcher check interval and other changes about every 15 minutes.
+A registered check was chosen over an operating-system timer because it runs inside the supervision loop that already owns this home's wakes on every supervised platform, needs no per-platform scheduler, and turns a lost lease or a failing upload into an ordinary wake.
+The tradeoff is that it runs only while a watcher runs, because arming it does not make supervision required; with no work under way nothing uploads until the next supervised period or `consegna`, and `bin/fm-handoff.sh backup` uploads on demand.
+Before each upload it checks the lease, and a machine that finds the lease gone stops uploading, refuses future lock claims, and wakes firstmate once.
+
+The EC2 side calls two commands.
+At boot, before the primary session starts, it runs `bin/fm-handoff.sh prendi`, which takes the helm only when no other machine holds it; a refusal is expected there and leaves EC2 starting read-only, so the boot unit must not treat it as fatal.
+Its idle-shutdown timer runs `bin/fm-handoff.sh idle --minutes 120`, and only on exit 0 runs `bin/fm-handoff.sh consegna` and powers off.
+The idle probe exits 1 with a reason while any in-flight task (a persistent secondmate does not count), registered process-event source, queued wake, pending captain inbox note, or pending Relay mention exists, or while `data/`, a task status log, the wake queue, or an `idle_activity` path changed within the window.
+
 ## Relay (.env)
 
 Relay lets a firstmate instance answer public mentions and act on normal reversible mention requests through firstmate's normal lifecycle.

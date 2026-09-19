@@ -59,6 +59,12 @@
 # Those nine names are also the runtime-bound stage list below, so a truncated
 # startup can name exactly which of them never ran.
 #
+# The one exception is opt-in: when config/handoff-s3 enables the machine
+# handoff, the lock stage runs `bin/fm-handoff.sh gate`, a bounded
+# (FM_HANDOFF_TIMEOUT) read of the S3 lease. Mutation authority cannot be
+# deferred past the lock, so that read stays on the blocking path; its header
+# owns the verdicts, including the offline case.
+#
 # NO NETWORK ON THE BLOCKING PATH. This digest runs on a session-open hook that
 # blocks session initialization, so anything it waits for is time the captain
 # waits before the first turn - and every external-network call it used to make
@@ -619,6 +625,17 @@ fi
 # --- 1. lock -----------------------------------------------------------
 stage lock
 subsection "LOCK"
+# Opt-in machine handoff: the lease verdict is recorded before the lock is
+# claimed, so fm-lock.sh itself refuses when another machine holds the helm and
+# carries the explanation; only an allowed verdict's own line prints here.
+if [ -f "$CONFIG/handoff-s3" ]; then
+  if HANDOFF_OUT=$("$SCRIPT_DIR/fm-handoff.sh" gate 2>&1); then
+    printf '%s\n' "$HANDOFF_OUT"
+  elif [ ! -e "$STATE/.handoff-refused" ]; then
+    printf 'HANDOFF: the lease verdict could not be recorded - operate read-only until it is fixed: %s\n' \
+      "${HANDOFF_OUT:-bin/fm-handoff.sh gate failed without output}" > "$STATE/.handoff-refused"
+  fi
+fi
 LOCK_OUT=$("$SCRIPT_DIR/fm-lock.sh" 2>&1)
 LOCK_RC=$?
 printf '%s\n' "$LOCK_OUT"
@@ -629,7 +646,7 @@ if [ "$LOCK_RC" -ne 0 ]; then
   {
     printf '%s\n' "$BAR"
     printf '●  READ-ONLY SESSION - FLEET LOCK OWNERSHIP WAS NOT VERIFIED\n'
-    printf '●  %s\n' "$LOCK_OUT"
+    printf '%s\n' "$LOCK_OUT" | sed 's/^/●  /'
     printf '●  Skipping every mutating step: PR-check migration, stale Herdr child cleanup,\n'
     printf '●  secondmate convergence, secondmate liveness, pending remote handoff retry,\n'
     printf '●  X-mode artifacts, fleet sync, and wake-queue drain. Detect-only bootstrap\n'
