@@ -1,0 +1,112 @@
+# config/handoff-s3 on laptop:
+bucket=fm-test-bucket
+machine=laptop
+ec2_instance_id=i-0demo
+ec2_machine=ec2
+ec2_home=/tmp/fm-handoff.gBqUaI/ec2
+ec2_user=firstmate
+
+$ [laptop] bin/fm-handoff.sh prendi
+seeded the empty bucket from this machine (upload 20260919T130851Z-laptop-422bf3).
+this machine (laptop) now holds the helm. Rerun bin/fm-session-start.sh to take it in this session.
+(exit 0)
+
+$ [laptop] bin/fm-handoff.sh gate
+HANDOFF: this machine (laptop) holds the helm since 2026-09-19T13:08:50Z.
+(exit 0)
+
+$ [ec2] bin/fm-handoff.sh gate
+HANDOFF: the helm is on machine laptop (lease taken 2026-09-19T13:08:50Z) - operate read-only.
+HANDOFF: last upload of data/: 2026-09-19T13:08:51Z by laptop (seed, upload 20260919T130851Z-laptop-422bf3).
+HANDOFF: to force the takeover without a handover (captain's explicit word only): bin/fm-handoff.sh prendi --force
+HANDOFF: after taking the helm, rerun bin/fm-session-start.sh.
+(exit 1)
+
+$ [ec2] bin/fm-lock.sh
+error: this machine does not hold the machine-handoff lease; operate read-only until resolved
+HANDOFF: the helm is on machine laptop (lease taken 2026-09-19T13:08:50Z) - operate read-only.
+HANDOFF: last upload of data/: 2026-09-19T13:08:51Z by laptop (seed, upload 20260919T130851Z-laptop-422bf3).
+HANDOFF: to force the takeover without a handover (captain's explicit word only): bin/fm-handoff.sh prendi --force
+HANDOFF: after taking the helm, rerun bin/fm-session-start.sh.
+(exit 1)
+
+$ [laptop] bin/fm-handoff.sh consegna
+in-flight tasks on this machine (laptop):
+  t1 (ship, proj)
+refused: bring them to a stop point first, or rerun with --leave to hand over while they stay on laptop.
+(exit 1)
+
+$ [laptop] bin/fm-handoff.sh consegna --leave
+in-flight tasks on this machine (laptop):
+  t1 (ship, proj)
+note: t1 is not a backlog item this script could annotate; recorded in data/handoff-log.md only.
+handed over: data/ uploaded (upload 20260919T130851Z-laptop-78424f) and the lease released. This machine is now read-only; a running firstmate session here must stop mutating.
+(exit 0)
+
+$ [ec2] bin/fm-handoff.sh prendi
+downloaded data/ from upload 2026-09-19T13:08:51Z by laptop (consegna, upload 20260919T130851Z-laptop-78424f).
+the previous local data/ is saved at /tmp/fm-handoff.gBqUaI/ec2/state/handoff-backups/20260919T130852Z.
+this machine (ec2) now holds the helm. Rerun bin/fm-session-start.sh to take it in this session.
+(exit 0)
+
+$ [laptop] bin/fm-handoff.sh gate
+HANDOFF: the helm is on machine ec2 (lease taken 2026-09-19T13:08:52Z) - operate read-only.
+HANDOFF: last upload of data/: 2026-09-19T13:08:52Z by ec2 (prendi, upload 20260919T130852Z-ec2-632480).
+HANDOFF: to take the helm back cleanly (captain's explicit word only): bin/fm-handoff.sh riprendi
+HANDOFF: to force the takeover without a handover (captain's explicit word only): bin/fm-handoff.sh prendi --force
+HANDOFF: after taking the helm, rerun bin/fm-session-start.sh.
+(exit 1)
+
+$ [ec2] bin/fm-handoff.sh check
+(exit 0)
+
+$ cat s3://fm-test-bucket/firstmate/data/backlog.md
+- item A
+- ec2 edit
+
+$ [ec2] bin/fm-handoff.sh idle --minutes 120
+busy: activity in the last 120 minute(s) (/tmp/fm-handoff.gBqUaI/ec2/data)
+(exit 1)
+
+$ [laptop] bin/fm-handoff.sh riprendi
+in-flight tasks on ec2:
+  none
+refused: this machine has local data/ changes that were never uploaded:
+  modified: backlog.md
+Nothing changed on EC2. Decide with the captain: bin/fm-handoff.sh diff compares them; bin/fm-handoff.sh riprendi --replace-local saves this copy under state/handoff-backups/ before taking the helm.
+(exit 1)
+
+$ [laptop] bin/fm-handoff.sh riprendi --replace-local
+in-flight tasks on ec2:
+  none
+  EC2: handed over: data/ uploaded (upload 20260919T130853Z-ec2-a201eb) and the lease released. This machine is now read-only; a running firstmate session here must stop mutating.
+downloaded data/ from upload 2026-09-19T13:08:53Z by ec2 (consegna, upload 20260919T130853Z-ec2-a201eb).
+the previous local data/ is saved at /tmp/fm-handoff.gBqUaI/laptop/state/handoff-backups/20260919T130853Z.
+this machine (laptop) now holds the helm. Rerun bin/fm-session-start.sh to take it in this session.
+stopping the EC2 instance i-0demo.
+(exit 0)
+
+$ cat s3://.../lease
+fm-handoff-lease-v1
+machine=laptop
+nonce=07f1fc790d0d804e
+taken_at=2026-09-19T13:08:53Z
+forced_from=
+
+$ cat laptop data/handoff-log.md
+# Machine handoff log
+
+Written by bin/fm-handoff.sh; one line per handoff event.
+
+- 2026-09-19T13:08:51Z laptop took the helm, seeding the empty bucket from its data/.
+- 2026-09-19T13:08:51Z laptop handed over with task(s) left in flight on it: t1
+- 2026-09-19T13:08:52Z ec2 took the helm, starting from upload 2026-09-19T13:08:51Z by laptop (consegna, upload 20260919T130851Z-laptop-78424f).
+- 2026-09-19T13:08:53Z ec2 handed over the helm (no task in flight).
+- 2026-09-19T13:08:53Z laptop took the helm, starting from upload 2026-09-19T13:08:53Z by ec2 (consegna, upload 20260919T130853Z-ec2-a201eb).
+- 2026-09-19T13:08:53Z laptop set aside its unuploaded local data/ changes in /tmp/fm-handoff.gBqUaI/laptop/state/handoff-backups/20260919T130853Z for merging.
+
+$ ls laptop state/handoff-backups
+20260919T130853Z
+
+$ ec2 stop-instances calls
+--instance-ids i-0demo
