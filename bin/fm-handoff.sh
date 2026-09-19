@@ -78,8 +78,8 @@
 # something needs attention, and repeats the same problem at most once.
 # prendi arms the check and consegna disarms it.
 #
-# idle is the EC2 idle-shutdown probe: busy while any state/<id>.meta, registered
-# process-event source, queued wake, pending captain inbox note, or pending Relay
+# idle is the EC2 idle-shutdown probe: busy while any in-flight task (a
+# state/<id>.meta other than a secondmate), registered process-event source, queued wake, pending captain inbox note, or pending Relay
 # mention exists, or while anything under data/, a state/<id>.status log, the wake
 # queue, or a configured idle_activity path changed in the last N minutes.
 # Exit 0 prints "idle: ...", exit 1 prints "busy: <reason>".
@@ -328,6 +328,18 @@ write_refused() {  # <text>
 }
 
 clear_refused() { rm -f "$REFUSED"; }
+
+# require_held: the lease reads as ours AND this home's prendi finished, so its
+# data/ is the bucket's latest and may be uploaded over it.
+require_held() {  # <what>
+  case "$LEASE_STATE" in
+    ours) ;;
+    unknown) die "cannot read the lease ($LEASE_ERR); nothing $1" ;;
+    *) die "refused: this machine does not hold the lease (${LEASE_MACHINE:-$LEASE_STATE}); nothing $1" ;;
+  esac
+  [ "$(held_field status)" = held ] \
+    || die "refused: this machine took the lease but prendi never finished bringing data/ up to date; nothing $1 - rerun bin/fm-handoff.sh prendi"
+}
 
 # manifest_of <dir>: "<sha256>  <relative path>" for every regular file, sorted.
 manifest_of() {
@@ -703,8 +715,14 @@ action_prendi() {
   # 2. Bring data/ to the bucket's latest upload, or seed an empty bucket, then
   # upload once more so the bucket records who took the helm and from where.
   if [ "$UPLOAD_STATE" = absent ]; then
-    append_log "$(now_iso) $CFG_MACHINE took the helm, seeding the empty bucket from its data/." \
-      || die "cannot write $HANDOFF_LOG"
+    if [ -n "$prior_holder" ]; then
+      append_log "$(now_iso) FORCED takeover by $CFG_MACHINE from $prior_holder (its lease taken ${prior_taken:-at an unknown time}), started from no upload: seeding the empty bucket from its data/." \
+        || die "cannot record the forced takeover in $HANDOFF_LOG"
+      printf 'recorded the forced takeover in data/handoff-log.md.\n'
+    else
+      append_log "$(now_iso) $CFG_MACHINE took the helm, seeding the empty bucket from its data/." \
+        || die "cannot write $HANDOFF_LOG"
+    fi
     upload seed || die "the lease is taken but seeding the empty bucket from this machine failed; rerun bin/fm-handoff.sh prendi"
     printf 'seeded the empty bucket from this machine (upload %s).\n' "$UPLOADED_ID"
   else
@@ -761,7 +779,7 @@ action_consegna() {
   op_lock
   read_lease
   case "$LEASE_STATE" in
-    ours) ;;
+    ours) require_held "handed over" ;;
     free)
       if [ "$(held_field status)" = released ]; then
         printf 'already handed over: no machine holds the helm.\n'
@@ -810,7 +828,7 @@ action_backup() {
   load_config
   op_lock
   read_lease
-  [ "$LEASE_STATE" = ours ] || die "refused: this machine does not hold the lease (${LEASE_MACHINE:-$LEASE_STATE}); nothing uploaded"
+  require_held uploaded
   upload backup || die "uploading data/ failed"
   printf 'uploaded data/ (upload %s); the lease stays with this machine.\n' "$UPLOADED_ID"
 }
@@ -823,11 +841,19 @@ report_once() {  # <message>: print only when it differs from the last report.
 }
 
 action_check() {
-  local changes elapsed last t budget
+  local changes elapsed last t budget start
+  start=$(now_epoch)
   enabled || return 0
-  load_config 2>/dev/null || { report_once "handoff backup: config/handoff-s3 is invalid - run bin/fm-handoff.sh status"; return 0; }
+  (load_config) >/dev/null 2>&1 || { report_once "handoff backup: config/handoff-s3 is invalid - run bin/fm-handoff.sh status"; return 0; }
+  load_config
   [ "$(held_field status)" = held ] || return 0
   op_lock try || return 0
+  # Fit inside the watcher's per-check bound: the lease read, the sync, and the
+  # last-upload write together.
+  budget=${FM_CHECK_TIMEOUT:-30}
+  case "$budget" in ''|*[!0-9]*) budget=30 ;; esac
+  [ "$SMALL_TIMEOUT" -le $((budget / 6)) ] || SMALL_TIMEOUT=$((budget / 6))
+  [ "$SMALL_TIMEOUT" -ge 1 ] || SMALL_TIMEOUT=1
   changes=$(local_changes)
   [ -n "$changes" ] || return 0
   last=$(cat "$LAST_UPLOAD_EPOCH" 2>/dev/null || printf 0)
@@ -847,12 +873,9 @@ action_check() {
       return 0
       ;;
   esac
-  # Fit inside the watcher's per-check bound, leaving room for the small calls.
-  budget=${FM_CHECK_TIMEOUT:-30}
-  case "$budget" in ''|*[!0-9]*) budget=30 ;; esac
-  t=$SYNC_TIMEOUT
-  [ "$t" -le $((budget - 10)) ] || t=$((budget - 10))
-  [ "$t" -ge 5 ] || t=5
+  t=$(( budget - ($(now_epoch) - start) - SMALL_TIMEOUT - 3 ))
+  [ "$t" -le "$SYNC_TIMEOUT" ] || t=$SYNC_TIMEOUT
+  [ "$t" -ge 1 ] || t=1
   upload backup "$t" || report_once "handoff backup: uploading data/ failed; it will be retried"
   return 0
 }
@@ -865,7 +888,7 @@ action_inflight() {
 }
 
 action_idle() {
-  local minutes=120 p recent
+  local minutes=120 p recent inflight
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --minutes) minutes=${2:-}; shift ;;
@@ -879,7 +902,8 @@ action_idle() {
   # shellcheck source=bin/fm-supervision-lib.sh
   . "$SCRIPT_DIR/fm-supervision-lib.sh"
   fm_supervision_status "$STATE"
-  [ "$FM_SUP_IN_FLIGHT" -eq 0 ] || { printf 'busy: %s task(s) in flight\n' "$FM_SUP_IN_FLIGHT"; return 1; }
+  inflight=$(inflight_ids | wc -l | tr -d ' ')
+  [ "$inflight" -eq 0 ] || { printf 'busy: %s task(s) in flight\n' "$inflight"; return 1; }
   [ "$FM_SUP_SOURCES" -eq 0 ] || { printf 'busy: %s process-event source(s) registered\n' "$FM_SUP_SOURCES"; return 1; }
   [ "$FM_SUP_QUEUE_PENDING" = false ] || { printf 'busy: queued wakes are waiting\n'; return 1; }
   if [ -d "$STATE/inbox" ] && [ -n "$(find "$STATE/inbox" -mindepth 1 -maxdepth 1 -type f -print -quit 2>/dev/null)" ]; then
@@ -933,7 +957,7 @@ ssm_run() {  # <fm-handoff args...>: run bin/fm-handoff.sh on the EC2 home.
 }
 
 action_riprendi() {
-  local leave=0 replace=0 prendi_args=()
+  local leave=0 replace=0 prendi_args=() changes
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --leave) leave=1 ;;
@@ -960,6 +984,16 @@ action_riprendi() {
       if [ "$(printf '%s' "$SSM_OUT" | tr -d '[:space:]')" != none ] && [ "$leave" -ne 1 ]; then
         printf 'refused: EC2 has tasks in flight. Decide with the captain: wait for them, or rerun with --leave so they stay on %s.\n' "$CFG_EC2_MACHINE" >&2
         return 1
+      fi
+      if [ "$replace" -ne 1 ]; then
+        read_last_upload
+        changes=$(local_changes)
+        if [ "$UPLOAD_STATE" = present ] && [ -n "$changes" ]; then
+          printf 'refused: this machine has local data/ changes that were never uploaded:\n' >&2
+          printf '%s\n' "$changes" | sed 's/^/  /' >&2
+          printf 'Nothing changed on EC2. Decide with the captain: bin/fm-handoff.sh diff compares them; bin/fm-handoff.sh riprendi --replace-local saves this copy under state/handoff-backups/ before taking the helm.\n' >&2
+          return 1
+        fi
       fi
       if [ "$leave" -eq 1 ]; then ssm_run consegna --leave; else ssm_run consegna; fi \
         || die "consegna on EC2 failed; nothing changed here: $SSM_OUT"

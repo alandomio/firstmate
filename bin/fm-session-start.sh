@@ -629,7 +629,12 @@ subsection "LOCK"
 # claimed, so fm-lock.sh itself refuses when another machine holds the helm and
 # carries the explanation; only an allowed verdict's own line prints here.
 if [ -f "$CONFIG/handoff-s3" ]; then
-  HANDOFF_OUT=$("$SCRIPT_DIR/fm-handoff.sh" gate 2>&1) && printf '%s\n' "$HANDOFF_OUT"
+  if HANDOFF_OUT=$("$SCRIPT_DIR/fm-handoff.sh" gate 2>&1); then
+    printf '%s\n' "$HANDOFF_OUT"
+  elif [ ! -e "$STATE/.handoff-refused" ]; then
+    printf 'HANDOFF: the lease verdict could not be recorded - operate read-only until it is fixed: %s\n' \
+      "${HANDOFF_OUT:-bin/fm-handoff.sh gate failed without output}" > "$STATE/.handoff-refused"
+  fi
 fi
 LOCK_OUT=$("$SCRIPT_DIR/fm-lock.sh" 2>&1)
 LOCK_RC=$?

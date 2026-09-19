@@ -16,7 +16,6 @@ HANDOFF="$ROOT/bin/fm-handoff.sh"
 TMP_ROOT=$(fm_test_tmproot fm-handoff)
 FAKEBIN="$TMP_ROOT/fakebin"
 S3ROOT="$TMP_ROOT/s3"
-BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 mkdir -p "$FAKEBIN" "$S3ROOT"
 fm_git_identity fmtest fmtest@example.invalid
 
@@ -349,7 +348,51 @@ test_unreachable_bucket_allows_only_the_last_holder() {
   out=$(hf "$laptop" gate 2>&1)
   expect_code 1 "$?" "an unusable config should refuse"
   lock "$laptop" >/dev/null 2>&1 && fail "an unusable config must keep fm-lock refusing"
+  out=$(hf "$laptop" check 2>&1)
+  assert_contains "$out" "config/handoff-s3 is invalid" "the backup check should report an unusable config"
   pass "an unreachable bucket allows only the last holder, and a bad config refuses"
+}
+
+test_unfinished_prendi_never_uploads() {
+  local laptop ec2 out
+  reset_bucket
+  laptop=$(new_home unfinished-laptop laptop)
+  ec2=$(new_home unfinished-ec2 ec2)
+  printf 'stale ec2 copy\n' > "$ec2/data/backlog.md"
+  hf "$ec2" prendi >/dev/null 2>&1 || fail "ec2 prendi"
+  hf "$ec2" consegna >/dev/null 2>&1 || fail "ec2 consegna"
+  hf "$laptop" prendi >/dev/null 2>&1 || fail "laptop prendi"
+  printf 'latest laptop copy\n' > "$laptop/data/backlog.md"
+  hf "$laptop" consegna >/dev/null 2>&1 || fail "laptop consegna"
+  printf 'stale ec2 copy\n' > "$ec2/data/backlog.md"
+  : > "$S3ROOT/.fail-sync"
+  out=$(hf "$ec2" prendi 2>&1)
+  expect_code 1 "$?" "prendi should fail when the download fails"
+  rm -f "$S3ROOT/.fail-sync"
+  assert_grep "machine=ec2" "$S3ROOT/fm-test-bucket/firstmate/lease"
+  out=$(hf "$ec2" consegna 2>&1)
+  expect_code 1 "$?" "consegna must refuse after an unfinished prendi"
+  assert_contains "$out" "rerun bin/fm-handoff.sh prendi" "consegna should point to prendi"
+  out=$(hf "$ec2" backup 2>&1)
+  expect_code 1 "$?" "backup must refuse after an unfinished prendi"
+  assert_grep "latest laptop copy" "$S3ROOT/fm-test-bucket/firstmate/data/backlog.md"
+  hf "$ec2" prendi >/dev/null 2>&1 || fail "rerunning prendi should finish"
+  assert_grep "latest laptop copy" "$ec2/data/backlog.md"
+  pass "a home whose prendi never finished refuses consegna and backup instead of uploading stale data/"
+}
+
+test_forced_takeover_of_an_empty_bucket_is_recorded() {
+  local laptop ec2 out
+  reset_bucket
+  laptop=$(new_home fseed-laptop laptop)
+  ec2=$(new_home fseed-ec2 ec2)
+  : > "$S3ROOT/.fail-sync"
+  hf "$laptop" prendi >/dev/null 2>&1 && fail "laptop seed should fail while sync fails"
+  rm -f "$S3ROOT/.fail-sync"
+  out=$(hf "$ec2" prendi --force 2>&1) || fail "forced prendi of an empty bucket should seed: $out"
+  assert_contains "$out" "recorded the forced takeover" "forced seed should say it recorded the takeover"
+  assert_grep "FORCED takeover by ec2 from laptop" "$S3ROOT/fm-test-bucket/firstmate/data/handoff-log.md"
+  pass "a forced takeover that seeds an empty bucket is still recorded"
 }
 
 test_idle_probe() {
@@ -363,6 +406,9 @@ test_idle_probe() {
   expect_code 1 "$?" "a task in flight is busy"
   assert_contains "$out" "task(s) in flight" "busy reason should name tasks"
   rm -f "$home/state/t1.meta"
+  fm_write_secondmate_meta "$home/state/sm-idle.meta" "$TMP_ROOT/sm-idle"
+  out=$(hf "$home" idle --minutes 1 2>&1) || fail "a home with only a secondmate should be idle: $out"
+  rm -f "$home/state/sm-idle.meta"
   printf 'x\n' > "$home/state/.wake-queue"
   out=$(hf "$home" idle --minutes 1 2>&1)
   expect_code 1 "$?" "queued wakes are busy"
@@ -402,6 +448,12 @@ test_riprendi_runs_consegna_on_ec2_then_prendi_then_stops() {
   assert_grep "machine=ec2" "$S3ROOT/fm-test-bucket/firstmate/lease"
   [ ! -e "$S3ROOT/.ec2-stopped" ] || fail "a refused riprendi must not stop the instance"
   rm -f "$ec2/state/ec2-task.meta"
+  printf 'laptop edit\n' > "$laptop/data/local.md"
+  out=$(hf "$laptop" riprendi 2>&1)
+  expect_code 1 "$?" "riprendi should refuse over unuploaded local changes"
+  assert_contains "$out" "added: local.md" "riprendi should list the local change"
+  assert_grep "machine=ec2" "$S3ROOT/fm-test-bucket/firstmate/lease"
+  rm -f "$laptop/data/local.md"
   out=$(hf "$laptop" riprendi 2>&1) || fail "riprendi should succeed: $out"
   assert_grep "machine=laptop" "$S3ROOT/fm-test-bucket/firstmate/lease"
   assert_grep "ec2 work" "$laptop/data/backlog.md"
@@ -429,6 +481,23 @@ test_session_start_lands_in_existing_read_only_mode() {
   pass "session start on a machine without the lease lands in the existing read-only mode"
 }
 
+test_session_start_fails_closed_when_gate_cannot_decide() {
+  local home root out
+  reset_bucket
+  home=$(new_home ss-closed laptop)
+  hf "$home" prendi >/dev/null 2>&1 || fail "prendi"
+  [ ! -e "$home/state/.handoff-refused" ] || fail "the holder should have no refusal record"
+  root="$TMP_ROOT/ss-closed-root"
+  git init -q -b main "$root"
+  git -C "$root" commit -q --allow-empty -m init
+  out=$(env -u CLAUDECODE FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_SESSION_START_TIMEOUT=60 FM_HANDOFF_TIMEOUT=0 \
+    "$ROOT/bin/fm-session-start.sh" 2>&1)
+  assert_contains "$out" "READ-ONLY SESSION - FLEET LOCK OWNERSHIP WAS NOT VERIFIED" "a gate that cannot decide should leave the session read-only"
+  assert_contains "$out" "FM_HANDOFF_TIMEOUT must be a positive whole number" "the banner should say why"
+  [ ! -e "$home/state/.lock" ] || fail "a gate failure must not let the session write the lock"
+  pass "session start fails closed when the handoff gate exits without a verdict"
+}
+
 test_disabled_changes_nothing
 test_first_prendi_seeds_empty_bucket_and_gate_allows
 test_consegna_prendi_moves_data_and_foreign_lease_is_read_only
@@ -436,6 +505,9 @@ test_consegna_refuses_in_flight_unless_leave_and_records_backlog
 test_forced_takeover_records_it_and_returning_machine_keeps_its_changes
 test_backup_check_uploads_when_due_and_detects_lost_lease
 test_unreachable_bucket_allows_only_the_last_holder
+test_unfinished_prendi_never_uploads
+test_forced_takeover_of_an_empty_bucket_is_recorded
 test_idle_probe
 test_riprendi_runs_consegna_on_ec2_then_prendi_then_stops
 test_session_start_lands_in_existing_read_only_mode
+test_session_start_fails_closed_when_gate_cannot_decide

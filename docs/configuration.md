@@ -457,7 +457,7 @@ Before each upload it checks the lease, and a machine that finds the lease gone 
 The EC2 side calls two commands.
 At boot, before the primary session starts, it runs `bin/fm-handoff.sh prendi`, which takes the helm only when no other machine holds it; a refusal is expected there and leaves EC2 starting read-only, so the boot unit must not treat it as fatal.
 Its idle-shutdown timer runs `bin/fm-handoff.sh idle --minutes 120`, and only on exit 0 runs `bin/fm-handoff.sh consegna` and powers off.
-The idle probe exits 1 with a reason while any task, registered process-event source, queued wake, pending captain inbox note, or pending Relay mention exists, or while `data/`, a task status log, the wake queue, or an `idle_activity` path changed within the window.
+The idle probe exits 1 with a reason while any in-flight task (a persistent secondmate does not count), registered process-event source, queued wake, pending captain inbox note, or pending Relay mention exists, or while `data/`, a task status log, the wake queue, or an `idle_activity` path changed within the window.
 
 ## Relay (.env)
 
