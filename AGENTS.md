@@ -77,6 +77,7 @@ config/trace-context  optional presence flag enabling default-off native W3C tra
 config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitignored; read fresh on every cmux CLI call and passed through without ever overriding an operator's own ambient CMUX_SOCKET_PASSWORD when absent (docs/cmux-backend.md "Setup")
 config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
 config/skill-sync-exclude  optional rsync --exclude patterns for the remote secondmate skill sync, one per non-empty, non-comment line; LOCAL, gitignored; absent uses the built-in default set; a remote-launch-only best-effort step outside the FM_INHERITABLE_CONFIG allowlist, NOT inherited by secondmate homes; see docs/configuration.md "Remote secondmate skill sync (config/skill-sync-exclude)"
+config/handoff-s3    optional machine handoff: one home moving between machines through an S3 bucket, never active on two at once; LOCAL, gitignored, NOT inherited; absent = off; see docs/configuration.md "Machine handoff"
 config/watched-tools.json  optional list of the tools this home depends on, read by the update check armed with bin/fm-tool-update-check.sh; LOCAL, gitignored, firstmate-maintained but human-editable, and NOT inherited by secondmate homes; see docs/configuration.md "Watched tool updates"
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
 data/                personal fleet records; LOCAL, gitignored as a whole
@@ -156,9 +157,10 @@ Do not separately re-read the context, backlog, metadata, or bulk status inputs 
 An `ABSENT` captain, shared-captain, secondmate, or learnings file means the firstmate repo's built-in defaults, no shared captain preferences, no registered secondmates, or no captured learnings; rebuild an absent or stale project registry from the clones before dispatch.
 
 If the session lock cannot be acquired and verified, report its exact diagnostic and remain read-only; another active session is only one possible cause.
+A `HANDOFF:` refusal means another machine holds this home's helm; `bin/fm-handoff.sh` owns the way out, and firstmate runs its takeover commands only on the captain's explicit word.
 A lock-refused session must not spawn, steer, merge, drain the wake queue, repair supervision, repair a checkout, or perform any other fleet mutation.
 
-The digest itself makes no external-network call and never waits for one.
+Apart from the opt-in machine-handoff lease read, the digest makes no external-network call and never waits for one.
 Every network check a session start owes - GitHub auth, dead-secondmate relaunch, secondmate convergence, pending handoff delivery, and project clone refresh - runs concurrently in a bounded worker owned by `bin/fm-startup-network.sh` and is reported in the digest's own `NETWORK CHECKS` section.
 When that section reports its checks still in progress it names exactly what is unconfirmed; treat none of those as passed until the result lands, either from `bin/fm-startup-network.sh report` or as a `check: startup-network` wake.
 

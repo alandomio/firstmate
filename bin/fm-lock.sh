@@ -5,6 +5,12 @@
 # PID of any one tool call, which is dead moments after it is written.
 # Usage: fm-lock.sh           acquire; exit 1 unless ownership is verified
 #        fm-lock.sh status    print holder and liveness; always exits 0
+#
+# When the opt-in machine handoff is enabled (config/handoff-s3) and
+# state/.handoff-refused records that this machine does not hold the handoff
+# lease, acquisition is refused with that record's explanation, so the session
+# stays in the ordinary lock-refused read-only mode. bin/fm-handoff.sh owns that
+# record and the lease; this check is local and makes no network call.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,6 +37,15 @@ if [ "${1:-}" = "status" ]; then
   }
   if fm_harness_pid_alive "$old"; then echo "lock: held by live harness pid $old"; else echo "lock: stale (pid $old dead or not a harness)"; fi
   exit 0
+fi
+
+CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+if [ -f "$CONFIG_DIR/handoff-s3" ] && [ -e "$STATE/.handoff-refused" ]; then
+  {
+    echo "error: this machine does not hold the machine-handoff lease; operate read-only until resolved"
+    cat "$STATE/.handoff-refused" 2>/dev/null || echo "HANDOFF: state/.handoff-refused is unreadable; run bin/fm-handoff.sh status"
+  } >&2
+  exit 1
 fi
 
 me=$(fm_harness_ancestry_pid) || { echo "error: cannot locate harness process in ancestry" >&2; exit 1; }
