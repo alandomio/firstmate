@@ -188,13 +188,18 @@ PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 # Grounding wording is named by this home's optional config/knowledge-store
 # (docs/configuration.md): line 1 is the store's name as it reads in worker
 # text, line 2 is the search-instructions clause inserted in parentheses after
-# it. Absent (or either line blank) keeps this script's historical upstream
-# wording, so every home without the file gets a byte-identical brief.
+# it. A NONEXISTENT file keeps this script's historical upstream wording, so
+# every home without the file gets a byte-identical brief; a PRESENT file
+# (including a 0-byte one) that lacks either line is refused, since a silent
+# default there would be exactly the unfollowable-instruction failure this
+# setting exists to prevent. The existence check must not be a non-empty
+# check (`-s`): a 0-byte file must hit the same refusal as a one-line file,
+# not silently fall back to the default.
 KS_NAME="the RAG"
 # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
 KS_INSTRUCTIONS='`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none'
 KS_FILE="$FM_HOME/config/knowledge-store"
-if [ -s "$KS_FILE" ]; then
+if [ -f "$KS_FILE" ]; then
   ks_name_line=$(sed -n '1p' "$KS_FILE")
   ks_instructions_line=$(sed -n '2p' "$KS_FILE")
   if [ -z "$ks_name_line" ] || [ -z "$ks_instructions_line" ]; then

@@ -935,6 +935,26 @@ test_knowledge_store_config_malformed_refuses() {
   pass "fm-brief.sh: a malformed config/knowledge-store is refused, not silently rendered"
 }
 
+# A PRESENT but 0-byte config/knowledge-store is the malformed shape most
+# likely to occur in practice (a `touch` placeholder, an editor save that
+# clears the file) and is the one case a non-empty (`-s`) existence check
+# would silently mistake for an ABSENT file, reintroducing the exact
+# unfollowable-instruction bug this setting exists to prevent.
+test_knowledge_store_config_empty_file_refuses() {
+  local home out rc
+  home="$TMP_ROOT/ks-config-empty-home"
+  mkdir -p "$home/data" "$home/config"
+  : > "$home/config/knowledge-store"
+
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-ks-empty some-proj --mode direct-PR 2>&1); rc=$?
+  expect_code 1 "$rc" "fm-brief.sh must refuse a 0-byte config/knowledge-store, not silently fall back to the default"
+  assert_contains "$out" "config/knowledge-store" \
+    "the refusal must name the offending file"
+  assert_absent "$home/data/brief-ks-empty/brief.md" \
+    "a refused empty config must not still scaffold a brief"
+  pass "fm-brief.sh: a 0-byte config/knowledge-store is refused, not silently defaulted"
+}
+
 # Firstmate fixes a task's shape - project, base branch, delivery mode, scope -
 # while writing the brief, before any worker exists, so the worker's own
 # Grounding cannot correct it. The recall section records firstmate's recall at
@@ -1402,6 +1422,7 @@ test_grounding_section_requires_search_and_reporting
 test_briefs_name_rag_not_pp_brain
 test_knowledge_store_config_renames_worker_wording
 test_knowledge_store_config_malformed_refuses
+test_knowledge_store_config_empty_file_refuses
 test_firstmate_recall_section
 test_skill_declaration_required_in_first_status_line
 test_ship_worker_operating_contracts
