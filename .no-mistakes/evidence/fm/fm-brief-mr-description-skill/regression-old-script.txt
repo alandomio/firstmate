@@ -1,0 +1,2 @@
+not ok - direct-PR/GitHub brief must have the worker write the description in PR vocabulary
+rc=

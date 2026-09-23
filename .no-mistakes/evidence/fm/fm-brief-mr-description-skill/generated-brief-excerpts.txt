@@ -1,0 +1,26 @@
+=== mode=direct-PR forge=gh (/tmp/tmp.UAR0f8037M/data/ev-direct-PR-gh/brief.md)
+86:Write the pull request description yourself.
+87:Create the pull request yourself and never wait for confirmation on a step this brief already authorizes.
+88:Do not include a "Generated with Claude Code" trailer or other orchestration vocabulary in the description.
+mr-description mentions: 0
+=== mode=direct-PR forge=gl (/tmp/tmp.UAR0f8037M/data/ev-direct-PR-gl/brief.md)
+86:Write the merge request description yourself.
+87:Create the merge request yourself and never wait for confirmation on a step this brief already authorizes.
+88:Do not include a "Generated with Claude Code" trailer or other orchestration vocabulary in the description.
+mr-description mentions: 0
+=== mode=no-mistakes forge=gh (/tmp/tmp.UAR0f8037M/data/ev-no-mistakes-gh/brief.md)
+100:Write the pull request description yourself.
+101:Create or update the pull request yourself and never wait for confirmation on a step this brief already authorizes.
+102:Do not include a "Generated with Claude Code" trailer or other orchestration vocabulary in the description.
+mr-description mentions: 0
+=== mode=no-mistakes forge=gl (/tmp/tmp.UAR0f8037M/data/ev-no-mistakes-gl/brief.md)
+100:Write the merge request description yourself.
+101:Create or update the merge request yourself and never wait for confirmation on a step this brief already authorizes.
+102:Do not include a "Generated with Claude Code" trailer or other orchestration vocabulary in the description.
+mr-description mentions: 0
+=== mode=local-only forge=gh (/tmp/tmp.UAR0f8037M/data/ev-local-only-gh/brief.md)
+(no description rule)
+mr-description mentions: 0
+=== mode=local-only forge=gl (/tmp/tmp.UAR0f8037M/data/ev-local-only-gl/brief.md)
+(no description rule)
+mr-description mentions: 0
