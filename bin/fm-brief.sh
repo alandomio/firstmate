@@ -60,14 +60,17 @@
 # only on the captain's explicit confirmation. Durable project-intrinsic
 # findings instead go through the note: CANDIDATE status line (Rule 4;
 # AGENTS.md section 6) for firstmate to route.
-# Ship and scout briefs include a Grounding section requiring a search of the RAG
-# (the rag_qdrant_server MCP server's query_rag_hybrid or query_rag tool) and the
-# local memory store before the first substantive action, a repeated search
-# whenever a later obstacle or subject comes up since latency is the only cost,
-# a check of the RAG before working around any gotcha (citing it, or filing a
-# note: CANDIDATE when it is silent, never writing to the RAG or any shared
-# memory itself), and a reported outcome; a secondmate charter omits it because
-# its own crewmates each get their own generated brief carrying the same contract.
+# Ship and scout briefs include a Grounding section requiring a search of the
+# configured knowledge store (config/knowledge-store; absent defaults to the
+# RAG's query_rag_hybrid/query_rag tool on rag_qdrant_server, byte-identical to
+# this script's historical wording) and the local memory store before the
+# first substantive action, a repeated search whenever a later obstacle or
+# subject comes up since latency is the only cost, a check of the configured
+# store before working around any gotcha (citing it, or filing a note:
+# CANDIDATE when it is silent, never writing to that store or any shared
+# memory itself), and a reported outcome; a secondmate charter omits it
+# because its own crewmates each get their own generated brief carrying the
+# same contract.
 # A ship brief additionally widens the Grounding CANDIDATE channel above from an undocumented
 # gotcha to every durable finding the worker records and only firstmate promotes.
 # The brief treats "note:" as nonterminal like "working:", and discloses that the supervisor's
@@ -181,6 +184,27 @@ else
   STATE="$FM_HOME/state"
 fi
 PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
+
+# Grounding wording is named by this home's optional config/knowledge-store
+# (docs/configuration.md): line 1 is the store's name as it reads in worker
+# text, line 2 is the search-instructions clause inserted in parentheses after
+# it. Absent (or either line blank) keeps this script's historical upstream
+# wording, so every home without the file gets a byte-identical brief.
+KS_NAME="the RAG"
+# shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+KS_INSTRUCTIONS='`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none'
+KS_FILE="$FM_HOME/config/knowledge-store"
+if [ -s "$KS_FILE" ]; then
+  ks_name_line=$(sed -n '1p' "$KS_FILE")
+  ks_instructions_line=$(sed -n '2p' "$KS_FILE")
+  if [ -z "$ks_name_line" ] || [ -z "$ks_instructions_line" ]; then
+    echo "error: $KS_FILE must have the store name on line 1 and search instructions on line 2" >&2
+    exit 1
+  fi
+  KS_NAME=$ks_name_line
+  KS_INSTRUCTIONS=$ks_instructions_line
+fi
+
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
@@ -428,9 +452,9 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 $RECALL_SECTION
 
 # Grounding
-Before your first substantive action, search the RAG (\`query_rag_hybrid\` or \`query_rag\` on the \`rag_qdrant_server\` MCP server, with \`query_text\` set and \`user_roles\` passed, empty if you have none) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
+Before your first substantive action, search $KS_NAME ($KS_INSTRUCTIONS) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
 Treat the \`# Task\` section above as firstmate's assembly of that context, a starting point rather than a substitute.
-When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append \`note: CANDIDATE - {finding}\` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+When you hit an obstacle, surprising behavior, or trap, check $KS_NAME before working around it - cite it if documented, or append \`note: CANDIDATE - {finding}\` if it is not; never write to $KS_NAME or any shared memory directly, only firstmate promotes candidates.
 Report what you found and what it changed in your next status line, or state plainly that both were silent.
 
 $HERDR_SECTION
@@ -563,9 +587,9 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 $RECALL_SECTION
 
 # Grounding
-Before your first substantive action, search the RAG (\`query_rag_hybrid\` or \`query_rag\` on the \`rag_qdrant_server\` MCP server, with \`query_text\` set and \`user_roles\` passed, empty if you have none) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
+Before your first substantive action, search $KS_NAME ($KS_INSTRUCTIONS) and the local memory store for prior decisions, refuted approaches, and known traps on this subject; searching costs only latency, so search again whenever a new obstacle or subject comes up rather than treating this as one-shot.
 Treat the \`# Task\` section above as firstmate's assembly of that context, a starting point rather than a substitute.
-When you hit an obstacle, surprising behavior, or trap, check the RAG before working around it - cite it if documented, or append \`note: CANDIDATE - {finding}\` if it is not; never write to the RAG or any shared memory directly, only firstmate promotes candidates.
+When you hit an obstacle, surprising behavior, or trap, check $KS_NAME before working around it - cite it if documented, or append \`note: CANDIDATE - {finding}\` if it is not; never write to $KS_NAME or any shared memory directly, only firstmate promotes candidates.
 Report what you found and what it changed in your next status line, or state plainly that both were silent.
 
 $HERDR_SECTION
@@ -599,7 +623,7 @@ $RULE1
    When you discover a durable finding (knowledge-store drift, a ticket whose real state differs
    from this brief, verified behavior of a tool, a trap the next worker would hit), append it as
    \`note: CANDIDATE - {finding}\` rather than acting on it yourself: you record candidates, only
-   firstmate promotes them, and you must never write to the RAG or any shared memory directly.
+   firstmate promotes them, and you must never write to $KS_NAME or any shared memory directly.
    Every \`note:\` line reaches firstmate: the next status drain presents it whatever its wording.
    But \`note:\` is not yet covered by the supervision wedge guards that protect \`working:\`,
    \`resolved:\` and \`captain-held:\`, so while a note whose prose happens to match a legacy
