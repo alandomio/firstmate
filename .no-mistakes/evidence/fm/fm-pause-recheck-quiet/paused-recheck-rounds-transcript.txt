@@ -1,0 +1,16 @@
+[first recheck]                    pane=claude -> stale: test:fm-quiet (paused 500s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+[unchanged second recheck]         pane=claude -> (absorbed: no wake)
+[digits-only pane churn]           pane=claude -> (absorbed: no wake)
+[blocking dialog]                  pane=claude -> stale: test:fm-quiet (paused 506s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; changed since the last recheck: pane text changed)
+[dialog already surfaced]          pane=claude -> (absorbed: no wake)
+[agent exited]                     pane=zsh   -> stale: test:fm-quiet (paused 509s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; changed since the last recheck: agent now dead)
+[exit already surfaced]            pane=zsh   -> stale: test:fm-quiet (paused 511s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 2s ago)
+[replaced pause]                   pane=claude -> stale: test:fm-quiet (paused 500s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; changed since the last recheck: status log updated, agent now alive)
+[replaced pause already surfaced]  pane=claude -> (absorbed: no wake)
+[reminder ceiling]                 pane=claude -> stale: test:fm-quiet (paused 503s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 500s ago)
+ok - an unchanged declared pause is rechecked once, then absorbed until the reminder ceiling or a change in status, liveness, or pane text
+
+--- state/.watch-triage.log (absorbed-wake debug log) ---
+[2026-09-24T17:06:33+0200] absorbed paused recheck (paused, awaiting external, unchanged since its last surface 1s ago): test:fm-quiet
+[2026-09-24T17:06:35+0200] absorbed paused recheck (paused, awaiting external, unchanged since its last surface 3s ago): test:fm-quiet
+[2026-09-24T17:06:44+0200] absorbed paused recheck (paused, awaiting external, unchanged since its last surface 1s ago): test:fm-quiet
