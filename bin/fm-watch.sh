@@ -183,6 +183,11 @@ BUSY_TURN_MAX_SECS=${FM_BUSY_TURN_MAX_SECS:-3600}
 # These cases re-surface once for a recheck every PAUSE_RESURFACE_SECS - far
 # longer than the wedge threshold, but finite so a forgotten hold cannot rot invisibly.
 PAUSE_RESURFACE_SECS=${FM_PAUSE_RESURFACE_SECS:-$FM_PAUSE_RESURFACE_SECS_DEFAULT}
+# A recheck is compared, not repeated: once a declared wait has surfaced, a due
+# recheck whose status log, agent liveness, and pane text (digits and blanks aside)
+# are unchanged is absorbed, and surfaces again as a reminder only once
+# PAUSE_REMIND_SECS pass since the last surface (handle_paused_stale).
+PAUSE_REMIND_SECS=${FM_PAUSE_REMIND_SECS:-86400}
 # Consecutive event-path failures (fm_backend_wait_transition returning 2 -
 # connect/subscribe failure) before the push fast-path is disabled for the rest
 # of this watcher process and the loop reverts to pure polling (report section
@@ -314,12 +319,19 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # two cadences cannot drift apart; each caller owns its own marker and reason.
 # Returns without waking while either the absorb or the throttle is inside the
 # window; wake() itself exits the cycle, exactly as it does inline.
-resurface_absorbed() {  # <window> <throttle-marker> <age> <reason>
+resurface_due() {  # <age> <throttle-marker>
+  [ "$1" -ge "$PAUSE_RESURFACE_SECS" ] || return 1
+  [ "$(age_of "$2")" -ge "$PAUSE_RESURFACE_SECS" ]   # 999999 when no prior re-surface
+}
+
+# The optional <record-file> <record> pair is written after the wake is queued
+# and before it is reported, so a record never claims a surface that was not queued.
+resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [<record-file> <record>]
   local win=$1 throttle=$2 age=$3 reason=$4
-  [ "$age" -ge "$PAUSE_RESURFACE_SECS" ] || return 0
-  [ "$(age_of "$throttle")" -ge "$PAUSE_RESURFACE_SECS" ] || return 0   # 999999 when no prior re-surface
+  resurface_due "$age" "$throttle" || return 0
   fm_wake_append stale "$win" "$reason" || exit 1
   date +%s > "$throttle"
+  [ -z "${5:-}" ] || printf '%s\n' "$6" > "$5"
   wake "$reason"
 }
 
@@ -428,8 +440,13 @@ busy_turn_over_age() {  # <task>
 # captain themself for a verified hold. Only the captain-held verb takes the second
 # wording; a caller that reached the bounded cadence off pause tracking alone, with
 # no declaring verb left on the log, keeps the external-wait wording it always had.
-handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age detail reason
+#
+# A due recheck whose paused_situation still equals the one recorded at this pause's
+# last surface (.paused-surfaced-<key>) is absorbed and logged instead, re-stamping
+# the throttle so the next comparison is one PAUSE_RESURFACE_SECS later; it surfaces
+# again only once PAUSE_REMIND_SECS pass since that surface, or the situation changes.
+handle_paused_stale() {  # <window> <task> <hash> <tail40>
+  local win=$1 task=$2 h=$3 tail=$4 key statusf mtime age detail reason throttle surfaced now_sit prev_sit
   key=$(window_key "$win")
   printf '%s' "$h" > "$STATE/.stale-$key"
   : > "$STATE/.paused-$key"
@@ -446,8 +463,64 @@ handle_paused_stale() {  # <window> <task> <hash>
     detail="paused, awaiting external"
     reason="paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds"
   fi
-  resurface_absorbed "$win" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)"
+  throttle="$STATE/.paused-resurfaced-$key"
+  surfaced="$STATE/.paused-surfaced-$key"
+  if resurface_due "$age" "$throttle"; then
+    now_sit=$(paused_situation "$win" "$task" "$tail")
+    prev_sit=$(cat "$surfaced" 2>/dev/null || true)
+    if [ "$now_sit" = "$prev_sit" ] && [ "$(age_of "$surfaced")" -lt "$PAUSE_REMIND_SECS" ]; then
+      date +%s > "$throttle"
+      triage_log "absorbed paused recheck ($detail, unchanged since its last surface $(age_of "$surfaced")s ago): $win"
+      return 0
+    fi
+    if [ "$now_sit" = "$prev_sit" ]; then
+      reason="$reason; unchanged since the last recheck $(age_of "$surfaced")s ago"
+    elif [ -n "$prev_sit" ]; then
+      reason="$reason; changed since the last recheck: $(paused_situation_change "$prev_sit" "$now_sit")"
+    fi
+    resurface_absorbed "$win" "$throttle" "$age" "stale: $win ($reason)" "$surfaced" "$now_sit"
+  fi
   triage_log "absorbed stale ($detail, age ${age}s): $win"
+}
+
+# One declared pause's observable situation, as one line: the status log's
+# size:mtime (a new or replaced status line changes it), the agent's liveness
+# (never read for a secondmate, matching pause_state_class), and a digest of the
+# pane tail with digits and blanks removed, so a ticking clock or token counter is
+# not a change while a dialog or any new text is. Read only at a due recheck or a
+# surface, never every poll.
+paused_situation() {  # <window> <task> <tail40>
+  local win=$1 task=$2 tail=$3 sig agent pane
+  sig=$(fm_wake_signal_sig "$STATE/$task.status") || sig=""
+  [ -n "$sig" ] || sig=none
+  if [ "$(window_kind "$win")" = secondmate ]; then
+    agent=-
+  else
+    agent=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent=""
+    [ -n "$agent" ] || agent=unknown
+  fi
+  pane=$(printf '%s' "$tail" | LC_ALL=C tr -d '0-9[:blank:]' | hash_pane)
+  printf 'status=%s agent=%s pane=%s' "$sig" "$agent" "$pane"
+}
+
+# Name which parts of two paused_situation lines differ, for the recheck reason.
+paused_situation_change() {  # <previous> <current>
+  local ps pa pp cs ca cp out=""
+  read -r ps pa pp <<< "$1"
+  read -r cs ca cp <<< "$2"
+  [ "$ps" = "$cs" ] || out="status log updated"
+  [ "$pa" = "$ca" ] || out="$out${out:+, }agent now ${ca#agent=}"
+  [ "$pp" = "$cp" ] || out="$out${out:+, }pane text changed"
+  printf '%s' "${out:-situation changed}"
+}
+
+# 0 when the pause line currently ending <task>'s status log is the one recorded at
+# this window's last paused surface, so its one-time live-agent surface was taken.
+paused_line_surfaced() {  # <window-key> <task>
+  local rec sig
+  rec=$(cat "$STATE/.paused-surfaced-$1" 2>/dev/null) || return 1
+  sig=$(fm_wake_signal_sig "$STATE/$2.status") || return 1
+  [ -n "$sig" ] && [ "${rec%% *}" = "status=$sig" ]
 }
 
 # Apply the busy-pane completed-turn bound to a window whose bound has already
@@ -464,10 +537,10 @@ handle_paused_stale() {  # <window> <task> <hash>
 # exception bounded by re-surfacing it once per PAUSE_RESURFACE_SECS. Away mode
 # remains daemon-owned and receives the undecorated wake identity for its own
 # classification.
-busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-file>
-  local win=$1 task=$2 h=$3 since_file=$4 escalation_file=$5
+busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-file> <tail40>
+  local win=$1 task=$2 h=$3 since_file=$4 escalation_file=$5 tail=$6
   if ! afk_present && status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")"; then
-    handle_paused_stale "$win" "$task" "$h"
+    handle_paused_stale "$win" "$task" "$h" "$tail"
     return 0
   fi
   wedge_timer_check "$win" "$since_file" "busy (no completed turn)" "$escalation_file" "$task"
@@ -495,7 +568,7 @@ pause_state_class() {  # <window> <task>
   last=$(last_status_line "$STATE/$task.status")
   recheck_file="$STATE/.paused-rechecked-$key"
   if ! status_is_paused_or_captain_held "$last"; then
-    rm -f "$recheck_file"
+    rm -f "$recheck_file" "$STATE/.paused-surfaced-$key"
     crew_absorb_class "$task"
     return
   fi
@@ -506,7 +579,9 @@ pause_state_class() {  # <window> <task>
   # known_paused: past the one-time live-agent surface, so liveness alone no longer
   # forces `none`; only crew_absorb_class=working lifts it, checked once per
   # STALE_ESCALATE_SECS. Otherwise a ticking footer hash re-triggers that surface.
-  [ -e "$STATE/.paused-$key" ] && known_paused=1 || known_paused=0
+  # A busy turn clears .paused-<key>, so the surface is also known taken while the
+  # same pause line is the one recorded at the last paused surface.
+  { [ -e "$STATE/.paused-$key" ] || paused_line_surfaced "$key" "$task"; } && known_paused=1 || known_paused=0
   if [ "$known_paused" -eq 1 ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
     printf 'paused'
     return
@@ -536,8 +611,8 @@ pause_state_class() {  # <window> <task>
   printf '%s' "$class"
 }
 
-surface_nonterminal_stale() {  # <window> <hash>
-  local win=$1 h=$2 key task last
+surface_nonterminal_stale() {  # <window> <hash> <tail40>
+  local win=$1 h=$2 tail=$3 key task last
   key=$(window_key "$win")
   fm_wake_append stale "$win" "stale: $win" || exit 1
   printf '%s' "$h" > "$STATE/.stale-$key"
@@ -549,6 +624,7 @@ surface_nonterminal_stale() {  # <window> <hash>
     : > "$STATE/.paused-$key"
     date +%s > "$STATE/.paused-rechecked-$key"
     date +%s > "$STATE/.paused-resurfaced-$key"
+    printf '%s\n' "$(paused_situation "$win" "$task" "$tail")" > "$STATE/.paused-surfaced-$key"
   else
     rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
   fi
@@ -1159,7 +1235,7 @@ EOF
         # firstmate. Detection itself is unchanged from above.
         if [ "$kind" = secondmate ]; then
           case "$(pause_state_class "$w" "$task")" in
-            paused) handle_paused_stale "$w" "$task" "$h" ;;
+            paused) handle_paused_stale "$w" "$task" "$h" "$tail40" ;;
             *)      clear_pause_tracking "$key" ;;
           esac
         elif afk_present; then
@@ -1233,22 +1309,22 @@ EOF
                 triage_log "absorbed non-terminal stale (provably working): $w"
                 ;;
               paused)
-                handle_paused_stale "$w" "$task" "$h"
+                handle_paused_stale "$w" "$task" "$h" "$tail40"
                 ;;
               *)
-                surface_nonterminal_stale "$w" "$h"
+                surface_nonterminal_stale "$w" "$h" "$tail40"
                 ;;
             esac
           else
             task=$(window_to_task "$w" "$STATE")
             if [ -e "$pf" ] || status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")"; then
               case "$(pause_state_class "$w" "$task")" in
-                paused)  handle_paused_stale "$w" "$task" "$h" ;;
+                paused)  handle_paused_stale "$w" "$task" "$h" "$tail40" ;;
                 working) clear_pause_state "$key"
                          printf '%s' "$h" > "$sf"
                          wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf" "$task"
                          triage_log "absorbed non-terminal stale (provably working): $w" ;;
-                *)       handle_paused_stale "$w" "$task" "$h" ;;
+                *)       handle_paused_stale "$w" "$task" "$h" "$tail40" ;;
               esac
             else
               wedge_timer_check "$w" "$ssf" "non-terminal stale" "$ewf" "$task"
@@ -1262,7 +1338,7 @@ EOF
         # bound to the same wedge timer unless the crew declared the wait itself.
         paused_bound=1
         if [ "$busy_now" -eq 0 ] && busy_turn_over_age "$task"; then
-          busy_turn_bound_check "$w" "$task" "$h" "$ssf" "$ewf" && paused_bound=0
+          busy_turn_bound_check "$w" "$task" "$h" "$ssf" "$ewf" "$tail40" && paused_bound=0
         else
           rm -f "$ssf" "$ewf"
           clear_write_tracking "$key"
@@ -1280,7 +1356,7 @@ EOF
       echo 0 > "$cf"
       paused_bound=1
       if [ "$busy_now" -eq 0 ] && busy_turn_over_age "$task"; then
-        busy_turn_bound_check "$w" "$task" "$h" "$ssf" "$ewf" && paused_bound=0
+        busy_turn_bound_check "$w" "$task" "$h" "$ssf" "$ewf" "$tail40" && paused_bound=0
       else
         rm -f "$ssf" "$ewf"
         clear_write_tracking "$key"
@@ -1288,7 +1364,7 @@ EOF
       task=$(window_to_task "$w" "$STATE")
       if ! afk_present && status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")" && [ "$busy_now" -ne 0 ]; then
         case "$(pause_state_class "$w" "$task")" in
-          paused) handle_paused_stale "$w" "$task" "$h" ;;
+          paused) handle_paused_stale "$w" "$task" "$h" "$tail40" ;;
           *)      clear_pause_tracking "$key" ;;
         esac
       elif [ "$paused_bound" -ne 0 ] && [ -e "$pf" ]; then

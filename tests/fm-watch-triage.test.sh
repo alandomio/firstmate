@@ -1200,19 +1200,25 @@ TMUX
 
   # Cadence is driven by backdating the resurface throttle's mtime (like the
   # rest of this suite), never by a real sleep - a slow CI box cannot flake it.
+  # The pane changes only in digits, so an odd round's recheck is due only as the
+  # reminder: its last-surface record is backdated past FM_PAUSE_REMIND_SECS too.
   round=1
   while [ "$round" -le 4 ]; do
     if [ $((round % 2)) -eq 1 ]; then
       back=$(( $(date +%s) - 500 ))
       if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$state/.paused-resurfaced-$key" 2>/dev/null || true
       else touch -m -d "@$back" "$state/.paused-resurfaced-$key" 2>/dev/null || true; fi
+      if [ -e "$state/.paused-surfaced-$key" ]; then
+        if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$state/.paused-surfaced-$key"
+        else touch -m -d "@$back" "$state/.paused-surfaced-$key"; fi
+      fi
     fi
     sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-churn_status"
     : > "$out"
     PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CURRENT_COMMAND=claude \
       FM_FAKE_CREW_STATE='state: paused · source: status-log · awaiting the upstream release' \
       FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
-      FM_PAUSE_RESURFACE_SECS=60 FM_STALE_ESCALATE_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_PAUSE_RESURFACE_SECS=60 FM_PAUSE_REMIND_SECS=60 FM_STALE_ESCALATE_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
       FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >> "$out" &
     pid=$!
     # Every round's own output is checked directly (never the durable queue,
@@ -1243,6 +1249,139 @@ TMUX
     round=$((round + 1))
   done
   pass "a live agent's declared pause with a churning pane hash uses the bounded recheck cadence, never a bare stale wake"
+}
+
+# Backdate <file>'s mtime by <secs> seconds (creating it when absent).
+backdate_file() {  # <secs> <file>
+  local back
+  back=$(( $(date +%s) - $1 ))
+  [ -e "$2" ] || : > "$2"
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$2"
+  else touch -m -d "@$back" "$2"; fi
+}
+
+# One watcher run of a declared pause whose recheck is due: the resurface
+# throttle is backdated past FM_PAUSE_RESURFACE_SECS (standing in for an hour
+# having passed) and the status log's .seen-* marker is re-primed so only the
+# stale path decides. <expect> is "surface" or "absorb"; every round acks so a
+# later round never trips over this one's downtime marker.
+paused_recheck_round() {  # <case-dir> <window> <task> <agent-command> <expect> <label> [extra env...]
+  local dir=$1 window=$2 task=$3 cmd=$4 expect=$5 label=$6 state out key pid
+  shift 6
+  state="$dir/state"; out="$dir/watch.out"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  backdate_file 500 "$state/.paused-resurfaced-$key"
+  printf '%s' "$(seen_sig "$state/$task.status")" > "$state/.seen-${task}_status"
+  : > "$out"
+  env PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
+    FM_FAKE_TMUX_CURRENT_COMMAND="$cmd" \
+    FM_FAKE_CREW_STATE='state: paused · source: status-log · awaiting a colleague approval' \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_PAUSE_RESURFACE_SECS=60 FM_STALE_ESCALATE_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$@" "$WATCH" > "$out" &
+  pid=$!
+  if [ "$expect" = surface ]; then
+    wait_for_exit "$pid" 100 || fail "$label: the due recheck did not surface"
+    grep -qF "stale: $window (paused" "$out" || fail "$label: surfaced without the declared-pause recheck reason: $(cat "$out")"
+  else
+    if ! wait_poll_cycle "$state" "$pid"; then
+      reap "$pid"; fail "$label: an unchanged declared pause surfaced again: $(cat "$out")"
+    fi
+    reap "$pid"
+    [ ! -s "$out" ] || fail "$label: printed a wake reason while absorbed: $(cat "$out")"
+  fi
+  ack_stopped_cycle "$state" || fail "$label: could not acknowledge the round"
+}
+
+# The measured 2026-09 case: four workers paused on a colleague's approval or a
+# captain decision each re-surfaced "confirm the wait still holds" every
+# FM_PAUSE_RESURFACE_SECS forever, although nothing about any of them changed.
+# After one surfaced recheck of a pause, a due recheck whose situation (status
+# log, agent liveness, pane text ignoring digits and blanks) is unchanged is
+# absorbed until FM_PAUSE_REMIND_SECS; any change surfaces at the next recheck.
+test_unchanged_declared_pause_recheck_is_absorbed_until_something_changes() {
+  local dir state statusf window task key
+  dir=$(make_case paused-recheck-quiet); state="$dir/state"
+  window="test:fm-quiet"; task=quiet; statusf="$state/$task.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf 'paused: awaiting a colleague approval of the open PR\n' > "$statusf"
+  backdate_file 500 "$statusf"
+  printf 'idle, awaiting approval  12s  3.1k tokens\n' > "$dir/pane.txt"
+  # Already past the one-time live-agent surface, as in the real recurring case.
+  : > "$state/.paused-$key"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+
+  paused_recheck_round "$dir" "$window" "$task" claude surface "first recheck"
+  paused_recheck_round "$dir" "$window" "$task" claude absorb "unchanged second recheck"
+  grep -qF "absorbed paused recheck" "$state/.watch-triage.log" \
+    || fail "an absorbed recheck was not logged in the absorbed-wake debug log"
+  # A ticking clock or token counter is not a change.
+  printf 'idle, awaiting approval  47s  3.4k tokens\n' > "$dir/pane.txt"
+  paused_recheck_round "$dir" "$window" "$task" claude absorb "digits-only pane churn"
+  # A blocking dialog is new pane text, so the next recheck surfaces it.
+  printf 'Do you want to proceed?\n> 1. Yes\n  2. No\n' > "$dir/pane.txt"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "blocking dialog"
+  paused_recheck_round "$dir" "$window" "$task" claude absorb "dialog already surfaced"
+  # The agent exiting to a bare shell surfaces, naming the exit.
+  paused_recheck_round "$dir" "$window" "$task" zsh surface "agent exited"
+  grep -qF "agent now dead" "$dir/watch.out" || fail "the agent-exit recheck did not name what changed: $(cat "$dir/watch.out")"
+  paused_recheck_round "$dir" "$window" "$task" zsh absorb "exit already surfaced"
+  # A replaced pause is a new status line: the recheck path surfaces it too.
+  printf 'paused: awaiting the captain decision on scope\n' >> "$statusf"
+  backdate_file 500 "$statusf"
+  paused_recheck_round "$dir" "$window" "$task" zsh surface "replaced pause"
+  # Nothing changed, but the reminder ceiling has passed.
+  backdate_file 500 "$state/.paused-surfaced-$key"
+  paused_recheck_round "$dir" "$window" "$task" zsh surface "reminder ceiling" FM_PAUSE_REMIND_SECS=300
+  grep -qF "unchanged since" "$dir/watch.out" || fail "the reminder recheck did not say nothing changed: $(cat "$dir/watch.out")"
+  pass "an unchanged declared pause is rechecked once, then absorbed until the reminder ceiling or a change in status, liveness, or pane text"
+}
+
+# A busy turn on a paused worker (a steer, a quick check) clears the pause
+# tracking. When it goes idle again under the same pause line, the one-time
+# live-agent surface was already taken for that line, so it must not fire again;
+# a genuinely new pause line still takes it (see the live-gate test above).
+test_same_pause_line_takes_the_live_surface_only_once() {
+  local dir state statusf window task key pid out
+  dir=$(make_case paused-live-surface-once); state="$dir/state"; out="$dir/watch.out"
+  window="test:fm-once"; task=once; statusf="$state/$task.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf 'paused: awaiting a colleague approval of the open PR\n' > "$statusf"
+  printf '%s' "$(seen_sig "$statusf")" > "$state/.seen-${task}_status"
+  printf 'idle, awaiting approval\n' > "$dir/pane.txt"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  run_once() {
+    PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
+      FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+      FM_FAKE_CREW_STATE='state: paused · source: status-log · awaiting a colleague approval' \
+      FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+      FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+    pid=$!
+  }
+  run_once
+  wait_for_exit "$pid" 100 || fail "the first sight of a live declared pause did not surface once"
+  grep -qx "stale: $window" "$out" || fail "the first live surface was not the plain stale wake: $(cat "$out")"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the first live surface"
+  # The busy turn: pause tracking and the stale suppressor are cleared, exactly
+  # as the busy branch does, and the pane settles on a new idle text.
+  rm -f "$state/.paused-$key" "$state/.paused-rechecked-$key" "$state/.paused-resurfaced-$key" "$state/.stale-$key"
+  printf 'idle, awaiting approval (after a short turn)\n' > "$dir/pane.txt"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  run_once
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "the same pause line took a second live-agent surface after a busy turn: $(cat "$out")"
+  fi
+  reap "$pid"
+  [ ! -s "$out" ] || fail "the same pause line printed a wake after a busy turn: $(cat "$out")"
+  [ -e "$state/.paused-$key" ] || fail "the same pause line did not return to the bounded pause cadence"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the absorbed round"
+  pass "a live agent's pause line takes its one-time surface once, not again after every busy turn"
 }
 
 test_secondmate_paused_resurfaces_in_normal_mode() {
@@ -2776,6 +2915,8 @@ test_nonterminal_stale_not_working_surfaced
 test_nonterminal_stale_paused_absorbed_then_resurfaced
 test_exited_declared_pause_is_bounded_but_live_gate_surfaces
 test_nonterminal_stale_paused_live_churning_hash_uses_bounded_cadence
+test_unchanged_declared_pause_recheck_is_absorbed_until_something_changes
+test_same_pause_line_takes_the_live_surface_only_once
 test_secondmate_paused_resurfaces_in_normal_mode
 test_secondmate_captain_held_resurfaces_in_normal_mode
 test_secondmate_nonpaused_stale_remains_suppressed
