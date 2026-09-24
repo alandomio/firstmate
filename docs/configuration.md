@@ -149,6 +149,15 @@ Fleet-local operational facts and gotchas live locally in `data/learnings.md`; i
 The file is created lazily on first learning and follows the internal [`stow` skill's](../.agents/skills/stow/SKILL.md) aging-tier and cold-archive contract: inspect the current file first and curate it instead of appending forever.
 There is no shared learnings file by captain decision.
 
+## Knowledge store naming (config/knowledge-store)
+
+`bin/fm-brief.sh`'s Grounding section tells every generated ship and scout worker to search a knowledge store before its first substantive action and before working around any gotcha.
+The optional local, gitignored `config/knowledge-store` names that store for a home whose installed MCP servers do not match the upstream default.
+Line 1 is the store's name as it should read in worker-facing text (e.g. `PP Brain`); line 2 is the search-instructions clause inserted in parentheses right after the name (e.g. the exact MCP tool, its arguments, and any follow-up contract).
+Either line present but blank, or the file present but empty, is refused rather than silently falling back.
+Absent keeps this script's historical wording naming the RAG's `query_rag_hybrid`/`query_rag` tool on the `rag_qdrant_server` MCP server, byte-identical to briefs generated before this setting existed.
+It is inherited into secondmate homes (`FM_INHERITABLE_CONFIG` in [`bin/fm-config-inherit-lib.sh`](../bin/fm-config-inherit-lib.sh)): a secondmate's own crewmates get generated briefs from the same code, so an uninherited setting would silently regress them to a knowledge store the home's MCP servers do not have installed, reproducing the same failure this setting exists to fix.
+
 ## Startup memory budget (config/startup-memory-budget)
 
 `config/startup-memory-budget` is the primary-authoritative per-home allowance for the startup prompt-memory surface: `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md` together.

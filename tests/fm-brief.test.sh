@@ -876,6 +876,85 @@ test_briefs_name_rag_not_pp_brain() {
   pass "fm-brief.sh: generated briefs name the RAG and carry no PP Brain text"
 }
 
+# config/knowledge-store (docs/configuration.md "Knowledge store naming") lets a
+# home whose installed MCP servers do not match the upstream RAG name its own
+# knowledge store instead; every place fm-brief.sh names the RAG must switch to
+# the configured wording, and none of the upstream RAG wording may leak through.
+test_knowledge_store_config_renames_worker_wording() {
+  local home id brief
+  home="$TMP_ROOT/ks-config-home"
+  mkdir -p "$home/data" "$home/config"
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+  printf 'PP Brain\n`search_knowledge` on the `pp-brain` MCP server, with both `query` and `prompt` set, reusing the returned `sessionId` on follow-ups; call `get_knowledge` on finalists\n' \
+    > "$home/config/knowledge-store"
+
+  id="brief-ks-ship"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "ship brief was not scaffolded with config/knowledge-store present"
+  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+  assert_grep 'search PP Brain (`search_knowledge` on the `pp-brain` MCP server, with both `query` and `prompt` set, reusing the returned `sessionId` on follow-ups; call `get_knowledge` on finalists) and the local memory store' \
+    "$brief" "ship brief did not use the configured knowledge-store name and search instructions"
+  assert_grep "check PP Brain before working around it" "$brief" \
+    "ship brief did not use the configured name in the pre-workaround check"
+  assert_grep "never write to PP Brain or any shared memory directly, only firstmate promotes candidates" "$brief" \
+    "ship brief Grounding section did not use the configured name in the no-direct-write rule"
+  assert_grep "firstmate promotes them, and you must never write to PP Brain or any shared memory directly." "$brief" \
+    "ship brief CANDIDATE rule did not use the configured name"
+  assert_no_grep "the RAG" "$brief" "ship brief with config/knowledge-store present still names the RAG"
+  assert_no_grep "rag_qdrant_server" "$brief" "ship brief with config/knowledge-store present still names rag_qdrant_server"
+
+  id="brief-ks-scout"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "scout brief was not scaffolded with config/knowledge-store present"
+  assert_grep "search PP Brain (" "$brief" \
+    "scout brief did not use the configured knowledge-store name"
+  assert_grep "never write to PP Brain or any shared memory directly, only firstmate promotes candidates" "$brief" \
+    "scout brief Grounding section did not use the configured name in the no-direct-write rule"
+  assert_no_grep "the RAG" "$brief" "scout brief with config/knowledge-store present still names the RAG"
+  assert_no_grep "rag_qdrant_server" "$brief" "scout brief with config/knowledge-store present still names rag_qdrant_server"
+
+  pass "fm-brief.sh: config/knowledge-store renames the RAG wording in ship and scout briefs"
+}
+
+# A malformed config/knowledge-store (a name with no search-instructions line)
+# must fail closed rather than silently rendering a broken or partial phrase.
+test_knowledge_store_config_malformed_refuses() {
+  local home out rc
+  home="$TMP_ROOT/ks-config-malformed-home"
+  mkdir -p "$home/data" "$home/config"
+  printf 'PP Brain\n' > "$home/config/knowledge-store"
+
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-ks-malformed some-proj --mode direct-PR 2>&1); rc=$?
+  expect_code 1 "$rc" "fm-brief.sh must refuse a config/knowledge-store missing its search-instructions line"
+  assert_contains "$out" "config/knowledge-store" \
+    "the refusal must name the offending file"
+  assert_absent "$home/data/brief-ks-malformed/brief.md" \
+    "a refused malformed config must not still scaffold a brief"
+  pass "fm-brief.sh: a malformed config/knowledge-store is refused, not silently rendered"
+}
+
+# A PRESENT but 0-byte config/knowledge-store is the malformed shape most
+# likely to occur in practice (a `touch` placeholder, an editor save that
+# clears the file) and is the one case a non-empty (`-s`) existence check
+# would silently mistake for an ABSENT file, reintroducing the exact
+# unfollowable-instruction bug this setting exists to prevent.
+test_knowledge_store_config_empty_file_refuses() {
+  local home out rc
+  home="$TMP_ROOT/ks-config-empty-home"
+  mkdir -p "$home/data" "$home/config"
+  : > "$home/config/knowledge-store"
+
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-ks-empty some-proj --mode direct-PR 2>&1); rc=$?
+  expect_code 1 "$rc" "fm-brief.sh must refuse a 0-byte config/knowledge-store, not silently fall back to the default"
+  assert_contains "$out" "config/knowledge-store" \
+    "the refusal must name the offending file"
+  assert_absent "$home/data/brief-ks-empty/brief.md" \
+    "a refused empty config must not still scaffold a brief"
+  pass "fm-brief.sh: a 0-byte config/knowledge-store is refused, not silently defaulted"
+}
+
 # Firstmate fixes a task's shape - project, base branch, delivery mode, scope -
 # while writing the brief, before any worker exists, so the worker's own
 # Grounding cannot correct it. The recall section records firstmate's recall at
@@ -1341,6 +1420,9 @@ test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_grounding_section_requires_search_and_reporting
 test_briefs_name_rag_not_pp_brain
+test_knowledge_store_config_renames_worker_wording
+test_knowledge_store_config_malformed_refuses
+test_knowledge_store_config_empty_file_refuses
 test_firstmate_recall_section
 test_skill_declaration_required_in_first_status_line
 test_ship_worker_operating_contracts
