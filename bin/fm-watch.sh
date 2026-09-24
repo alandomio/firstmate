@@ -445,6 +445,8 @@ busy_turn_over_age() {  # <task>
 # last surface (.paused-surfaced-<key>) is absorbed and logged instead, re-stamping
 # the throttle so the next comparison is one PAUSE_RESURFACE_SECS later; it surfaces
 # again only once PAUSE_REMIND_SECS pass since that surface, or the situation changes.
+# A recheck that finds the agent dead is never absorbed, so an exited worker keeps
+# surfacing on every PAUSE_RESURFACE_SECS recheck.
 handle_paused_stale() {  # <window> <task> <hash> <tail40>
   local win=$1 task=$2 h=$3 tail=$4 key statusf mtime age detail reason throttle surfaced now_sit prev_sit
   key=$(window_key "$win")
@@ -468,7 +470,8 @@ handle_paused_stale() {  # <window> <task> <hash> <tail40>
   if resurface_due "$age" "$throttle"; then
     now_sit=$(paused_situation "$win" "$task" "$tail")
     prev_sit=$(cat "$surfaced" 2>/dev/null || true)
-    if [ "$now_sit" = "$prev_sit" ] && [ "$(age_of "$surfaced")" -lt "$PAUSE_REMIND_SECS" ]; then
+    if [ "$now_sit" = "$prev_sit" ] && [ "$(age_of "$surfaced")" -lt "$PAUSE_REMIND_SECS" ] \
+      && case $now_sit in *' agent=dead '*) false ;; esac; then
       date +%s > "$throttle"
       triage_log "absorbed paused recheck ($detail, unchanged since its last surface $(age_of "$surfaced")s ago): $win"
       return 0

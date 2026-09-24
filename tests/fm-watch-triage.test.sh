@@ -1298,7 +1298,8 @@ paused_recheck_round() {  # <case-dir> <window> <task> <agent-command> <expect> 
 # FM_PAUSE_RESURFACE_SECS forever, although nothing about any of them changed.
 # After one surfaced recheck of a pause, a due recheck whose situation (status
 # log, agent liveness, pane text ignoring digits and blanks) is unchanged is
-# absorbed until FM_PAUSE_REMIND_SECS; any change surfaces at the next recheck.
+# absorbed until FM_PAUSE_REMIND_SECS; any change surfaces at the next recheck,
+# and a dead agent surfaces at every recheck.
 test_unchanged_declared_pause_recheck_is_absorbed_until_something_changes() {
   local dir state statusf window task key
   dir=$(make_case paused-recheck-quiet); state="$dir/state"
@@ -1327,14 +1328,17 @@ test_unchanged_declared_pause_recheck_is_absorbed_until_something_changes() {
   # The agent exiting to a bare shell surfaces, naming the exit.
   paused_recheck_round "$dir" "$window" "$task" zsh surface "agent exited"
   grep -qF "agent now dead" "$dir/watch.out" || fail "the agent-exit recheck did not name what changed: $(cat "$dir/watch.out")"
-  paused_recheck_round "$dir" "$window" "$task" zsh absorb "exit already surfaced"
+  # A dead paused worker is never absorbed: it keeps surfacing on every recheck.
+  paused_recheck_round "$dir" "$window" "$task" zsh surface "exit already surfaced"
   # A replaced pause is a new status line: the recheck path surfaces it too.
   printf 'paused: awaiting the captain decision on scope\n' >> "$statusf"
   backdate_file 500 "$statusf"
-  paused_recheck_round "$dir" "$window" "$task" zsh surface "replaced pause"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "replaced pause"
+  grep -qF "status log updated" "$dir/watch.out" || fail "the replaced-pause recheck did not name the new status line: $(cat "$dir/watch.out")"
+  paused_recheck_round "$dir" "$window" "$task" claude absorb "replaced pause already surfaced"
   # Nothing changed, but the reminder ceiling has passed.
   backdate_file 500 "$state/.paused-surfaced-$key"
-  paused_recheck_round "$dir" "$window" "$task" zsh surface "reminder ceiling" FM_PAUSE_REMIND_SECS=300
+  paused_recheck_round "$dir" "$window" "$task" claude surface "reminder ceiling" FM_PAUSE_REMIND_SECS=300
   grep -qF "unchanged since" "$dir/watch.out" || fail "the reminder recheck did not say nothing changed: $(cat "$dir/watch.out")"
   pass "an unchanged declared pause is rechecked once, then absorbed until the reminder ceiling or a change in status, liveness, or pane text"
 }
