@@ -44,7 +44,8 @@
 #       Record the RAG search for earlier councils; launch refuses until done.
 #   pseudo <id> [--source <rel-path>]... [--add TYPE=FORM]... [--skip-model]
 #       Pseudonymise the texts bound for workers outside Anthropic (default:
-#       brief.md, allegati/, precedenti/, persone/): the pseudonymiser model
+#       brief.md, allegati/, precedenti/, persone/; the topic and seat notes
+#       are always scanned too): the pseudonymiser model
 #       lists identifying forms, this script replaces them with stable
 #       placeholders into psevdo/, and a deterministic literal recheck refuses
 #       (exit 3) if any mapped form survives. A non-empty map marks the council
