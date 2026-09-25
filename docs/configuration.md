@@ -318,6 +318,31 @@ Malformed JSON, an empty or malformed rule/default array, an unverified harness,
 While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
 
+## Pal council (config/pal-council.json)
+
+`config/pal-council.json` is an optional local, gitignored file that tunes the [`pal-council`](../.agents/skills/pal-council/SKILL.md) skill: how a tier becomes seats, the list prices behind the euro estimate, the default budget, and the council's timing.
+When it is absent, [`bin/fm-pal-council.sh`](../bin/fm-pal-council.sh) reads the tracked [`docs/examples/pal-council.json`](examples/pal-council.json), which is also the starting point to copy.
+It is not inherited by secondmate homes, so each home keeps its own prices and tiers.
+This section is the single owner of the schema; the script's header owns the commands that read it.
+
+- `language` is the fallback output language when `new` gets no `--language`; firstmate normally passes the captain's recorded preference.
+- `default_tier`, `rounds.default`, and `rounds.max` bound a council's length; `round_timeout_minutes` is how long a round waits before a missing voice is recorded as late; `purge_after_hours` is how long after its close a sensitive council keeps its placeholder table and original attachments; `brief_max_chars` caps `brief.md`.
+- `budget` sets the default budget of a council without `--budget`: `opus_class_voice_eur` for each voice whose price entry is `opus_class`, `other_voice_eur` for every other voice, `researcher_eur` for the researcher, and `moderator_eur` for firstmate's own work, bounded by `min_eur` and `max_eur`, which also bound an explicit `--budget`.
+- `estimate` holds the effort model behind every euro figure, applied alike to voices on a subscription: each turn bills its new input plus `tool_tokens_per_turn` at the input price, the context already in the conversation `requests_per_turn` times at `cached_input_factor` of it, and the turn's output plus `reasoning_tokens` for its effort at the output price, with `chars_per_token` converting text sizes.
+  `turn_chars`, `summary_chars`, `dossier_chars`, and `research_request_chars` stand in for texts not written yet, and `expected_rounds` is the round count the launch gate compares against the budget; the figure at the round limit is reported beside it.
+  The spend is recomputed from the actual texts at every round, so a council whose turns run long closes on its budget.
+- `prices` is an ordered list; the first entry whose optional `harness` matches and whose `match` regular expression finds the seat's model supplies `input_usd_per_mtok` and `output_usd_per_mtok`, public list prices in US dollars converted with `usd_to_eur`.
+  `opus_class` marks the entries that take the higher default budget, and an entry with an empty `match` and `fallback: true` prices any model the list does not name, reported as a fallback in the estimate.
+  Update `prices_checked` whenever the prices are refreshed.
+- `providers` names the provider behind each harness, used for the rule that a council needs more than one provider; an explicit participant may carry its own `provider`.
+- `catalog` holds, per harness, ordered `top` and `economy` regular-expression lists matched against the harness's own model catalog in that catalog's order, plus optional `exclude` patterns; the first pattern with a match picks the model, so no model id is fixed here.
+  `bin/fm-pal-council.sh catalog <harness>` shows what a pattern picks, and [`docs/verification/pal-council.md`](verification/pal-council.md) records which catalog each harness exposes and the live guard that re-checks them.
+- `tiers` maps each tier name to `seats`, each a `{harness, pick, effort}` rule where `pick` is `top` or `economy`; `optional: true` skips a seat whose catalog cannot be read.
+- `researcher` is the same kind of rule for the council's researcher.
+- `pseudonymiser.model` is the Anthropic model the claude CLI runs to list identifying data, and `timeout_seconds` bounds that call.
+
+Malformed JSON, a missing top-level key, or an invalid price pattern stops the command with a named error rather than falling back.
+
 ## Toolchain
 
 On session start the first mate detects what its required toolchain is missing or too old and lists each problem with either an exact install command or manual instructions.

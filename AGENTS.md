@@ -80,6 +80,7 @@ config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCA
 config/skill-sync-exclude  optional rsync --exclude patterns for the remote secondmate skill sync, one per non-empty, non-comment line; LOCAL, gitignored; absent uses the built-in default set; a remote-launch-only best-effort step outside the FM_INHERITABLE_CONFIG allowlist, NOT inherited by secondmate homes; see docs/configuration.md "Remote secondmate skill sync (config/skill-sync-exclude)"
 config/handoff-s3    optional machine handoff: one home moving between machines through an S3 bucket, never active on two at once; LOCAL, gitignored, NOT inherited; absent = off; see docs/configuration.md "Machine handoff"
 config/watched-tools.json  optional list of the tools this home depends on, read by the update check armed with bin/fm-tool-update-check.sh; LOCAL, gitignored, firstmate-maintained but human-editable, and NOT inherited by secondmate homes; see docs/configuration.md "Watched tool updates"
+config/pal-council.json  optional pal-council tiers, list prices, default budget, and timing; LOCAL, gitignored, NOT inherited; absent uses the tracked docs/examples/pal-council.json; see docs/configuration.md "Pal council"
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
@@ -91,6 +92,7 @@ data/                personal fleet records; LOCAL, gitignored as a whole
   <id>/brief.md      per-task crewmate brief, or per-secondmate charter brief when kind=secondmate
   <id>/report.md     scout task deliverable, written by the crewmate; survives teardown
   <id>/advisor-log.jsonl  jsonl measurement log of the opt-in advisor Stop hook; present only when the task's dispatch profile carried advisor
+  pal-<id>/          one pal-council's record (brief, turns, append-only verbale, dossier, synthesis, costs); its workers are scout tasks pal-<id>-<seat>; bin/fm-pal-council.sh owns the layout
 projects/            cloned repos; gitignored; read-only except under hard rule 1's concrete captain-approved project operation exception
 state/               runtime records and signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" wake-event lines, not current-state truth
@@ -287,6 +289,7 @@ Classify the deliverable:
 
 - **Ship** is the default and produces a project change through the selected delivery mode; once implementation is authorized, dispatch a ship and keep any remaining bounded research inside it unless unresolved uncertainty could materially change whether or what to build.
 - **Scout** produces knowledge in `data/<id>/report.md`, never a PR, and is appropriate for investigation, diagnosis, planning, reproduction, or audit work when the captain explicitly requests a separate knowledge or design deliverable, unresolved uncertainty could materially change whether or what to build, or the standing direct-PR review below applies.
+- **Council** is a debate among 1-5 voices from different model providers that ends in a synthesis; when the captain invokes `/pal-council` or asks for a council of models or experts on a decision, load `pal-council`, which runs the voices as read-only scouts.
 
 If established evidence already answers an informational question, relay it without a design-only scout; when implementation intent is unclear, answer and ask one concise implementation question when useful rather than dispatching speculative design work.
 Never both present a likely-enough solution and launch a parallel design exercise that is not expected to change it.
@@ -419,6 +422,7 @@ Handle actionable wakes as follows:
 
 When any wake reports a merged PR for a project cloned in this home, refresh that clone through the guarded fleet-sync path.
 When Relay-linked work reaches a milestone or terminal state, load `fmx-respond`; before terminal teardown, use its promised-final reconciliation when a typed public commitment exists, otherwise post the final completion follow-up so the link clears even if earlier follow-ups were spent.
+A wake from a council worker (task id `pal-<council>-<seat>`) or from a council's purge watch belongs to the `pal-council` moderation loop: load that skill before acting, and clean those workers up only through its cleanup.
 
 A secondmate's idle endpoint is healthy, and parent supervision relies on its routed status rather than treating a quiet pane as stale.
 Waiting on a healthy supervision cycle is silent; empty polls, elapsed time, and no-change updates are not captain-facing progress.

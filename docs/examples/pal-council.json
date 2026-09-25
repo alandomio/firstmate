@@ -1,0 +1,86 @@
+{
+  "language": "en",
+  "default_tier": "best",
+  "rounds": { "default": 6, "max": 20 },
+  "round_timeout_minutes": 45,
+  "purge_after_hours": 12,
+  "brief_max_chars": 10000,
+  "budget": {
+    "opus_class_voice_eur": 4,
+    "other_voice_eur": 2,
+    "researcher_eur": 2,
+    "moderator_eur": 0.5,
+    "min_eur": 0.1,
+    "max_eur": 50
+  },
+  "estimate": {
+    "expected_rounds": 3,
+    "chars_per_token": 4,
+    "harness_context_tokens": 20000,
+    "tool_tokens_per_turn": 15000,
+    "requests_per_turn": 8,
+    "cached_input_factor": 0.1,
+    "turn_chars": 6000,
+    "summary_chars": 2000,
+    "dossier_chars": 3000,
+    "research_request_chars": 400,
+    "reasoning_tokens": { "low": 3000, "medium": 6000, "high": 12000, "xhigh": 20000, "max": 30000 }
+  },
+  "usd_to_eur": 0.92,
+  "prices_checked": "2026-09-25",
+  "prices": [
+    { "harness": "claude", "match": "(?i)fable", "opus_class": true, "input_usd_per_mtok": 10, "output_usd_per_mtok": 50, "source": "Anthropic list price, Claude Fable 5.1" },
+    { "harness": "claude", "match": "(?i)opus", "opus_class": true, "input_usd_per_mtok": 5, "output_usd_per_mtok": 25, "source": "Anthropic list price, Claude Opus 5" },
+    { "harness": "claude", "match": "(?i)sonnet", "input_usd_per_mtok": 2, "output_usd_per_mtok": 10, "source": "Anthropic list price, Claude Sonnet 5" },
+    { "harness": "claude", "match": "(?i)haiku", "input_usd_per_mtok": 1, "output_usd_per_mtok": 5, "source": "Anthropic list price, Claude Haiku 4.5" },
+    { "harness": "codex", "match": "(?i)sol", "input_usd_per_mtok": 5, "output_usd_per_mtok": 30, "source": "OpenAI list price, GPT-5.6 Sol" },
+    { "harness": "codex", "match": "(?i)terra", "input_usd_per_mtok": 2, "output_usd_per_mtok": 12, "source": "OpenAI list price, GPT-5.6 Terra" },
+    { "harness": "codex", "match": "(?i)luna", "input_usd_per_mtok": 0.2, "output_usd_per_mtok": 1.2, "source": "OpenAI list price, GPT-5.6 Luna" },
+    { "harness": "agy", "match": "(?i)gemini.*pro", "input_usd_per_mtok": 2, "output_usd_per_mtok": 12, "source": "Google list price, Gemini 3.1 Pro up to 200K prompt" },
+    { "harness": "agy", "match": "(?i)gemini.*flash", "input_usd_per_mtok": 1.5, "output_usd_per_mtok": 7.5, "source": "Google list price, Gemini 3.8 Flash after the 2026 introductory rate" },
+    { "match": "", "fallback": true, "input_usd_per_mtok": 5, "output_usd_per_mtok": 25, "source": "fallback for a model with no listed price; add its real price above" }
+  ],
+  "providers": {
+    "claude": "Anthropic",
+    "codex": "OpenAI",
+    "agy": "Google",
+    "grok": "xAI",
+    "cursor": "Cursor",
+    "kimi": "Moonshot",
+    "muse": "Meta"
+  },
+  "catalog": {
+    "claude": { "top": ["^fable$", "^opus$"], "economy": ["^sonnet$", "^haiku$"] },
+    "codex": { "top": [""], "economy": ["(?i)\\b(fast|efficient|mini)\\b"] },
+    "agy": { "top": ["(?i)^gemini-[0-9.]+-pro-high"], "economy": ["(?i)^gemini-[0-9.]+-flash-low"], "exclude": ["(?i)^(claude|gpt)"] },
+    "grok": { "top": [""], "economy": ["(?i)\\b(mini|fast)\\b"] },
+    "cursor": { "top": [""], "economy": ["(?i)\\b(mini|fast)\\b"] }
+  },
+  "tiers": {
+    "fast": {
+      "seats": [
+        { "harness": "claude", "pick": "top", "effort": "low" },
+        { "harness": "codex", "pick": "top", "effort": "low" },
+        { "harness": "agy", "pick": "top", "effort": "low" }
+      ]
+    },
+    "best": {
+      "seats": [
+        { "harness": "claude", "pick": "top", "effort": "high" },
+        { "harness": "codex", "pick": "top", "effort": "high" },
+        { "harness": "agy", "pick": "top", "effort": "high" }
+      ]
+    },
+    "pro": {
+      "seats": [
+        { "harness": "claude", "pick": "top", "effort": "max" },
+        { "harness": "codex", "pick": "top", "effort": "xhigh" },
+        { "harness": "agy", "pick": "top", "effort": "high" },
+        { "harness": "grok", "pick": "top", "effort": "high", "optional": true },
+        { "harness": "codex", "pick": "economy", "effort": "low" }
+      ]
+    }
+  },
+  "researcher": { "harness": "agy", "pick": "top", "effort": "high" },
+  "pseudonymiser": { "model": "haiku", "timeout_seconds": 600 }
+}

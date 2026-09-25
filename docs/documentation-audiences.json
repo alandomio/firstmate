@@ -173,6 +173,34 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/pal-council/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pal-council/references/persona-template.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pal-council/references/researcher-brief.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pal-council/references/researcher-persona.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pal-council/references/synthesis-template.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pal-council/references/turn-contract.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pal-council/references/voice-brief.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/process-event-sources/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -285,6 +313,10 @@
       "audience": "operator-example"
     },
     {
+      "path": "docs/examples/pal-council.json",
+      "audience": "operator-example"
+    },
+    {
       "path": "docs/examples/skill-sync-exclude",
       "audience": "operator-example"
     },
@@ -378,6 +410,10 @@
     },
     {
       "path": "docs/verification/muse.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/pal-council.md",
       "audience": "maintainer-verification"
     },
     {
