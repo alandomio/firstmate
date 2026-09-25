@@ -1,0 +1,5 @@
+$ fm-captain-hold.sh --help  (decision-card excerpt)
+39-a "revisit later" answer is stored as a date instead of a live card.
+40:The --reason is the decision card the policy skill owns - what is decided on
+41-which project, why it matters now, options with their consequences, the
+42-recommendation, and the link - on one line with no parentheses.

@@ -1,0 +1,8 @@
+$ fm-brief.sh demo-ship demo --mode no-mistakes   # gitlab project; rule 6 excerpt of generated brief.md
+71:6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
+72-   append `needs-decision: {decision card}` and stop. Firstmate will reply with the decision.
+73-   Write a needs-decision line as a self-contained decision card firstmate can relay to the captain as is: what is being decided and on which project, why it matters and what happens if nobody decides, each option with its concrete consequence, your recommendation and why, and the full link to the merge request, ticket, or report.
+74-   Spell out every internal id, finding key, or shorthand such as "D3" or "option b".
+75-   Keep it one line; when it needs more room, write the card into a file and point the line at it.
+76-   A decision or blocker you opened stays open until a `resolved` line carrying its exact key lands; a later `done:` or `working:` line never closes it, even when the answer is what started that work.
+77-   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append `resolved: {how it cleared}` yourself (same `[key=<slug>]` if you opened it with one) as you resume.
