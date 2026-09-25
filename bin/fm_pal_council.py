@@ -490,7 +490,8 @@ def check_diversity(council):
     if not active:
         raise Stop("no voice is left to sit on the council", EXIT_CAPTAIN)
     providers = {s["provider"] for s in active}
-    if len(active) >= 2 and len(providers) == 1 and not council.get("single_provider_ok"):
+    quota_narrowed = len({s["provider"] for s in voices(council, ("planned", "active", "excluded"))}) > 1
+    if (len(active) >= 2 or quota_narrowed) and len(providers) == 1 and not council.get("single_provider_ok"):
         raise Stop(f"every remaining voice is from one provider ({providers.pop()}); a single-provider council "
                    "gives weaker reviews - ask the captain, and pass --single-provider-ok only on their word", EXIT_CAPTAIN)
 
@@ -681,6 +682,19 @@ def pseudonymise_pass(council, cfg, texts, skip_model=False, extra=()):
     if rows and not council.get("sensitive"):
         council["sensitive"] = True
     return rows, len(rows) - before
+
+
+def free_texts(council):
+    """Council fields firstmate writes into the record: the topic and the seat notes (drop reasons, failures)."""
+    members = council["seats"] + ([council["researcher"]] if council.get("researcher") else [])
+    return [council["topic"]] + [s["note"] for s in members if s.get("note")]
+
+
+def write_pseudo_verbale(council, rows):
+    cdir = council_dir(council["id"])
+    text = apply_map(read(cdir / "verbale.md"), rows)
+    gate(cdir, text, False, "psevdo/verbale.md")
+    write_atomic(cdir / "psevdo" / "verbale.md", text)
 
 
 def outgoing_sources(cdir):
@@ -957,7 +971,7 @@ def cmd_pseudo(args):
             raise Stop(f"--add expects TYPE=FORM, got {item!r}")
         extra.append({"type": etype.strip().upper(), "forms": [form.strip()]})
     texts = [read(cdir / rel) for rel in sources]
-    rows, added = pseudonymise_pass(council, cfg, texts, skip_model=args.skip_model, extra=extra)
+    rows, added = pseudonymise_pass(council, cfg, texts + free_texts(council), skip_model=args.skip_model, extra=extra)
     record = json.loads(read(cdir / "pseudo.json")) if (cdir / "pseudo.json").is_file() else {}
     for rel, text in zip(sources, texts):
         out = apply_map(text, rows)
@@ -1217,7 +1231,7 @@ def cmd_launch(args):
     if not (cdir / "verbale.md").is_file():
         write_atomic(cdir / "verbale.md", verbale_header(council))
     if any(not s["trusted"] for s in members):
-        write_atomic(cdir / "psevdo" / "verbale.md", apply_map(read(cdir / "verbale.md"), load_entities(cdir)))
+        write_pseudo_verbale(council, load_entities(cdir))
     costs["moderator_eur"] = cfg["budget"]["moderator_eur"]
     costs["budget_eur"] = council["budget_eur"]
     open_round(council, 1)
@@ -1274,20 +1288,16 @@ def seat_heading(seat, lab):
     return f"### {name} - {seat['model']} ({seat['provider']}, {seat['harness']})"
 
 
-def cmd_close_round(args):
-    cfg = load_config()
-    council = load_council(args.id)
-    require_state(council, "running")
+def close_round(council, cfg, force):
+    """Append the open round to the record: delivered turns verbatim, every other voice recorded as missing."""
     cdir = council_dir(council["id"])
     lab = labels(council["language"])
     rnd = current_round(council)
-    if rnd["closed"]:
-        raise Stop(f"round {rnd['n']} is already closed; run summary, research, and next")
     expired = now() >= parse_iso(rnd["deadline"])
     active = voices(council)
     states = {s["seat"]: delivered(cdir, rnd["n"], s) for s in active}
     pending = [name for name, (m, _p) in states.items() if not m]
-    if pending and not expired and not args.force:
+    if pending and not expired and not force:
         raise Stop(f"round {rnd['n']} is still waiting for {', '.join(pending)}; wait, or pass --force to close it now")
     entries = [f"\n## {lab['round']} {rnd['n']}\n"]
     costs = load_costs(cdir)
@@ -1320,6 +1330,18 @@ def cmd_close_round(args):
     rnd["research_requests"] = len(requests)
     spent = save_costs(cdir, costs)
     save_council(council)
+    return rnd, active, pending, delivered_statuses, requests, spent
+
+
+def cmd_close_round(args):
+    cfg = load_config()
+    council = load_council(args.id)
+    require_state(council, "running")
+    cdir = council_dir(council["id"])
+    rnd = current_round(council)
+    if rnd["closed"]:
+        raise Stop(f"round {rnd['n']} is already closed; run summary, research, and next")
+    rnd, active, pending, delivered_statuses, requests, spent = close_round(council, cfg, args.force)
     all_done = bool(delivered_statuses) and not pending and all(r["status"] == "DONE" for r in delivered_statuses)
     no_news = rnd["n"] >= 2 and bool(delivered_statuses) and all(r["new"] == 0 and r["changed"] == 0 for r in delivered_statuses)
     print(f"round {rnd['n']} closed: {len(delivered_statuses)} delivered, {len(pending)} missing")
@@ -1499,8 +1521,8 @@ def cmd_next(args):
         if rnd["research"] == "done":
             fresh.append(read(cdir / "ricerca" / f"{rnd['n']}.md"))
         fresh += [read(cdir / m["file"]) for m in council["messages"] if m["delivered"] is None]
-        rows, _added = pseudonymise_pass(council, cfg, fresh)
-        write_atomic(cdir / "psevdo" / "verbale.md", apply_map(read(cdir / "verbale.md"), rows))
+        rows, _added = pseudonymise_pass(council, cfg, fresh + free_texts(council))
+        write_pseudo_verbale(council, rows)
     ready = {}
     for seat in active:  # every packet is built and gated before the first one leaves
         ready[seat["seat"]] = outgoing_text(council, cfg, seat, packets[seat["seat"]], rows)
@@ -1599,6 +1621,10 @@ def cmd_cancel(args):
     council = load_council(args.id)
     require_state(council, "draft", "running", "closing")
     lab = labels(council["language"])
+    rnd = current_round(council)
+    if council["state"] == "running" and rnd and not rnd["closed"]:
+        _rnd, _active, pending, delivered_statuses, _requests, _spent = close_round(council, load_config(), True)
+        print(f"round {rnd['n']} closed into the record: {len(delivered_statuses)} delivered, {len(pending)} missing")
     council["state"] = "cancelled"
     council["closed_reason"] = args.reason or lab["cancelled"]
     council["closed_at"] = iso(now())
@@ -1664,6 +1690,7 @@ def build_rag(council, cfg):
     date = council["created"][:10]
     participants = [f"{s['seat']}:{s['harness']}/{s['model']}" for s in council["seats"] if s["status"] != "excluded"]
     topic = apply_map(council["topic"], rows) if rows else council["topic"]
+    outcome = apply_map(council["closed_reason"], rows) if rows else council["closed_reason"]
     topic_tag = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:60]
     tags = ["pal-council", f"council:{council['id']}", f"topic:{topic_tag}", f"date:{date}",
             f"tier:{council['tier'] or 'explicit'}", f"sensitivity:{'sensitive' if council['sensitive'] else 'normal'}",
@@ -1682,13 +1709,13 @@ def build_rag(council, cfg):
         parts = chunks(text, 7000)
         for i, part in enumerate(parts, 1):
             header = (f"# pal-council {council['id']} - {kind} ({i}/{len(parts)})\n"
-                      f"Tags: {'; '.join(tags)}\nTopic: {topic}\nOutcome: {council['closed_reason']}\n\n")
+                      f"Tags: {'; '.join(tags)}\nTopic: {topic}\nOutcome: {outcome}\n\n")
             meta = {"file_path": f"firstmate/pal-council/{council['id']}/{name}", "slug": f"pal-council-{council['id']}-{kind}-{i}",
                     "author": "firstmate-pal-council", "document_type": f"pal_council_{kind}", "document_date": date,
                     "rbac_roles": ["admin", "dev"], "confidence_score": 1.0, "tags": tags,
                     "scope_chain": ["pal-council", council["id"], kind],
                     "pal_council": {"id": council["id"], "topic": topic, "tier": council["tier"], "sensitive": council["sensitive"],
-                                    "outcome": council["closed_reason"], "participants": participants, "part": i, "parts": len(parts)}}
+                                    "outcome": outcome, "participants": participants, "part": i, "parts": len(parts)}}
             payload = {"chunk_text": header + part, "metadata_json": json.dumps(meta, ensure_ascii=False), "user_roles": "admin,dev"}
             dest = out_dir / f"{kind}-{i}.json"
             write_atomic(dest, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
@@ -1803,6 +1830,16 @@ def cmd_purge_due(args):
     return 0 if purge_due(load_council(args.id), cfg) else 1
 
 
+def map_strings(value, rows):
+    if isinstance(value, str):
+        return apply_map(value, rows)
+    if isinstance(value, list):
+        return [map_strings(v, rows) for v in value]
+    if isinstance(value, dict):
+        return {k: map_strings(v, rows) for k, v in value.items()}
+    return value
+
+
 def cmd_purge(args):
     council = load_council(args.id)
     cdir = council_dir(council["id"])
@@ -1825,9 +1862,7 @@ def cmd_purge(args):
     for path in targets:
         text = read(path)
         if path.name == "consiglio.json":
-            data = json.loads(text)
-            data["topic"] = apply_map(data["topic"], rows)
-            new = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+            new = json.dumps(map_strings(json.loads(text), rows), indent=2, ensure_ascii=False) + "\n"
         else:
             new = apply_map(text, rows)
         if new != text:

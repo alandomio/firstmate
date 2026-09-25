@@ -36,7 +36,8 @@
 #       seat}. --like copies another council's composition, personas, project,
 #       and language and inherits its synthesis. quota-axi evidence excludes a
 #       seat only on concrete exhaustion; missing evidence is reported as
-#       uncertainty. A council left with one provider for two or more voices
+#       uncertainty. A council left with one provider for two or more voices,
+#       or left with one provider by a quota exclusion whatever its size,
 #       exits 5 unless --single-provider-ok records the captain's word.
 #       Without --budget the budget is the configured per-seat default.
 #   prior <id> (--none | <prior-id> [--file <synthesis>])
@@ -75,7 +76,9 @@
 #       Record a captain message; it travels with the next packets, or at once with --now.
 #   drop <id> <seat> --reason <text>   Withdraw a voice from later rounds.
 #   close <id> --reason <text>         Stop the rounds; the synthesis comes next.
-#   cancel <id> [--reason <text>]      Cancel the council.
+#   cancel <id> [--reason <text>]
+#       Cancel the council; an open round is first closed into the record as
+#       close-round --force would close it.
 #   finalize <id>
 #       Require sintesi.md with the headings references/synthesis-template.md
 #       lists for the council's language, close the record, and write the

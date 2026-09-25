@@ -31,7 +31,8 @@ Each council lives in `data/pal-<id>/`, and each voice is an ordinary scout task
 1. Read the request: the topic, a tier (`fast`, `best` by default, `pro`) or an explicit participant list, rounds (default 6, at most 20), budget, attachments (text files), earlier councils to inherit, the project the question is about (default: this firstmate repo), and whether the captain called the material private (`--sensitive`).
 2. For an explicit list, write it as a JSON array of `{harness, model, persona, instructions}` and pass `--participants`.
 3. Run `bin/fm-pal-council.sh new "<topic>" ... --language <code>`.
-4. Exit 5 means one provider would be left for two or more voices, or no voice at all: ask the captain one question, and rerun with `--single-provider-ok` only on their word.
+4. Exit 5 means one provider would be left for two or more voices, a quota exclusion would leave one provider whatever the number of voices, or no voice would be left at all.
+   Ask the captain one question, and rerun with `--single-provider-ok` only on their word.
 
 Done when `new` succeeded and every excluded seat and every uncertain quota line is noted for the captain.
 
@@ -99,6 +100,7 @@ Done when a closing condition holds, every closed round has its summary, and eve
 - **Change of topic**: a `message --all` stating the new question, noted in the next summary.
 - **Close now**: `close-round <id> --force` when a round is open, then Step 8.
 - **Cancel**: `cancel <id>`, then Step 10; a cancelled council has no synthesis and no knowledge payloads.
+  An open round is closed into the record first, delivered turns verbatim and the other voices as missing.
 - **Resume a finished council with a new direction**: `new "<topic>" --like <id>` starts a linked council that inherits the synthesis, composition, and personas; continue from Step 2 with the new direction in its brief.
 - **Withdraw a voice**: `drop <id> <seat> --reason <text>`.
 

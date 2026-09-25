@@ -58,6 +58,12 @@ cat > "$FIX/quota-codex-empty.json" <<'EOF'
   {"provider": "codex", "quotaSemantics": {"effectiveAvailability": [{"scope": "all_models", "status": "known", "effectivePercentRemaining": 0}]}}
 ]}
 EOF
+cat > "$FIX/quota-claude-only.json" <<'EOF'
+{"providers": [
+  {"provider": "codex", "quotaSemantics": {"effectiveAvailability": [{"scope": "all_models", "status": "known", "effectivePercentRemaining": 0}]}},
+  {"provider": "agy", "quotaSemantics": {"effectiveAvailability": [{"scope": "all_models", "status": "known", "effectivePercentRemaining": 0}]}}
+]}
+EOF
 
 # The fake pseudonymiser finds the two private names this test uses, and only
 # in the TEXT section of its prompt, like the real model.
@@ -145,6 +151,15 @@ Q=$(new_id "$out")
 [ "$(field "$Q" '.seats[] | select(.seat=="codex") | .status')" = "excluded" ] || fail "an exhausted provider's seat must be excluded"
 assert_contains "$out" "codex: EXCLUDED - no quota left on codex (0% remaining)" "the exclusion is reported"
 pass "quota-axi exhaustion excludes a seat and reports it"
+
+out=$(FM_PAL_QUOTA_JSON="$FIX/quota-claude-only.json" "$PAL" new "Quota" --slug quota1 2>&1); code=$?
+expect_code 5 "$code" "a quota exclusion that leaves one voice from one provider"
+assert_contains "$out" "ask the captain" "the quota-narrowed council routes to the captain"
+out=$(FM_PAL_QUOTA_JSON="$FIX/quota-claude-only.json" "$PAL" new "Quota" --slug quota1 --single-provider-ok 2>&1) \
+  || fail "--single-provider-ok should allow the quota-narrowed council: $out"
+printf '[{"harness":"claude","model":"opus","persona":"A"}]' > "$FIX/one-voice.json"
+out=$("$PAL" new "One voice" --participants "$FIX/one-voice.json" --slug onevoice 2>&1) || fail "an explicit one-voice list should be allowed: $out"
+pass "a quota exclusion that leaves one provider needs the captain's word, an explicit one-voice list does not"
 
 printf '[{"harness":"claude","model":"opus","persona":"A"},{"harness":"claude","model":"sonnet","persona":"B"}]' > "$FIX/one-provider.json"
 out=$("$PAL" new "One provider" --participants "$FIX/one-provider.json" 2>&1); code=$?
@@ -324,7 +339,7 @@ pass "a council whose spend passes its budget cannot open another round"
 
 # --- close, synthesis, knowledge -------------------------------------------------------------
 
-"$PAL" close "$C" --reason "tutte le voci DONE" >/dev/null
+"$PAL" close "$C" --reason "tutte le voci DONE, Mario Rossi informato" >/dev/null
 "$PAL" finalize "$C" >/dev/null 2>&1; code=$?
 expect_code 2 "$code" "finalize without a synthesis"
 printf '## Raccomandazione\nlogfmt per Mario Rossi.\n\n## Disaccordi\ncodex contro claude.\n' > "$CD/sintesi.md"
@@ -342,6 +357,8 @@ jq -e '.metadata_json | fromjson | .tags | index("pal-council")' "$R" >/dev/null
 jq -e '.metadata_json | fromjson | .tags | index("sensitivity:sensitive")' "$R" >/dev/null || fail "payload carries the sensitivity tag"
 assert_contains "$(jq -r '.chunk_text' "$R")" "Tags: pal-council;" "the tags are also searchable text"
 assert_no_grep "Mario Rossi" "$R" "a sensitive council's synthesis payload is pseudonymised"
+[ "$(jq -r '.metadata_json | fromjson | .pal_council.outcome' "$R")" = "tutte le voci DONE, [PERSONA_1] informato" ] \
+  || fail "a sensitive council's outcome is pseudonymised in the payload"
 for f in "$CD"/rag/record-*.json; do assert_no_grep "Mario Rossi" "$f" "a sensitive council's record payload is pseudonymised"; done
 out=$("$PAL" rag-query "$C")
 assert_contains "$out" "query_text: pal-council Which log format?" "the prior-council query uses the tag and topic"
@@ -421,7 +438,7 @@ pass "a voice that cannot be reached is recorded as lost, never spoken for"
 
 # --- a failed spawn, status, and cancel --------------------------------------------------------------
 
-out=$("$PAL" new "Failed spawn" --slug fail 2>&1) || fail "new failed: $out"
+out=$("$PAL" new "Contratto con Mario Rossi" --slug fail 2>&1) || fail "new failed: $out"
 F=$(new_id "$out")
 FD="$H2/data/pal-$F"
 printf 'Domanda neutra.\n' > "$FD/brief.md"
@@ -431,11 +448,18 @@ if ! { "$PAL" prior "$F" --none && "$PAL" pseudo "$F"; } >/dev/null; then
 fi
 out=$(FAKE_SPAWN_FAIL="pal-$F-codex" "$PAL" launch "$F" 2>&1) || fail "launch with one failed spawn should continue: $out"
 assert_contains "$out" "codex: FAILED - spawn failed" "the failed spawn is reported"
+assert_no_grep "Mario Rossi" "$FD/psevdo/verbale.md" "a name only in the topic never reaches the record for outside-Anthropic voices"
+assert_grep "[PERSON_1]" "$FD/psevdo/verbale.md" "the topic is pseudonymised in that record"
 out=$("$PAL" status "$F")
 assert_contains "$out" "seat codex: codex/model-a failed - spawn failed" "status shows the failed seat"
 assert_contains "$out" "seat claude: claude/fable active" "the other voices run"
+CD=$FD
+turn 1 claude CONTINUE 1 0 "Parere consegnato prima dell'annullamento."
 "$PAL" cancel "$F" --reason "prova" >/dev/null || fail "cancel failed"
 [ "$(jq -r '.state' "$FD/consiglio.json")" = "cancelled" ] || fail "cancel records the state"
+assert_grep "Parere consegnato prima dell'annullamento." "$FD/verbale.md" "cancel closes the open round with the delivered turn verbatim"
+assert_grep "**MISSING TURN**" "$FD/verbale.md" "cancel records the voice that did not deliver"
+[ "$(jq -r '.rounds[0].results.agy.result' "$FD/consiglio.json")" = "missing" ] || fail "the undelivered voice is recorded as missing"
 assert_grep "Council cancelled: prova" "$FD/verbale.md" "the cancellation is in the record"
 "$PAL" complete "$F" --none >/dev/null || fail "complete after cancel failed"
 : > "$LOGS/teardown.log"
