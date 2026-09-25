@@ -786,6 +786,45 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
+# The captain (2026-09-25) could not judge Captain's Call entries built from
+# cryptic needs-decision lines, so every scaffold asks the worker for the
+# decision-card elements captain-hold-lifecycle owns, with a link noun that
+# follows the project's forge.
+test_needs_decision_asks_for_decision_card() {
+  local home brief id elements="what is being decided and on which project, why it matters and what happens if nobody decides, each option with its concrete consequence, your recommendation and why, and the full link to the"
+  home="$TMP_ROOT/decision-card-home"
+  mkdir -p "$home/data"
+  write_project_clone "$home" card-gh https://github.com/acme/card-gh.git
+  write_project_clone "$home" card-gl https://gitlab.com/acme/card-gl.git
+
+  for id in card-ship card-scout; do
+    if [ "$id" = card-ship ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" card-gh --mode no-mistakes >/dev/null 2>&1
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" card-gl --scout >/dev/null 2>&1
+    fi
+    brief="$home/data/$id/brief.md"
+    assert_grep "   append \`needs-decision: {decision card}\` and stop." "$brief" \
+      "$id: rule 6 did not name the decision card as the needs-decision payload"
+    assert_grep "   Write a needs-decision line as a self-contained decision card firstmate can relay to the captain as is: $elements" "$brief" \
+      "$id: rule 6 did not ask for every decision-card element on its own indented line"
+    assert_grep '   Spell out every internal id, finding key, or shorthand such as "D3" or "option b".' "$brief" \
+      "$id: rule 6 did not forbid unexplained internal keys"
+    assert_no_grep "summary of options" "$brief" "$id: rule 6 still asks only for a summary of options"
+  done
+  assert_grep "full link to the pull request, ticket, or report." "$home/data/card-ship/brief.md" \
+    "github ship brief did not use pull request as the decision-card link noun"
+  assert_grep "full link to the merge request, ticket, or report." "$home/data/card-scout/brief.md" \
+    "gitlab scout brief did not use merge request as the decision-card link noun"
+
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='sample domain' \
+    "$ROOT/bin/fm-brief.sh" card-mate --secondmate --no-projects >/dev/null 2>&1
+  brief="$home/data/card-mate/brief.md"
+  grep -qx "Write a needs-decision line as a self-contained decision card firstmate can relay to the captain as is: $elements pull or merge request, ticket, or report." "$brief" \
+    || fail "secondmate charter did not ask for the decision-card elements on their own line"
+  pass "fm-brief.sh: ship, scout, and secondmate scaffolds ask for self-contained decision cards"
+}
+
 # The captain's instruction (2026-09-01) requires workers to ground themselves
 # in the RAG and the local memory store before acting, not just when a skill
 # they happen to invoke requires it. This section belongs in ship and scout
@@ -1418,6 +1457,7 @@ test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
+test_needs_decision_asks_for_decision_card
 test_grounding_section_requires_search_and_reporting
 test_briefs_name_rag_not_pp_brain
 test_knowledge_store_config_renames_worker_wording

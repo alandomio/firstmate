@@ -210,6 +210,15 @@ if [ -f "$KS_FILE" ]; then
   KS_INSTRUCTIONS=$ks_instructions_line
 fi
 
+# A needs-decision line is the source firstmate relays to the captain, so every
+# scaffold asks for the decision-card elements owned by captain-hold-lifecycle.
+decision_card_rule() {  # <link noun> <line indent>
+  printf '%s%s\n' \
+    "$2" "Write a needs-decision line as a self-contained decision card firstmate can relay to the captain as is: what is being decided and on which project, why it matters and what happens if nobody decides, each option with its concrete consequence, your recommendation and why, and the full link to the $1, ticket, or report." \
+    "$2" "Spell out every internal id, finding key, or shorthand such as \"D3\" or \"option b\"." \
+    "$2" "Keep it one line; when it needs more room, write the card into a file and point the line at it."
+}
+
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
@@ -351,6 +360,7 @@ Use this only for material phase changes, a captain decision, a real blocker, a 
 This is also how you return the answer to a marked from-firstmate request above.
 A marked request requires one correlated answer after the work; it does not require a separate receipt or start acknowledgement.
 Never append \`working:\` merely to acknowledge receipt or announce that a marked request has started.
+$(decision_card_rule 'pull or merge request' '')
 When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above, give that reported phase a stable key.
 If its first reportable event is \`working [key=<work-slug>]: {material phase}\`, use the same key on its later \`$PAUSED_VERB\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event so the earlier working phase is superseded.
 When a keyed phase ends without another reportable state, append \`resolved [key=<work-slug>]: {why it is no longer active}\`.
@@ -396,6 +406,8 @@ case "$FORGE" in
     FORGE_TOOLS_LINE="This project's forge could not be determined from its git remote; run \`git remote -v\` to check, then use gh-axi for GitHub or glab for GitLab. chrome-devtools-axi remains available for browser operations."
     ;;
 esac
+
+DECISION_CARD_ITEM=$(decision_card_rule "$FORGE_NOUN" '   ')
 
 if [ "$HERDR_LAB" -eq 1 ]; then
 HERDR_LAB_HELPER=$(shell_quote "$FM_ROOT/bin/fm-herdr-lab.sh")
@@ -490,7 +502,8 @@ The report is the only thing that survives, so anything worth keeping must be in
    line silent on which you actually used.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
-   append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
+   append \`needs-decision: {decision card}\` and stop. Firstmate will reply with the decision.
+$DECISION_CARD_ITEM
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
@@ -642,7 +655,8 @@ $RULE1
    section prescribed none, say so explicitly - never leave that line silent on which you actually used.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
-   append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
+   append \`needs-decision: {decision card}\` and stop. Firstmate will reply with the decision.
+$DECISION_CARD_ITEM
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving

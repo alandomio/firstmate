@@ -945,6 +945,28 @@ test_open_decision_surfaces_end_to_end() {
   pass "an authoritative captain hold surfaces end-to-end"
 }
 
+# A captain call's hold reason is its decision card (captain-hold-lifecycle), and
+# Bearings must be able to render it whole: a card-length reason reaches
+# decisions_open intact from the main home and from a secondmate home.
+test_decision_card_reason_survives_projection() {
+  local home fakebin json card mate
+  home=$(make_home decision-card); write_fixture "$home"
+  mate=$(fixture_mate_home "$home")
+  card="Subscription order on firstmate - release waits until it is set; subscribe first keeps retries safe but delays launch by a day; publish first ships today but risks duplicate events; recommend subscribe first because duplicates reach customers; report https://github.com/acme/firstmate/pull/50"
+  [ "${#card}" -gt 200 ] || fail "decision-card fixture must exceed the old projection bounds"
+  CARD="$card" perl -0pi -e 's/\(hold: captain choice pending\)/(hold: $ENV{CARD})/' "$mate/data/backlog.md"
+  grep -q '^## Queued$' "$home/data/backlog.md" || fail "fixture main backlog lost its Queued section"
+  CARD="$card" perl -pi -e 's/^## Queued\n/## Queued\n- [ ] main-call - Pick subscription order (repo: firstmate) (kind: captain) (hold: $ENV{CARD}) (hold-kind: captain)\n/' \
+    "$home/data/backlog.md"
+  fakebin=$(make_fakebin "$home")
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e --arg card "$card" '
+    (.decisions_open | any(.[]; .id == "main-call" and .summary == ("Pick subscription order: " + $card)))
+      and (.decisions_open | any(.[]; .id == "mate/mate-decision-race" and (.summary | endswith($card))))
+  ' >/dev/null || fail "a decision-card hold reason must reach decisions_open whole: $json"
+  pass "a decision-card hold reason survives the main and secondmate projections whole"
+}
+
 test_report_pointers_surface() {
   local home fakebin json
   home=$(make_home reports); write_fixture "$home"
@@ -2011,6 +2033,7 @@ test_mixed_secondmate_roles_partial_state_and_captain_readiness
 test_main_captain_readiness_matches_secondmate_projection
 test_completed_scout_report_not_pending
 test_open_decision_surfaces_end_to_end
+test_decision_card_reason_survives_projection
 test_report_pointers_surface
 test_superseded_queued_item_dropped_by_default
 test_include_prs_is_the_only_fetch_path

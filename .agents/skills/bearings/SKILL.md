@@ -44,6 +44,7 @@ Board answers are acted on later under the normal authority rules; this skill's 
    A decision is simply a task held for the captain (`captain-hold-lifecycle`); every due, unblocked captain-held task appears under `decisions_open`, whatever its kind.
    A captain hold deferred by date sits under `gates` with its `until <date>:` reason until it is due, and a hold whose reason or body carries an explicit deferred/superseded marker is suppressed from the default view with an `omitted` disclosure.
    Do not scrape reports, visual-review artifacts, raw status-event tails, or visible conversation history to supplement current state.
+   The one targeted read allowed is expanding a call the snapshot already lists: when its summary is terse, ends in a truncation ellipsis, or leans on an unexplained internal key, read that task's own record (`tasks-axi show <id> --full` in the home that owns it) and the report, PR, or MR it links, so its card is complete; this never discovers new calls.
    A queued item under `gates` only becomes "next work" when its blocker is gone and its time/date gate has arrived.
    Until then it stays queued with the reason.
    The `(main-inventory)` gate is an action-free integrity warning rather than queued work.
@@ -62,7 +63,7 @@ Board answers are acted on later under the normal authority rules; this skill's 
    This is the only file-mode write allowed by the skill.
    The detailed report includes:
    - **Title** - `# Bearings - <day> <YYYY-MM-DD>` (use "Morning status" only when the captain specifically asks for a morning brief), followed by two or three sentences framing where things stand.
-   - **Captain's Call** - every open decision summarized with its options from the structured decision record, plus each PR ready to merge and each needed credential or login, every PR with the full `https://...` URL, never a bare `#number`.
+   - **Captain's Call** - every open decision as a full decision card (`captain-hold-lifecycle` owns its elements), plus each PR ready to merge and each needed credential or login, every PR with the full `https://...` URL, never a bare `#number`.
    - **Recently Landed** - the bounded current recent-completions baseline from structured state across the main fleet and every registered secondmate home, rendered in full on every run.
    - **Underway** - each live direct report making progress, with its current state, and the plans or main pickup pointers worth reopening (`data/<id>/report.md` files, `.lavish/*.html` boards).
    - **Charted Next** - queued or gated work, including any main-inventory integrity warning, with each item's blocker, date, or integrity reason.
@@ -78,7 +79,7 @@ Compose the payload from the same snapshot with the same ranking judgment as the
 
 - A Captain's Call decision key is the captain-held TASK ID from `decisions_open` (legacy `<origin>-decision-<key>` rows are already task ids); a merge card's key is `merge.<task-id>`; the Charted Next dispatch picker's key is `dispatch.charted`.
 - Compose exactly one decision card per captain-held task id. When one task carries multiple questions, consolidate all of them and their options into that card; never emit duplicate cards with the same task-id key.
-- Decision cards carry agent-authored copy: a short noun-phrase title, one-line `about` and `decide` context rows, and option labels with hints, with the recommended option marked.
+- Decision cards carry agent-authored copy in the decision-card shape `captain-hold-lifecycle` owns: a short noun-phrase title naming the subject in words, an `about` row saying what is decided on which project and why it matters now, a `decide` row carrying the question, the recommendation and its reason, and the link, and option labels whose hints state each option's concrete consequence, with the recommended option marked.
 - Card `type` (decision, merge, credential) is your composing judgment from the row's content; no backlog field types a card for you.
 - When the card's task is a captain-gated WORK item (the answer should free it to proceed rather than complete it), set the card's `close: "release"` so the answer lifts the hold instead of closing the task; question-shaped items omit it.
 - Every Captain's Call item and every Underway, Recently Landed, and Charted Next row carries an explicit `repo` field. Fill it from the snapshot and task records wherever known; use null or an empty string only as the deliberate genuinely-no-repo marker, in which case the template may show the internal id. Ids otherwise stay in the payload only as the routing channel, and composed reasons name blockers in plain words.
@@ -112,6 +113,8 @@ This skill is the one owner of the `/bearings` chat-response format; the snapsho
 Every `/bearings` chat response renders EXACTLY these four sections, in THIS order, and nothing else structural (there is no At Anchor section):
 
 1. **Captain's Call** - ONLY items that need the captain's own action now: a decision to make, a PR to approve or merge, a credential or login to provide, or a blocker only the captain can clear.
+   Render each decision as one compact decision card, the shape `captain-hold-lifecycle` owns: a short heading naming the subject and project in words, then what it is and why it matters now, the options with their concrete consequences, the recommendation with its reason, and the link.
+   One call is one card, ordered most impactful first; never show a bare internal key such as "D1", "option b", or a task id without saying what it stands for.
    Empty-state: "Nothing needs your action right now."
 2. **Recently Landed** - the bounded current recent-completions baseline: merged PRs, completed scouts, and finished local-only merges across the main fleet and every registered secondmate home.
    Empty-state: "No recent completions are in the current baseline."
@@ -131,8 +134,8 @@ Rules that keep the contract unambiguous:
 - Do not suppress separately projected decisions, landed records, or gates from a `partial-structured` home merely because that secondmate's own row is `unknown`.
 - Include the required direct address to the captain inside one item or empty-state sentence.
 - Every PR appears as the full `https://...` URL; a shorthand `#number` is fine only as a back-reference after the full URL has already appeared in the same digest.
-- The chat follows `AGENTS.md` section 9 and carries one scannable line per item.
-- Detailed decisions, plans, full gate reasons, and evidence stay out of chat; file mode puts them in the report, while lavish mode puts only its payload-backed interactive detail on the board.
+- The chat follows `AGENTS.md` section 9 and carries one scannable line per item, except that each Captain's Call decision is the compact card above.
+- Full decision reasoning, plans, full gate reasons, and evidence stay out of chat; file mode puts them in the report, while lavish mode puts only its payload-backed interactive detail on the board.
 - In file mode, include the report path or link inside the four-section digest without adding another heading.
 - In lavish mode, include the board URL inside the four-section digest the same way.
 
