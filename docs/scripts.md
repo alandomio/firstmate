@@ -118,6 +118,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-harness.sh`          | Detect the running harness and resolve crew or secondmate harness, model, and effort |
 | `fm-lock.sh`             | Per-home firstmate session lock                                                      |
 | `fm-handoff.sh`          | Opt-in machine handoff: move one home's `data/` between machines through S3 under a single-holder lease |
+| `fm-pal-council.sh`      | Run a pal-council's mechanics: seats from model catalogs, euro estimate, pseudonymisation gate, rounds, knowledge payloads, cleanup, and purge |
+| `fm_pal_council.py`      | The standard-library implementation behind `fm-pal-council.sh`                       |
 | `fm-x-lib.sh`            | Shared Relay config, relay, and reply-threading helpers                              |
 | `fm-x-poll.sh`           | One bounded Relay poll: stash newly offered mentions and emit their once-only wake   |
 | `fm-x-reply.sh`          | Post or dry-run preview a composed Relay reply or follow-up                          |
