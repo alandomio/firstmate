@@ -1,0 +1,7 @@
+$ FM_JEV_RIZZO_LIVE=1 FM_JEV_RIZZO_LIVE_URL=http://127.0.0.1:8018 bash tests/fm-jev-local-rizzo-live.test.sh
+ok - classified live against http://127.0.0.1:8018 in 1083ms: model=rizzo-flow-1.7b-q8_0 choice=firstmate cost=null
+exit=0
+
+$ bash tests/fm-jev-local-rizzo-live.test.sh   # without opt-in
+skip: set FM_JEV_RIZZO_LIVE=1 (and optionally FM_JEV_RIZZO_LIVE_URL) to run the live Rizzo Flow guard
+exit=0

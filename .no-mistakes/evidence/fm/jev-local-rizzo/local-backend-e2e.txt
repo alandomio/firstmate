@@ -1,0 +1,50 @@
+### 1. Local backend over real HTTP, with a bogus proxy in the environment and an OpenRouter key also present
+$ http_proxy=HTTPS_PROXY=ALL_PROXY=http://10.255.255.1:3128 fm-wake-drain.sh
+1790000000	1	signal	t1.status	signal: t1.status: working: implementing the fix
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 661.1790456881.N5qxDe
+wake annotation: latest wake-EVENT observed at drain, not current state: t1.status: working: implementing the fix at /Users/x/repo/file.go see https://gitlab.example/mr/1
+--- request as received by the loopback server:
+{"path": "/v1/systemone", "authorization": null, "model": "jev-latest", "state": {"wake_reason": "signal: t1.status: working: implementing the fix", "worker_last_status": "working: implementing the fix at <path> see <url>"}}
+--- shadow log jev row:
+{"ev":"jev","t":1790456884,"day":"2026-09-26","id":"1790000000:1","outcome":"classified","choice":"absorbable","confidence":0.9,"probabilities":null,"cost":null,"ms":20,"model":"stub-local-jev","reason":"signal: t1.status: working: implementing the fix","status":"working: implementing the fix at <path> see <url>"}
+$ fm-jev.sh status
+Jev shadow triage: on, local backend (config/jev-endpoint = http://127.0.0.1:18765)
+load ceiling: 8 (1-minute average)
+shadow log: /tmp/jev-e2e.hcG1/a/state/jev/shadow.jsonl
+
+### 2. Non-loopback endpoint: refused, never dialed, paused for the day
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 2291.1790456884.Fu6KQG
+{"ev":"jev","t":1790456886,"day":"2026-09-26","id":"1790000000:1","outcome":"skipped","why":"invalid-endpoint","detail":"config/jev-endpoint must be a loopback URL with no path","reason":"signal: t1.status: working: implementing the fix","status":"working: implementing the fix at <path> see <url>"}
+{"ev":"disabled","t":1790456886,"day":"2026-09-26","why":"invalid-endpoint"}
+Jev shadow triage: on, local backend (config/jev-endpoint = https://api.example.com)
+config/jev-endpoint is not a loopback URL: classification is refused
+load ceiling: 8 (1-minute average)
+paused until tomorrow: invalid-endpoint
+shadow log: /tmp/jev-e2e.hcG1/b/state/jev/shadow.jsonl
+
+### 3. Path-carrying loopback endpoint (http://127.0.0.1:18765/v1): refused, never dialed
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 3533.1790456886.QRmfLx
+{"ev":"jev","t":1790456887,"day":"2026-09-26","id":"1790000000:1","outcome":"skipped","why":"invalid-endpoint","detail":"config/jev-endpoint must be a loopback URL with no path","reason":"signal: t1.status: working: implementing the fix","status":"working: implementing the fix at <path> see <url>"}
+requests reaching server during 2+3: 0
+
+### 4. Real machine load ({ 7.35 12.55 14.83 }) vs config/jev-max-load=0.01: paused, not dialed
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 4244.1790456888.cKb23R
+{"ev":"disabled","t":1790456889,"day":"2026-09-26","why":"load"}
+{"ev":"jev","t":1790456889,"day":"2026-09-26","id":"1790000000:1","outcome":"skipped","why":"load","detail":"1-minute load average 7.35 at or above the 0.01 ceiling","reason":"signal: t1.status: working: implementing the fix","status":"working: implementing the fix at <path> see <url>"}
+Jev shadow triage: on, local backend (config/jev-endpoint = http://127.0.0.1:18765)
+load ceiling: 0.01 (1-minute average)
+paused until tomorrow: load
+shadow log: /tmp/jev-e2e.hcG1/d/state/jev/shadow.jsonl
+requests reaching server: 0
+
+### 5. Real Rizzo Flow server (127.0.0.1:8018, answers jev-latest) end to end
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 5249.1790456889.PppTsj
+{"ev":"jev","t":1790456895,"day":"2026-09-26","id":"1790000000:1","outcome":"skipped","why":"timeout","detail":"no answer within 5s","reason":"signal: t1.status: working: implementing the fix","status":"working: implementing the fix at <path> see <url>"}
+Jev shadow triage: on, local backend (config/jev-endpoint = http://127.0.0.1:8018)
+load ceiling: 1000 (1-minute average)
+paused until tomorrow: timeout
+shadow log: /tmp/jev-e2e.hcG1/e/state/jev/shadow.jsonl
+### 5b. Retry against the real Rizzo Flow server (load avg { 7.14 12.24 14.68 })
+{"ev":"jev","t":1790456906,"day":"2026-09-26","id":"1790000000:1","outcome":"classified","choice":"absorbable","confidence":0.27563193349175896,"probabilities":{"firstmate":0.45878408661265835,"absorbable":0.5170879556611726,"captain":0.024127957726169106},"cost":null,"ms":1647,"model":"rizzo-flow-1.7b-q8_0","reason":"signal: t1.status: working: implementing the fix","status":"working: implementing the fix"}
+Jev shadow triage: on, local backend (config/jev-endpoint = http://127.0.0.1:8018)
+load ceiling: 1000 (1-minute average)
