@@ -377,6 +377,7 @@ test_report_keeps_unacknowledged_and_earlier_wakes_open() {
     printf '{"ev":"decision","t":%s,"task":"late"}\n' $((t0 + 3 * d + 2))
     printf '{"ev":"ack","t":%s,"through":1}\n' $((t0 + 3 * d + 3))
     printf '{"ev":"presented","t":%s,"id":"e:4","seq":4,"kind":"signal","task":"y","batch":"S"}\n' $((t0 + 3 * d + 4))
+    printf '{"ev":"steer","t":%s,"task":"y"}\n' $((t0 + 3 * d + 4))
     printf '{"ev":"ack","t":%s,"through":3}\n' $((t0 + 3 * d + 5))
     printf '{"ev":"turn_end","t":%s,"outcome":"ack"}\n' $((t0 + 3 * d + 6))
   } > "$fixture"
@@ -384,6 +385,7 @@ test_report_keeps_unacknowledged_and_earlier_wakes_open() {
   assert_contains "$out" 'wakes presented: 3;' "the wake before the window was reported"
   assert_contains "$out" 'wrongly absorbable (Jev would absorb, firstmate had to act): 0' "a steer for an open wake spilled onto an unrelated wake"
   assert_contains "$out" 'agreement (absorb vs surface): 100% (1 of 1)' "the unrelated wake was not a plain acknowledgement"
+  assert_contains "$out" 'actual handling known: 2' "the unacknowledged wake's truth was not left unknown"
   pass "unacknowledged and pre-window wakes stay open, so their steers never spill onto unrelated wakes"
 }
 
