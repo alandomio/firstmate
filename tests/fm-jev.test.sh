@@ -162,13 +162,29 @@ test_only_masked_reason_and_status_leave_the_machine() {
   assert_not_contains "$body" "$FAKE_KEY" "the key leaked into the request body"
   assert_no_grep "$FAKE_KEY" "$home/curl/argv" "the key was passed on curl's argv"
   assert_grep ok "$home/curl/auth" "the key did not reach curl on stdin"
-  if ! grep -F -- '--max-time' "$home/curl/argv" >/dev/null || ! grep -Fx 2 "$home/curl/argv" >/dev/null; then
-    fail "the request was not bounded by the 2 second timeout"
+  if ! grep -F -- '--max-time' "$home/curl/argv" >/dev/null || ! grep -Fx 5 "$home/curl/argv" >/dev/null; then
+    fail "the request was not bounded by the default 5 second timeout"
   fi
   ! grep -rF "$FAKE_KEY" "$home/state" >/dev/null || fail "the key was written under state/"
   assert_contains "$(printf 'see http://a.b/c and ./x/y and C:\\tmp\\z plain\n' | "$JEV" mask)" \
     'see <url> and <path> and <path> plain' "mask did not mask URLs and paths"
   pass "only the masked reason and last status line are sent; the key stays off argv and disk"
+}
+
+test_timeout_is_configurable() {
+  local home
+  home=$(jev_case timeoutcfg with-key)
+  assert_contains "$(in_home "$home" "$JEV" status)" 'request timeout: 5s' "default timeout not reported"
+  printf '7.5\n' > "$home/config/jev-timeout"
+  assert_contains "$(in_home "$home" "$JEV" status)" 'request timeout: 7.5s' "configured timeout not reported"
+  queue_row "$home" 1 check inbox:1 'check: captain inbox note 1 - hi'
+  in_home "$home" env FM_JEV_FOREGROUND=1 "$DRAIN" >/dev/null 2>&1 || fail "drain failed"
+  grep -Fx 7.5 "$home/curl/argv" >/dev/null || fail "the configured timeout was not passed to curl"
+  printf 'abc\n' > "$home/config/jev-timeout"
+  assert_contains "$(in_home "$home" "$JEV" status)" 'request timeout: 5s (config/jev-timeout value "abc" is not a positive number' "invalid timeout not reported"
+  printf '0\n' > "$home/config/jev-timeout"
+  assert_contains "$(in_home "$home" "$JEV" status)" 'default kept' "zero timeout accepted"
+  pass "config/jev-timeout overrides the 5 second default and invalid values keep it"
 }
 
 test_timeout_pauses_until_the_next_day() {
@@ -394,6 +410,7 @@ test_off_by_default_and_not_enabled_by_the_environment
 test_foreign_state_dir_never_uses_the_key
 test_shadow_classifies_without_changing_the_presentation
 test_only_masked_reason_and_status_leave_the_machine
+test_timeout_is_configurable
 test_timeout_pauses_until_the_next_day
 test_api_errors_pause_until_the_next_day
 test_daily_cap_pauses_after_the_spend_is_reached

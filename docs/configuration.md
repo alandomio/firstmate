@@ -604,7 +604,7 @@ The session-start digest separately prints a "Public commitments" subsection fro
 `FM_PF_RETRY_BACKOFF_SECS` (default 900) sets the next-attempt time recorded with a retryable delivery error.
 See [verification/public-followup.md](verification/public-followup.md) for the current maintainer evidence behind restart recovery, retained-loop disposition, and the relay-disabled zero-overhead guarantee.
 
-## Jev shadow wake triage (.env OPENROUTER_API_KEY / config/jev-daily-cap)
+## Jev shadow wake triage (.env OPENROUTER_API_KEY / config/jev-daily-cap, config/jev-timeout)
 
 Jev is TypeSafe's decision model, reached through OpenRouter as `typesafe/jev-1.13`.
 Firstmate uses it only as an advisory, shadow-only classifier of supervision wakes: it asks one three-way question per presented wake (needs firstmate, absorbable, or urgent for the captain), logs the answer next to what firstmate actually did, and acts on nothing.
@@ -616,7 +616,7 @@ Use a dedicated OpenRouter key with its own spend limit on OpenRouter as well.
 A home without the key pays one cheap `.env` check per drain, send, lifecycle action, captain hold, and primary turn end, and writes nothing.
 
 Only the wake's reason line and the worker's last status line leave the machine, with URLs and paths masked; `bin/fm-jev.sh mask` shows the exact masking.
-Each request has a 2 second timeout, and `config/jev-daily-cap` optionally overrides the default USD 1 daily spend cap with a decimal number.
+Each request has a 5 second timeout by default, `config/jev-timeout` optionally overrides it with a positive number of seconds (an invalid value keeps the default and `bin/fm-jev.sh status` says so), and `config/jev-daily-cap` optionally overrides the default USD 1 daily spend cap with a decimal number.
 A timeout, an API or transport error, a response without a cost, or reaching the cap pauses classification until the next local day while every wake still surfaces exactly as it would without Jev.
 
 `bin/fm-jev.sh status` reports the switch, today's spend, and any pause.
