@@ -727,6 +727,12 @@ __FM_BEARINGS_BOARD_DATA__
       unknown: "stato sconosciuto"
     };
     var KIND_IT = { session: "5 ore", weekly: "settimana" };
+    var GENERIC_LABELS = { session: true, week: true, "5-hour": true, weekly: true };
+    function windowLabel(w) {
+      var label = typeof w.label === "string" ? w.label : "";
+      if (label && !GENERIC_LABELS[label.toLowerCase()]) return label;
+      return KIND_IT[w.kind] || label || w.id;
+    }
     function plain(code) { return STATUS_IT[code] || String(code); }
     function withDetail(code, detail) {
       return plain(code) + (typeof detail === "string" && detail ? ": " + detail : "");
@@ -771,7 +777,7 @@ __FM_BEARINGS_BOARD_DATA__
         windows.forEach(function (w) {
           var win = el("div", "bb-quota__win");
           var line = el("div", "bb-quota__line");
-          line.appendChild(el("span", "bb-quota__wlabel", KIND_IT[w.kind] || w.label || w.id));
+          line.appendChild(el("span", "bb-quota__wlabel", windowLabel(w)));
           var used = isPct(w.percent_used) ? w.percent_used : null;
           var left = isPct(w.percent_remaining) ? w.percent_remaining : null;
           var pct = used == null && left == null ? "non disponibile" :

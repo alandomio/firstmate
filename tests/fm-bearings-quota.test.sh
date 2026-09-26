@@ -164,8 +164,46 @@ exit 1")
   pass "a readable report is used even when quota-axi exits non-zero"
 }
 
+test_malformed_provider_entries_never_break_the_section() {
+  local fakebin out
+  fakebin=$(fake_quota_axi malformed "cat <<'EOF'
+{ \"providers\": [
+  { \"provider\": \"claude\", \"state\": \"fresh\", \"windows\": \"x\",
+    \"quotaSemantics\": { \"effectiveAvailability\": \"x\" } },
+  { \"provider\": \"codex\", \"state\": { \"status\": \"fresh\" },
+    \"windows\": [ \"x\", { \"id\": \"five_hour\", \"kind\": \"session\", \"percentUsed\": 30 } ],
+    \"quotaSemantics\": \"x\" },
+  { \"provider\": \"agy\", \"state\": [], \"quotaSemantics\": { \"effectiveAvailability\": [ \"x\", 3 ] } }
+] }
+EOF")
+  out=$(run_quota "$fakebin") || fail "the reader exited non-zero on malformed provider entries"
+  printf '%s\n' "$out" > "$TMP_ROOT/malformed.json"
+  [ "$(printf '%s' "$out" | jq -c '[.status, [.providers[] | [.provider, .available, .status]]]')" \
+    = '["ok",[["claude",false,"no_windows"],["codex",true,"fresh"],["agy",false,"no_windows"]]]' ] \
+    || fail "malformed provider entries were not tolerated: $out"
+  [ "$(printf '%s' "$out" | jq -c '.providers[1].windows | map([.percent_used, .percent_remaining])')" = '[[30,70]]' ] \
+    || fail "the well-formed window next to a malformed one was lost: $out"
+  assert_board_accepts "$TMP_ROOT/malformed.json" malformed
+  pass "malformed provider entries still yield a board-valid section"
+}
+
+test_reported_percent_used_is_kept() {
+  local fakebin out
+  fakebin=$(fake_quota_axi used "cat <<'EOF'
+{ \"providers\": [ { \"provider\": \"claude\", \"state\": { \"status\": \"fresh\" }, \"windows\": [
+  { \"id\": \"a\", \"percentUsed\": 0.1 },
+  { \"id\": \"b\", \"percentUsed\": 40, \"percentRemaining\": 55 } ] } ] }
+EOF")
+  out=$(run_quota "$fakebin") || fail "the reader exited non-zero"
+  [ "$(printf '%s' "$out" | jq -c '.providers[0].windows | map([.percent_used, .percent_remaining])')" \
+    = '[[0.1,99.9],[40,55]]' ] || fail "a reported percentUsed was not kept: $out"
+  pass "a reported percentUsed is kept and only the missing value is derived"
+}
+
 test_projects_reported_providers_without_inventing_values
 test_missing_tool_degrades_without_failing
 test_timeout_degrades_without_failing
 test_failed_and_unreadable_output_degrade_without_failing
 test_readable_json_wins_over_a_nonzero_exit
+test_malformed_provider_entries_never_break_the_section
+test_reported_percent_used_is_kept

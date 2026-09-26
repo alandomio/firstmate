@@ -115,15 +115,20 @@ if ! printf '%s' "$out" | jq -e 'type == "object" and (.providers | type == "arr
   exit 0
 fi
 
-printf '%s' "$out" | jq '
+if ! section=$(printf '%s' "$out" | jq '
   def pct: if type == "number" and . >= 0 and . <= 100 then . else null end;
   def str_or_null: if type == "string" and length > 0 then . else null end;
+  def obj: if type == "object" then . else {} end;
+  def arr: if type == "array" then . else [] end;
   def window:
-    ((.percentRemaining | pct) // (if (.percentUsed | pct) != null then 100 - .percentUsed else null end)) as $rem
+    (.percentUsed | pct) as $used_reported
+    | (.percentRemaining | pct) as $rem_reported
+    | ($used_reported // (if $rem_reported == null then null else 100 - $rem_reported end)) as $used
+    | ($rem_reported // (if $used_reported == null then null else 100 - $used_reported end)) as $rem
     | { id: ((.id | str_or_null) // ""),
         label: ((.label | str_or_null) // (.id | str_or_null) // "window"),
         kind: ((.kind | str_or_null) // ""),
-        percent_used: (if $rem == null then null else 100 - $rem end),
+        percent_used: $used,
         percent_remaining: $rem,
         resets_at: (.resetsAt | str_or_null) };
   def project($id; $label):
@@ -132,9 +137,11 @@ printf '%s' "$out" | jq '
         { provider: $id, label: $label, available: false, status: "not_reported",
           plan: null, windows: [], attention: [] }
       else
-        (($p.state.status | str_or_null) // "unknown") as $state
-        | ([($p.windows // [])[] | select(type == "object") | window]) as $windows
-        | ([($p.quotaSemantics.effectiveAvailability // [])[]
+        ($p.state | obj) as $st
+        | (($st.status | str_or_null) // "unknown") as $state
+        | ($st.error | str_or_null) as $error
+        | ([$p.windows | arr | .[] | select(type == "object") | window]) as $windows
+        | ([$p.quotaSemantics | obj | .effectiveAvailability | arr | .[]
             | select(type == "object" and .status == "unknown") | .scope | str_or_null]) as $unknown
         | { provider: $id, label: $label,
             available: ($state != "auth_required" and ($windows | length) > 0),
@@ -143,12 +150,16 @@ printf '%s' "$out" | jq '
             windows: $windows,
             attention: (
               (if $state == "fresh" then [] else
-                [{ kind: $state } + (if ($p.state.error | str_or_null) then { detail: $p.state.error } else {} end)]
+                [{ kind: $state } + (if $error then { detail: $error } else {} end)]
               end)
               + (if ($unknown | length) > 0 and $state != "auth_required" then
                   [{ kind: "headroom_unknown", detail: ($unknown | join(", ")) }]
                 else [] end)) }
-          + (if ($p.state.error | str_or_null) then { detail: $p.state.error } else {} end)
+          + (if $error then { detail: $error } else {} end)
       end;
   { source: "quota-axi", generated: (.generatedAt | str_or_null), available: true, status: "ok",
-    providers: [project("claude"; "Anthropic"), project("codex"; "OpenAI"), project("agy"; "Google")] }'
+    providers: [project("claude"; "Anthropic"), project("codex"; "OpenAI"), project("agy"; "Google")] }' 2>/dev/null) || [ -z "$section" ]; then
+  degraded unreadable "quota-axi output is not the expected JSON"
+  exit 0
+fi
+printf '%s\n' "$section"

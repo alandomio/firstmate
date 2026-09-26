@@ -799,6 +799,19 @@ test_quota_panel_renders_values_and_says_why_anything_is_unavailable() {
   [ "$(printf '%s' "$out" | jq -c '.fillStyles')" = '["width:52%","width:12%"]' ] \
     || fail "usage bars were drawn for a value that was not reported: $out"
 
+  jq '.quota.providers[2].windows = [
+        {id: "gemini_5h", label: "Gemini 5-hour", kind: "session", percent_used: 10, percent_remaining: 90, resets_at: null},
+        {id: "other_5h", label: "Claude/GPT 5-hour", kind: "session", percent_used: 40, percent_remaining: 60, resets_at: null},
+        {id: "gemini_week", label: "Gemini weekly", kind: "weekly", percent_used: 20, percent_remaining: 80, resets_at: null},
+        {id: "plain_week", label: "", kind: "weekly", percent_used: 5, percent_remaining: 95, resets_at: null}]' \
+    "$data.quota" > "$data.grouped"
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data.grouped" 1 quota 2>&1) \
+    || fail "the DOM harness crashed on grouped Google windows: $out"
+  texts=$(printf '%s' "$out" | jq -r '.providers[2][]')
+  for want in "Gemini 5-hour" "Claude/GPT 5-hour" "Gemini weekly" "settimana"; do
+    printf '%s\n' "$texts" | grep -Fxq -- "$want" || fail "the Google card did not label a grouped window '$want': $out"
+  done
+
   jq '.quota = {source: "quota-axi", generated: null, available: false, status: "tool_missing",
         detail: "quota-axi is not installed",
         providers: [{provider: "claude", label: "Anthropic", available: false, status: "tool_missing",
