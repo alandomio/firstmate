@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # tests/fm-jev-local-rizzo-live.test.sh - opt-in live proof that bin/fm-jev.sh's
-# local backend classifies a real wake through a real Jev-compatible server
-# (Rizzo Flow's `rizzo serve`), not just the fake curl the portable suite
-# (tests/fm-jev.test.sh) uses.
+# local backend classifies a real wake through a real server's native
+# /v1/decisions API (Rizzo Flow's `rizzo serve`), not just the fake curl the
+# portable suite (tests/fm-jev.test.sh) uses.
 #
 # Run explicitly with FM_JEV_RIZZO_LIVE=1 against a server already listening on
 # FM_JEV_RIZZO_LIVE_URL (default http://127.0.0.1:8017; docs/configuration.md

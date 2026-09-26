@@ -5,9 +5,11 @@
 # off-by-default switch, that shadow mode never changes what a drain presents
 # or how fast it returns, the limits (timeout, API error, missing cost, daily
 # cap, next-day resume) for the OpenRouter backend and (no key, missing cost is
-# not an error, loopback-only enforcement, load-ceiling skip) for the local
-# backend, what leaves the machine (masking, only two state fields, the key
-# never in argv or on disk), and the ground-truth report over a fixture log.
+# not an error, loopback-only enforcement, no day pause on load/timeout/API
+# error - only invalid-endpoint still pauses - native /v1/decisions with
+# abstention mapped to doubt) for the local backend, what leaves the machine
+# (masking, only two state fields, the key never in argv or on disk), and the
+# ground-truth report over a fixture log.
 # tests/fm-jev-local-rizzo-live.test.sh is the opt-in live counterpart against
 # a real `rizzo serve`.
 set -u
@@ -65,8 +67,12 @@ case "${FAKE_CURL_MODE:-ok}" in
     printf '200'
     ;;
   localok)
-    printf '{"model":"rizzo-flow-1.7b-q8_0","answers":{"handling":{"type":"choice","choice":"%s","confidence":%s,"probabilities":{"firstmate":0.1,"absorbable":0.8,"captain":0.1}}},"usage":{"input_tokens":300,"output_tokens":0}}' \
+    printf '{"model":{"source":"XHToken/Spark-X2.5-1.7B","weights":"flow","precision":"q8_0"},"answers":{"handling":{"type":"choice","status":"ok","choice":"%s","probabilities":{"firstmate":0.1,"absorbable":0.8,"captain":0.1,"__insufficient__":0.0},"uncertainty":{"top_probability":%s}}}}' \
       "${FAKE_CHOICE:-absorbable}" "${FAKE_CONF:-0.8}" > "$out"
+    printf '200'
+    ;;
+  localdoubt)
+    printf '{"model":{"source":"XHToken/Spark-X2.5-1.7B","weights":"flow","precision":"q8_0"},"answers":{"handling":{"type":"choice","status":"uncertain","choice":null,"probabilities":{"firstmate":0.4,"absorbable":0.35,"captain":0.1,"__insufficient__":0.15},"uncertainty":{"top_probability":0.4}}}}' > "$out"
     printf '200'
     ;;
 esac
@@ -272,13 +278,29 @@ test_local_backend_takes_priority_needs_no_key_and_records_the_answering_model()
   assert_absent "$home/curl/auth" "the local backend sent an Authorization header"
   assert_present "$home/curl/noauth" "the local backend request was not recorded as key-less"
   log="$home/state/jev/shadow.jsonl"
-  jq -e 'select(.ev == "jev" and .outcome == "classified" and .model == "rizzo-flow-1.7b-q8_0" and .cost == null)' "$log" >/dev/null \
+  jq -e 'select(.ev == "jev" and .outcome == "classified" and .model == "XHToken/Spark-X2.5-1.7B/flow/q8_0" and .cost == null)' "$log" >/dev/null \
     || fail "the local answer was not logged with its model and a null cost: $(cat "$log")"
-  grep -Fxq 'http://127.0.0.1:8017/v1/systemone' "$home/curl/argv" || fail "the local request did not dial the endpoint's /v1/systemone"
+  grep -Fxq 'http://127.0.0.1:8017/v1/decisions' "$home/curl/argv" || fail "the local request did not dial the native endpoint's /v1/decisions"
   [ "$(head -n 1 "$home/curl/argv")" = -q ] || fail "the local request did not skip ~/.curlrc (-q first)"
   grep -A1 -Fx -- '--noproxy' "$home/curl/argv" | grep -Fxq '*' || fail "the local request could be routed through a proxy"
-  jq -e '.model == "jev-latest"' "$home/curl/body.1" >/dev/null || fail "the local request did not ask for jev-latest: $(cat "$home/curl/body.1")"
+  jq -e 'has("model") | not' "$home/curl/body.1" >/dev/null || fail "the native request carried a top-level model field: $(cat "$home/curl/body.1")"
+  jq -e '(.questions.handling.options | map(.id) | sort) == ["absorbable", "captain", "firstmate"]' "$home/curl/body.1" >/dev/null \
+    || fail "the native request did not ask the three-way options question: $(cat "$home/curl/body.1")"
+  jq -e '.questions.handling.policy == {allow_abstain: true, min_top_probability: 0.6}' "$home/curl/body.1" >/dev/null \
+    || fail "the native request did not set allow_abstain and min_top_probability: $(cat "$home/curl/body.1")"
   pass "config/jev-endpoint selects the local backend over an OPENROUTER_API_KEY, needs no key, and records the answering model"
+}
+
+test_local_backend_uncertain_maps_to_doubt() {
+  local home
+  home=$(jev_local_case local-doubt)
+  queue_row "$home" 1 heartbeat heartbeat heartbeat
+  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localdoubt FM_JEV_LOAD_OVERRIDE=0.1 "$DRAIN" >/dev/null 2>&1 || fail "drain failed"
+  jq -e 'select(.ev == "jev" and .outcome == "classified" and .choice == "doubt" and .confidence == 0.4)' \
+    "$home/state/jev/shadow.jsonl" >/dev/null \
+    || fail "an uncertain native answer (null choice) was not logged as doubt with its top_probability as confidence: $(cat "$home/state/jev/shadow.jsonl")"
+  assert_absent "$home/state/jev/disabled" "an uncertain answer paused the local backend"
+  pass "a native status uncertain/insufficient_evidence answer (null choice) classifies as doubt, never as an error"
 }
 
 test_local_backend_timeout_is_configurable() {
@@ -373,6 +395,20 @@ test_local_backend_load_ceiling_skips_without_a_day_pause() {
     || fail "the wake presented after the load fell was not classified"
   assert_absent "$home/state/jev/disabled" "a day pause was set across the load spike"
   pass "a 1-minute load average at or above config/jev-max-load skips only that wake; a later reading below it classifies again"
+}
+
+test_local_backend_timeout_and_api_errors_skip_without_a_day_pause() {
+  local mode home
+  for mode in timeout http500 refused; do
+    home=$(jev_local_case "local-$mode")
+    queue_row "$home" 1 heartbeat heartbeat heartbeat
+    queue_row "$home" 2 stale default:w1:p1 'stale: default:w1:p1'
+    in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE="$mode" FM_JEV_LOAD_OVERRIDE=0.1 "$DRAIN" >/dev/null 2>&1 \
+      || fail "drain failed on $mode"
+    [ "$(calls "$home")" = 2 ] || fail "$mode: the local backend did not retry the very next row"
+    assert_absent "$home/state/jev/disabled" "$mode paused the local backend for the day"
+  done
+  pass "a timeout or an API/transport error on the local backend only skips that row; the next one is still attempted, unlike OpenRouter"
 }
 
 test_local_backend_status_reports_the_endpoint_and_ceiling() {
@@ -567,12 +603,14 @@ test_timeout_pauses_until_the_next_day
 test_api_errors_pause_until_the_next_day
 test_daily_cap_pauses_after_the_spend_is_reached
 test_local_backend_takes_priority_needs_no_key_and_records_the_answering_model
+test_local_backend_uncertain_maps_to_doubt
 test_local_backend_timeout_is_configurable
 test_local_backend_endpoint_is_read_from_the_home_not_a_config_override
 test_blank_jev_endpoint_does_not_override_openrouter
 test_local_backend_missing_cost_is_not_an_error
 test_local_backend_refuses_a_non_loopback_endpoint
 test_local_backend_load_ceiling_skips_without_a_day_pause
+test_local_backend_timeout_and_api_errors_skip_without_a_day_pause
 test_local_backend_status_reports_the_endpoint_and_ceiling
 test_drain_never_waits_for_jev
 test_hooks_record_actions_and_turn_ends_without_text

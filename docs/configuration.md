@@ -617,9 +617,9 @@ One of two backends runs per home, config/jev-endpoint taking priority when pres
 - **OpenRouter** (unchanged): off unless this home's gitignored `.env` carries a non-empty `OPENROUTER_API_KEY`, the same presence gate Relay uses.
   An `OPENROUTER_API_KEY` in the ambient environment never enables it, and no other `.env` value is read.
   Use a dedicated OpenRouter key with its own spend limit on OpenRouter as well.
-- **Local**: on when this home's gitignored `config/jev-endpoint` carries a base URL for a Jev-compatible server, such as Rizzo Flow's `rizzo serve` (`POST /v1/systemone` on `http://127.0.0.1:8017` by default).
+- **Local**: on when this home's gitignored `config/jev-endpoint` carries a base URL for a Jev-compatible server, such as Rizzo Flow's `rizzo serve` (its native `POST /v1/decisions` on `http://127.0.0.1:8017` by default; see the `rizzo-flow` skill).
   No key is read or required.
-  The URL must resolve to `127.0.0.1`, `localhost`, or `::1` with no path; anything else is refused outright, logged as a skipped `invalid-endpoint` row, and pauses classification for the day rather than ever being dialed.
+  The URL must resolve to `127.0.0.1`, `localhost`, or `::1` with no path; anything else is refused outright, logged as a skipped `invalid-endpoint` row, and pauses classification for the day rather than ever being dialed - this is the one local-backend condition that still pauses (see below).
 
 A home with neither pays one cheap file check per drain, send, lifecycle action, captain hold, and primary turn end, and writes nothing.
 
@@ -627,9 +627,10 @@ Only the wake's reason line and the worker's last status line leave the machine,
 For the local backend nothing leaves the machine at all (no egress); masking is kept only for prompt-length hygiene, not data governance.
 
 Each request, on either backend, has a 5 second timeout by default; `config/jev-timeout` optionally overrides it with a positive number of seconds (an invalid value keeps the default and `bin/fm-jev.sh status` says so).
-The OpenRouter backend also has a daily spend cap (USD, default 1; override with a decimal number in `config/jev-daily-cap`), summed from each response's `usage.cost`; a response without a cost is an API error there.
-The local backend has no per-request cost - a missing cost is expected, not an error - so it is instead gated on a 1-minute load-average ceiling (default 8; override with a decimal number in `config/jev-max-load`) checked before each request; a wake presented at or above it is only skipped (logged with `why=load`), so classification resumes as soon as a later reading is back below the ceiling.
-Either backend's timeout or an API/transport error, and (OpenRouter) reaching the spend cap, pauses classification until the next local day while every wake still surfaces exactly as it would without Jev.
+The OpenRouter backend also has a daily spend cap (USD, default 1; override with a decimal number in `config/jev-daily-cap`), summed from each response's `usage.cost`; its timeout, an API/transport error, a response without a cost, or reaching the spend cap all pause classification until the next local day, unchanged.
+The local backend has no per-request cost and no monotonic quota to protect, so none of its own failure reasons ever pauses it for the day: a 1-minute load average at or above `config/jev-max-load` (default 8, checked before each request), a timeout, or an API/transport error each only skip that one row (logged with `why=load`/`timeout`/`api-error`), and the very next drain tries again.
+The local backend asks through Rizzo Flow's native `/v1/decisions` API with `allow_abstain` and a `policy.min_top_probability` of 0.6 (matching `report`'s own `--min-confidence` default); a response the server itself could not decide, or answered under that confidence floor, carries no choice and is logged as `doubt`, exactly like a low-confidence OpenRouter answer.
+Every wake still surfaces exactly as it would without Jev, in every case.
 
 `bin/fm-jev.sh status` reports the active backend (or that both are off), the OpenRouter spend or the local endpoint and load ceiling, and any pause.
 `bin/fm-jev.sh report` measures the shadow window: agreement between Jev and firstmate's actual handling, the count of wakes Jev would have absorbed that needed firstmate, and about twenty doubtful cases for the captain; each classified row records which model actually answered.
