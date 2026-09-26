@@ -281,6 +281,18 @@ test_local_backend_takes_priority_needs_no_key_and_records_the_answering_model()
   pass "config/jev-endpoint selects the local backend over an OPENROUTER_API_KEY, needs no key, and records the answering model"
 }
 
+test_local_backend_timeout_is_configurable() {
+  local home
+  home=$(jev_local_case local-timeoutcfg)
+  assert_contains "$(in_home "$home" "$JEV" status)" 'request timeout: 5s' "default timeout not reported for the local backend"
+  printf '3\n' > "$home/config/jev-timeout"
+  assert_contains "$(in_home "$home" "$JEV" status)" 'request timeout: 3s' "configured timeout not reported for the local backend"
+  queue_row "$home" 1 heartbeat heartbeat heartbeat
+  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=0.1 "$DRAIN" >/dev/null 2>&1 || fail "drain failed"
+  grep -Fx 3 "$home/curl/argv" >/dev/null || fail "config/jev-timeout was not passed to curl for the local backend"
+  pass "config/jev-timeout also overrides the local backend's request timeout"
+}
+
 test_local_backend_endpoint_is_read_from_the_home_not_a_config_override() {
   local home override out
   home=$(jev_local_case local-override)
@@ -557,6 +569,7 @@ test_timeout_pauses_until_the_next_day
 test_api_errors_pause_until_the_next_day
 test_daily_cap_pauses_after_the_spend_is_reached
 test_local_backend_takes_priority_needs_no_key_and_records_the_answering_model
+test_local_backend_timeout_is_configurable
 test_local_backend_endpoint_is_read_from_the_home_not_a_config_override
 test_blank_jev_endpoint_does_not_override_openrouter
 test_local_backend_missing_cost_is_not_an_error
