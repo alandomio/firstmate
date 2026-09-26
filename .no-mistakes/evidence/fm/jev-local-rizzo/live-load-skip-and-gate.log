@@ -1,0 +1,18 @@
+== drain 1: 1-minute load 9.5 >= ceiling 4 ==
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 6585.1790460754.VvbXKv
+{"id":"1790000000:1","outcome":"skipped","why":"load"}
+state/jev/disabled: absent (no day pause)
+== drain 2: load back to 0.5, same day ==
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 6585.1790460754.VvbXKv
+{"id":"1790000000:1","outcome":"skipped","why":"load","model":null,"choice":null,"cost":null,"ms":null}
+{"id":"1790000000:2","outcome":"classified","why":null,"model":"rizzo-flow-1.7b-q8_0","choice":"firstmate","cost":null,"ms":270}
+state/jev/disabled: absent
+== status ==
+Jev shadow triage: on, local backend (config/jev-endpoint = http://127.0.0.1:8017)
+load ceiling: 4 (1-minute average)
+request timeout: 5s
+shadow log: /var/folders/tc/hhm5872n2ql638k7y8nh5nd40000gn/T/tmp.eoMgVQTvfv/home/state/jev/shadow.jsonl
+== backend gate process cost (fake grep on PATH logs every exec) ==
+none endpoint file -> backend=disabled, grep execs=0
+blank endpoint file -> backend=disabled, grep execs=1
+local endpoint file -> backend=local, grep execs=1

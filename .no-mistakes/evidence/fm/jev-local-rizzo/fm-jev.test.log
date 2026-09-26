@@ -1,0 +1,22 @@
+ok - off by default: an ambient OPENROUTER_API_KEY neither logs nor calls the network
+ok - a STATE other than the key home's own state never enables Jev
+ok - shadow mode logs presentation, answer and acknowledgement without changing the drain
+ok - only the masked reason and last status line are sent; the key stays off argv and disk
+ok - config/jev-timeout overrides the 5 second default and invalid values keep it
+ok - a timeout skips the wake and pauses Jev until the next day
+ok - HTTP errors, transport errors and a missing cost pause Jev until the next day
+ok - the daily spend cap stops requests and pauses Jev until the next day
+ok - config/jev-endpoint selects the local backend over an OPENROUTER_API_KEY, needs no key, and records the answering model
+ok - config/jev-timeout also overrides the local backend's request timeout
+ok - the local endpoint and load ceiling are read from the home's own config/, the same place that selected the backend
+ok - a whitespace-only config/jev-endpoint does not select the local backend
+ok - a local response with no usage.cost classifies normally instead of erroring
+ok - a non-loopback or path-carrying config/jev-endpoint is refused, never dialed, and pauses Jev
+ok - a 1-minute load average at or above config/jev-max-load skips only that wake; a later reading below it classifies again
+ok - status names the active backend, its endpoint or spend, and (for local) its load ceiling
+ok - the drain returns immediately while a slow Jev request runs detached
+ok - hooks record steers, decisions and how a turn ended, never its text
+ok - only sends firstmate itself makes count as steers; FM_JEV_OBSERVE=0 senders record nothing
+ok - the report credits named actions to their task's open wakes across drains and shares the rest
+ok - unacknowledged and pre-window wakes stay open, so their steers never spill onto unrelated wakes
+ok - the report computes agreement, wrongly absorbable wakes, go-live criteria and doubtful cases
