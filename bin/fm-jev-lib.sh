@@ -7,6 +7,8 @@
 # cheap enabled test plus the event appends they call inline:
 #   fm_jev_enabled <home> <state>                    - 0 when this home opted in
 #   fm_jev_observe <home> <state> <steer|decision> [task]
+#                                                    - skipped under FM_JEV_OBSERVE=0,
+#                                                      which automated senders set
 #   fm_jev_observe_ack <home> <state> <through-seq>
 #   fm_jev_observe_turn_end <home> <state> <hook-payload-json>
 #   fm_jev_observe_drain <home> <state> <deduped-raw-rows>
@@ -40,8 +42,12 @@ _fm_jev_append() {  # <state> <json-line>
   return 0
 }
 
+# Ground truth counts only what firstmate itself does in a handling turn, so a
+# send the watcher, bootstrap or config reread makes on its own sets
+# FM_JEV_OBSERVE=0 and records nothing.
 fm_jev_observe() {  # <home> <state> <steer|decision> [task]
   local line
+  [ "${FM_JEV_OBSERVE:-1}" != 0 ] || return 0
   fm_jev_enabled "${1:-}" "${2:-}" || return 0
   case "${3:-}" in steer|decision) ;; *) return 0 ;; esac
   command -v jq >/dev/null 2>&1 || return 0

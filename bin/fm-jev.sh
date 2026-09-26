@@ -57,10 +57,13 @@
 # acknowledgement that covers it - produced a steer or a decision attributed to
 # it, and "captain" when that turn ended in a captain-facing message; it was
 # "absorbable" when the turn ended with the plain acknowledgement
-# ("Captain, shipshape." or no final text) and nothing else happened. A steer or
-# decision naming a task attributes to that task's wakes in the same drain, and
-# otherwise to every wake in it; a captain message attributes to every wake in
-# the drain. Both shared attributions are flagged, because they only ever make
+# ("Captain, shipshape." or no final text) and nothing else happened. A wake is
+# open from its first presentation through that turn end (or its acknowledgement
+# when no turn end was recorded). A steer or decision naming a task attributes
+# only to that task's open wakes, from any drain; an unnamed one, or one naming a
+# task with no open wake, attributes to every open wake and is flagged shared. A
+# captain message attributes to every wake whose handling turn it ends, flagged
+# shared when that is more than one wake. Shared attributions only ever make
 # the truth stricter. A turn end whose harness payload has no
 # last_assistant_message, or a wake never acknowledged, leaves the truth
 # unknown and excluded from agreement.
@@ -363,20 +366,24 @@ def jev_label($minconf):
    | group_by(.id) | map(min_by(.o))) as $wakes
 | ($all | map(select(.ev == "jev")) | group_by(.id) | map({key: .[0].id, value: .[0]}) | from_entries) as $jev
 | [ $wakes[] as $w
-    | ($wakes | map(select(.batch == $w.batch))) as $mates
     | ($all | map(select(.ev == "ack" and .o > $w.o and .through >= $w.seq)) | first) as $ack
     | (if $ack == null then null
        else ($all | map(select(.ev == "turn_end" and .o > $ack.o)) | first) end) as $te
-    | (if $ack == null then []
-       else ($all | map(select((.ev == "steer" or .ev == "decision") and .o > $w.o
-                               and .o <= (if $te == null then $ack.o else $te.o end)))) end) as $acts
-    | [ $acts[] | . as $a
-        | ($mates | map(select(.task != "" and .task == $a.task)) | length) as $hit
-        | if $hit > 0 then (if $w.task == $a.task then {ev: $a.ev, shared: false} else empty end)
-          else {ev: $a.ev, shared: (($mates | length) > 1)} end ] as $mine
+    | $w + {ack: $ack, te: $te,
+            end: (if $ack == null then null elif $te == null then $ack.o else $te.o end)} ] as $wins
+| ([ $all[] | select(.ev == "steer" or .ev == "decision") as $a
+     | ($wins | map(select(.end != null and $a.o > .o and $a.o <= .end))) as $open
+     | ($open | map(select($a.task != "" and .task == $a.task))) as $named
+     | if ($named | length) > 0 then ($named[] | {key: .id, ev: $a.ev, shared: false})
+       else ($open[] | {key: .id, ev: $a.ev, shared: true}) end ]
+   | group_by(.key) | map({key: .[0].key, value: map(del(.key))}) | from_entries) as $credit
+| [ $wins[] as $w
+    | $w.ack as $ack | $w.te as $te
+    | ($credit[$w.id] // []) as $mine
     | (if $ack == null then {truth: "unknown", why: "never acknowledged"}
        elif ($te != null and $te.outcome == "message") then
-         {truth: "captain", why: "turn ended in a captain message", shared: (($mates | length) > 1)}
+         {truth: "captain", why: "turn ended in a captain message",
+          shared: (($wins | map(select(.te != null and .te.o == $te.o)) | length) > 1)}
        elif ($mine | length) > 0 then
          {truth: "firstmate", why: ($mine | map(.ev) | unique | join("+")), shared: ($mine | any(.shared))}
        elif $te == null then {truth: "unknown", why: "no turn end recorded"}
@@ -421,7 +428,7 @@ def jev_label($minconf):
     | if ($d | length) == 0 then "doubtful cases: none"
       else "doubtful cases for the captain (\($d | length), most important first):",
         ( $d | to_entries[] | .key as $k | .value
-          | "  \($k + 1). \(.t | iso) \(.kind) seq \(.seq)\(if .task != "" then " task " + .task else "" end): Jev \(.jev)\(if .conf != null then " (" + (.conf | tostring) + ")" else "" end), actual \(.truth) (\(.why))\(if .shared then ", shared with other wakes in the same turn" else "" end)\(if .reason != "" then " | wake: " + .reason else "" end)\(if .status != "" then " | worker: " + .status else "" end)" )
+          | "  \($k + 1). \(.t | iso) \(.kind) seq \(.seq)\(if .task != "" then " task " + .task else "" end): Jev \(.jev)\(if .conf != null then " (" + (.conf | tostring) + ")" else "" end), actual \(.truth) (\(.why))\(if .shared then ", shared with other open wakes" else "" end)\(if .reason != "" then " | wake: " + .reason else "" end)\(if .status != "" then " | worker: " + .status else "" end)" )
       end )
 ] | .[]
 '

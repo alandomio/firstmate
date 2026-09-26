@@ -256,6 +256,23 @@ test_hooks_record_actions_and_turn_ends_without_text() {
   pass "hooks record steers, decisions and how a turn ended, never its text"
 }
 
+test_automated_sends_record_no_steer() {
+  local home fb
+  home=$(jev_case sends with-key)
+  fb="$home/fakebin"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fb/tmux"
+  chmod +x "$fb/tmux"
+  fm_write_meta "$home/state/t1.meta" "window=sess:fm-t1" "kind=ship"
+  FM_JEV_OBSERVE=0 in_home "$home" env FM_ROOT_OVERRIDE="$home" FM_SEND_SETTLE=0 \
+    "$ROOT/bin/fm-send.sh" t1 'automated resend' >/dev/null 2>&1
+  [ ! -s "$home/state/jev/shadow.jsonl" ] || fail "an automated send recorded a steer: $(cat "$home/state/jev/shadow.jsonl")"
+  in_home "$home" env FM_ROOT_OVERRIDE="$home" FM_SEND_SETTLE=0 \
+    "$ROOT/bin/fm-send.sh" t1 'firstmate steer' >/dev/null 2>&1
+  [ "$(jq -c '[.ev, .task]' "$home/state/jev/shadow.jsonl")" = '["steer","t1"]' ] \
+    || fail "a firstmate send did not record exactly one steer: $(cat "$home/state/jev/shadow.jsonl")"
+  pass "only sends firstmate itself makes count as steers; FM_JEV_OBSERVE=0 senders record nothing"
+}
+
 # Fixture: six wakes over eight days with every kind of ground truth.
 write_fixture() {  # <file>
   local d=86400 t0=1790000000
@@ -312,6 +329,40 @@ test_report_measures_agreement_and_lists_doubtful_cases() {
   pass "the report computes agreement, wrongly absorbable wakes, go-live criteria and doubtful cases"
 }
 
+# Attribution across drains: a named steer credits only its task's open wake,
+# even from an earlier drain; an unnamed or unmatched one credits every open
+# wake, flagged shared.
+test_report_attributes_actions_to_open_wakes_across_drains() {
+  local fixture out t0=1790000000
+  fixture="$TMP_ROOT/attribution.jsonl"
+  {
+    printf '{"ev":"presented","t":%s,"id":"e:1","seq":1,"kind":"signal","task":"x","batch":"P"}\n' "$t0"
+    printf '{"ev":"jev","t":%s,"id":"e:1","outcome":"classified","choice":"absorbable","confidence":0.9}\n' "$t0"
+    printf '{"ev":"presented","t":%s,"id":"e:2","seq":2,"kind":"signal","task":"z","batch":"Q"}\n' $((t0 + 1))
+    printf '{"ev":"jev","t":%s,"id":"e:2","outcome":"classified","choice":"absorbable","confidence":0.9}\n' $((t0 + 1))
+    printf '{"ev":"steer","t":%s,"task":"x"}\n' $((t0 + 2))
+    printf '{"ev":"ack","t":%s,"through":2}\n' $((t0 + 3))
+    printf '{"ev":"turn_end","t":%s,"outcome":"ack"}\n' $((t0 + 4))
+    printf '{"ev":"presented","t":%s,"id":"e:3","seq":3,"kind":"signal","task":"u","batch":"R"}\n' $((t0 + 10))
+    printf '{"ev":"jev","t":%s,"id":"e:3","outcome":"classified","choice":"firstmate","confidence":0.9}\n' $((t0 + 10))
+    printf '{"ev":"presented","t":%s,"id":"e:4","seq":4,"kind":"signal","task":"v","batch":"S"}\n' $((t0 + 11))
+    printf '{"ev":"jev","t":%s,"id":"e:4","outcome":"classified","choice":"firstmate","confidence":0.9}\n' $((t0 + 11))
+    printf '{"ev":"steer","t":%s,"task":"nobody"}\n' $((t0 + 12))
+    printf '{"ev":"decision","t":%s,"task":""}\n' $((t0 + 12))
+    printf '{"ev":"ack","t":%s,"through":4}\n' $((t0 + 13))
+    printf '{"ev":"turn_end","t":%s,"outcome":"ack"}\n' $((t0 + 14))
+  } > "$fixture"
+  out=$("$JEV" report --log "$fixture" --days 1 --now $((t0 + 60))) || fail "report failed: $out"
+  assert_contains "$out" 'wrongly absorbable (Jev would absorb, firstmate had to act): 1' "the named steer was not credited to its own wake alone"
+  assert_contains "$out" 'agreement (absorb vs surface): 75% (3 of 4)' "wrong agreement across drains"
+  assert_contains "$(printf '%s\n' "$out" | grep -F 'task x:')" 'Jev absorbable (0.9), actual firstmate (steer)' "the named steer was not credited to task x"
+  assert_not_contains "$(printf '%s\n' "$out" | grep -F 'task x:')" 'shared' "the named steer was flagged shared"
+  assert_not_contains "$out" 'task z' "an unrelated open wake was credited with another task's steer"
+  assert_contains "$out" 'task u: Jev firstmate (0.9), actual firstmate (decision+steer), shared with other open wakes' "the unmatched steer was not shared with task u"
+  assert_contains "$out" 'task v: Jev firstmate (0.9), actual firstmate (decision+steer), shared with other open wakes' "the unmatched steer was not shared with task v"
+  pass "the report credits named actions to their task's open wakes across drains and shares the rest"
+}
+
 test_off_by_default_and_not_enabled_by_the_environment
 test_foreign_state_dir_never_uses_the_key
 test_shadow_classifies_without_changing_the_presentation
@@ -321,4 +372,6 @@ test_api_errors_pause_until_the_next_day
 test_daily_cap_pauses_after_the_spend_is_reached
 test_drain_never_waits_for_jev
 test_hooks_record_actions_and_turn_ends_without_text
+test_automated_sends_record_no_steer
+test_report_attributes_actions_to_open_wakes_across_drains
 test_report_measures_agreement_and_lists_doubtful_cases
