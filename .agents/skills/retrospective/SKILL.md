@@ -62,7 +62,7 @@ Otherwise take the **quick** path: pre-flight recall (Step 1), one `memory_lesso
 ## Resolve the org store first
 
 The org-wide layer is whichever knowledge store this home is configured with, because the same skill runs on machines with different MCP servers installed.
-Before Step 1, run `bin/fm-knowledge-store.sh read` from the Firstmate code root (two directories above this skill), with `FM_HOME` as the session has it.
+Before Step 1, run `bin/fm-knowledge-store.sh read` from the Firstmate code root (three directories above this skill, the directory that contains `.agents/`), with `FM_HOME` as the session has it.
 It prints `name=`, `backend=` and `search=`; that script and `docs/configuration.md` "Knowledge store naming" own the setting, its default, and the refusals.
 Everywhere below, "the org store" means the store it names: call it by `name` in chat and in the report, and take its recall and write verbs from `reference.md` for that `backend`.
 `backend=other` is a store with no write contract known here: recall through the `search=` instructions and leave every org-store write pending, saying why.
