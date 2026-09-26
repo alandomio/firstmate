@@ -69,13 +69,29 @@ Workstation-local, cross-project, confidence-scored, decaying.
 
 `project` is a **known-inconsistent field** — the documentation and the live data have disagreed.
 Call `memory_sessions()` first and reuse whatever identifier the current session was actually
-registered under; if none exists, **omit it** rather than invent one. Detail: Brain `02a16f`.
+registered under; if none exists, **omit it** rather than invent one. Detail, on a PP Brain home: item `02a16f`.
 
-## PP Brain
+## Org knowledge store
 
 Company-wide, cross-repo, cross-machine, human-readable — the only layer a colleague can read.
+Which store that is comes from `bin/fm-knowledge-store.sh read` (`SKILL.md`, "Resolve the org store first"); use only the section below that matches its `backend`.
+Search before writing in every backend: the convention is to link, not fork.
 
-- Search before writing. The convention is to link, not fork.
+### `backend=rag` — the RAG (`rag_qdrant_server`)
+
+- Recall: `query_rag_hybrid(query_text, user_roles)`, falling back to `query_rag` with the same arguments.
+  Pass `user_roles` even when empty.
+- Write: `ingest_document(chunk_text, metadata_json, user_roles)`.
+  `metadata_json` is a JSON string and must carry `document_type`, one of `guida` | `policy` | `info` | `ticket`; any other value is rejected.
+  A retrospective learning is normally `info`, and a stable convention a colleague must follow is `guida`.
+  Also set `file_path` (a stable logical path such as `retrospective/<repo>/<slug>`), a `slug`, `tags`, and `document_date` (today), so the item is findable and linkable later.
+  `user_roles` sets who can read it; keep it internal (for example `admin,dev`), never public.
+- The identifier to record in the report is the `slug` the call accepted, or whatever id it returned; no id back means the write is not claimed.
+- Keep `chunk_text` focused with the key information first, and point at the canonical file rather than embedding it wholesale.
+
+### `backend=pp-brain` — PP Brain
+
+- Recall: `search_knowledge(query, prompt)`, with **both** fields populated.
 - `add_knowledge(title, summary, body, tags, links)` — title >= 5 chars, summary >= 20 (aim ~500,
   key information **first**, because it is sentence-truncated server-side), body >= 50. Tags are
   namespaced: `type:pattern`, `domain:payment`. Default `sync: true` returns
@@ -85,3 +101,8 @@ Company-wide, cross-repo, cross-machine, human-readable — the only layer a col
 - Very large payloads have failed JSON validation. Keep the body focused and point at the canonical
   file rather than embedding it wholesale.
 - A 422 is the sensitivity gate. What it refuses is in `SKILL.md`.
+
+### `backend=other`
+
+Recall through the `search=` instructions the command printed.
+No write contract is known here, so every org-store write stays pending in the report, naming the store.
