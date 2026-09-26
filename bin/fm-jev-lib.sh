@@ -5,7 +5,8 @@
 # the limits, the private log, and how ground truth is measured. This file is
 # sourced by the production scripts that feed that log and holds only the
 # cheap enabled test plus the event appends they call inline:
-#   fm_jev_enabled <home> <state>                    - 0 when this home opted in
+#   fm_jev_enabled <home> <state>                    - 0 when this home opted into either backend
+#   fm_jev_backend <home> <state>                    - prints "local" or "openrouter"; exit 1 when off
 #   fm_jev_observe <home> <state> <steer|decision> [task]
 #                                                    - skipped under FM_JEV_OBSERVE=0,
 #                                                      which automated senders set
@@ -21,16 +22,31 @@
 
 FM_JEV_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Opt-in is the presence of a non-empty OPENROUTER_API_KEY assignment in this
-# home's private .env, and only for the home's own state directory, so a test or
-# tool that points STATE elsewhere can never spend this home's key. The value is
-# never read here; bin/fm-jev.sh reads it only at request time.
-fm_jev_enabled() {  # <home> <state>
+# Opt-in is either a non-empty config/jev-endpoint (local backend, no secret to
+# gate on) or a non-empty OPENROUTER_API_KEY in this home's private .env
+# (OpenRouter backend), and only for the home's own state directory, so a test
+# or tool that points STATE elsewhere can never use either backend. config/
+# jev-endpoint takes priority when both are present. Neither value's content is
+# validated here (loopback-only enforcement lives in bin/fm-jev.sh, which reads
+# both only at request time).
+fm_jev_backend() {  # <home> <state> -> prints "local" or "openrouter"
   local home=${1:-} state=${2:-}
   [ -n "$home" ] && [ -n "$state" ] || return 1
-  [ -f "$home/.env" ] || return 1
   [ "$state" -ef "$home/state" ] || return 1
-  grep -Eq "^[[:space:]]*(export[[:space:]]+)?OPENROUTER_API_KEY=[[:space:]]*[\"']?[A-Za-z0-9]" "$home/.env" 2>/dev/null
+  if [ -s "$home/config/jev-endpoint" ]; then
+    printf 'local\n'
+    return 0
+  fi
+  [ -f "$home/.env" ] || return 1
+  if grep -Eq "^[[:space:]]*(export[[:space:]]+)?OPENROUTER_API_KEY=[[:space:]]*[\"']?[A-Za-z0-9]" "$home/.env" 2>/dev/null; then
+    printf 'openrouter\n'
+    return 0
+  fi
+  return 1
+}
+
+fm_jev_enabled() {  # <home> <state>
+  fm_jev_backend "${1:-}" "${2:-}" >/dev/null
 }
 
 _fm_jev_append() {  # <state> <json-line>

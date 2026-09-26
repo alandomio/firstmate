@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # tests/fm-jev.test.sh - the Jev shadow wake classifier (bin/fm-jev.sh and its
 # hooks in bin/fm-jev-lib.sh). Portable: the network is always a fake curl on
-# PATH, so no case can reach OpenRouter or spend money. Pins the off-by-default
-# switch, that shadow mode never changes what a drain presents or how fast it
-# returns, the limits (timeout, API error, missing cost, daily cap, next-day
-# resume), what leaves the machine (masking, only two state fields, the key
+# PATH, so no case can reach OpenRouter, Rizzo Flow, or spend money. Pins the
+# off-by-default switch, that shadow mode never changes what a drain presents
+# or how fast it returns, the limits (timeout, API error, missing cost, daily
+# cap, next-day resume) for the OpenRouter backend and (no key, missing cost is
+# not an error, loopback-only enforcement, load-ceiling pause) for the local
+# backend, what leaves the machine (masking, only two state fields, the key
 # never in argv or on disk), and the ground-truth report over a fixture log.
+# tests/fm-jev-local-rizzo-live.test.sh is the opt-in live counterpart against
+# a real `rizzo serve`.
 set -u
 
 # shellcheck source=tests/wake-helpers.sh
@@ -26,13 +30,20 @@ jev_case() {
   fakebin=$(fm_fakebin "$home")
   cat > "$fakebin/curl" <<'SH'
 #!/usr/bin/env bash
-# Fake OpenRouter: records each call, never touches the network.
+# Fake network target (OpenRouter or a local Jev-compatible server): records
+# each call and never touches the network.
 log=${FAKE_CURL_LOG:?}
 printf 'call\n' >> "$log/calls"
 n=$(wc -l < "$log/calls" | tr -d ' ')
 printf '%s\n' "$@" >> "$log/argv"
-cfg=$(cat)
-case "$cfg" in *"Authorization: Bearer ${FAKE_CURL_EXPECT_KEY:-none}"*) printf 'ok\n' >> "$log/auth" ;; esac
+has_k=0
+for a in "$@"; do [ "$a" = -K ] && has_k=1; done
+if [ "$has_k" = 1 ]; then
+  cfg=$(cat)
+  case "$cfg" in *"Authorization: Bearer ${FAKE_CURL_EXPECT_KEY:-none}"*) printf 'ok\n' >> "$log/auth" ;; esac
+else
+  printf 'no-auth-header\n' >> "$log/noauth"
+fi
 out='' body=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -53,12 +64,26 @@ case "${FAKE_CURL_MODE:-ok}" in
       "${FAKE_CHOICE:-absorbable}" "${FAKE_CONF:-0.8}" "${FAKE_COST:-0.00001}" > "$out"
     printf '200'
     ;;
+  localok)
+    printf '{"model":"rizzo-flow-1.7b-q8_0","answers":{"handling":{"type":"choice","choice":"%s","confidence":%s,"probabilities":{"firstmate":0.1,"absorbable":0.8,"captain":0.1}}},"usage":{"input_tokens":300,"output_tokens":0}}' \
+      "${FAKE_CHOICE:-absorbable}" "${FAKE_CONF:-0.8}" > "$out"
+    printf '200'
+    ;;
 esac
 SH
   chmod +x "$fakebin/curl"
   if [ "${2:-}" = with-key ]; then
     printf 'OTHER_SECRET=do-not-read\nOPENROUTER_API_KEY=%s\n' "$FAKE_KEY" > "$home/.env"
   fi
+  printf '%s\n' "$home"
+}
+
+# jev_local_case <name> [endpoint]: a home configured for the local backend
+# (config/jev-endpoint), reusing the same fake network as jev_case.
+jev_local_case() {
+  local home
+  home=$(jev_case "$1")
+  printf '%s\n' "${2:-http://127.0.0.1:8017}" > "$home/config/jev-endpoint"
   printf '%s\n' "$home"
 }
 
@@ -93,7 +118,7 @@ test_off_by_default_and_not_enabled_by_the_environment() {
   assert_contains "$out" 'task1.status' "the wake was not presented with Jev off"
   assert_absent "$home/state/jev" "Jev wrote state without an opted-in .env (ambient key must not enable it)"
   [ "$(calls "$home")" = 0 ] || fail "Jev called the network without an opted-in .env"
-  assert_contains "$(in_home "$home" "$JEV" status)" 'off (no OPENROUTER_API_KEY' "status did not report off"
+  assert_contains "$(in_home "$home" "$JEV" status)" 'off (no config/jev-endpoint and no OPENROUTER_API_KEY' "status did not report off"
   pass "off by default: an ambient OPENROUTER_API_KEY neither logs nor calls the network"
 }
 
@@ -234,6 +259,80 @@ test_daily_cap_pauses_after_the_spend_is_reached() {
     || fail "the wake after the cap was not skipped"
   assert_contains "$(in_home "$home" "$JEV" status)" 'USD 0.00002' "status did not report today's spend"
   pass "the daily spend cap stops requests and pauses Jev until the next day"
+}
+
+test_local_backend_takes_priority_needs_no_key_and_records_the_answering_model() {
+  local home log
+  home=$(jev_local_case local-priority)
+  printf 'OPENROUTER_API_KEY=%s\n' "$FAKE_KEY" >> "$home/.env"
+  queue_row "$home" 1 signal task9.status 'signal: task9.status: working: halfway'
+  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=0.1 "$DRAIN" >/dev/null 2>"$home/drain.err" \
+    || fail "drain failed against the local backend: $(cat "$home/drain.err")"
+  [ "$(calls "$home")" = 1 ] || fail "expected exactly one local classification request"
+  assert_absent "$home/curl/auth" "the local backend sent an Authorization header"
+  assert_present "$home/curl/noauth" "the local backend request was not recorded as key-less"
+  log="$home/state/jev/shadow.jsonl"
+  jq -e 'select(.ev == "jev" and .outcome == "classified" and .model == "rizzo-flow-1.7b-q8_0" and .cost == null)' "$log" >/dev/null \
+    || fail "the local answer was not logged with its model and a null cost: $(cat "$log")"
+  pass "config/jev-endpoint selects the local backend over an OPENROUTER_API_KEY, needs no key, and records the answering model"
+}
+
+test_local_backend_missing_cost_is_not_an_error() {
+  local home
+  home=$(jev_local_case local-nocost)
+  queue_row "$home" 1 heartbeat heartbeat heartbeat
+  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=0.1 "$DRAIN" >/dev/null 2>&1 || fail "drain failed"
+  jev_events "$home" 'select(.outcome == "classified")' | grep -q . || fail "a costless local response was treated as an error"
+  assert_absent "$home/state/jev/disabled" "a missing cost paused the local backend as if it were an API error"
+  pass "a local response with no usage.cost classifies normally instead of erroring"
+}
+
+test_local_backend_refuses_a_non_loopback_endpoint() {
+  local home
+  home=$(jev_local_case local-nonloopback https://evil.example.com)
+  queue_row "$home" 1 heartbeat heartbeat heartbeat
+  in_home "$home" env FM_JEV_FOREGROUND=1 "$DRAIN" >/dev/null 2>&1 || fail "drain failed"
+  [ "$(calls "$home")" = 0 ] || fail "a non-loopback config/jev-endpoint was dialed"
+  jev_events "$home" 'select(.why == "invalid-endpoint")' | grep -q . || fail "the non-loopback endpoint was not logged as invalid"
+  [ "$(cut -f2 "$home/state/jev/disabled")" = invalid-endpoint ] || fail "a non-loopback endpoint did not pause Jev"
+  home=$(jev_local_case local-path http://127.0.0.1:8017/v1)
+  queue_row "$home" 1 heartbeat heartbeat heartbeat
+  in_home "$home" env FM_JEV_FOREGROUND=1 "$DRAIN" >/dev/null 2>&1 || fail "drain failed on a path suffix"
+  [ "$(calls "$home")" = 0 ] || fail "config/jev-endpoint with a path was dialed"
+  pass "a non-loopback or path-carrying config/jev-endpoint is refused, never dialed, and pauses Jev"
+}
+
+test_local_backend_load_ceiling_pauses_like_the_spend_cap() {
+  local home
+  home=$(jev_local_case local-load)
+  printf '4\n' > "$home/config/jev-max-load"
+  queue_row "$home" 1 heartbeat heartbeat heartbeat
+  queue_row "$home" 2 stale default:w1:p1 'stale: default:w1:p1'
+  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=9.5 "$DRAIN" >/dev/null 2>&1 \
+    || fail "drain failed under load"
+  [ "$(calls "$home")" = 0 ] || fail "Jev classified while the load ceiling was exceeded"
+  [ "$(cut -f2 "$home/state/jev/disabled")" = load ] || fail "an exceeded load ceiling did not pause Jev"
+  jev_events "$home" 'select(.why == "load")' | grep -q . || fail "the load pause was not logged"
+  home=$(jev_local_case local-load-ok)
+  printf '4\n' > "$home/config/jev-max-load"
+  queue_row "$home" 1 heartbeat heartbeat heartbeat
+  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=0.5 "$DRAIN" >/dev/null 2>&1 \
+    || fail "drain failed under a normal load"
+  [ "$(calls "$home")" = 1 ] || fail "Jev did not classify below the load ceiling"
+  pass "a 1-minute load average at or above config/jev-max-load pauses Jev like the spend cap; below it, Jev classifies"
+}
+
+test_local_backend_status_reports_the_endpoint_and_ceiling() {
+  local home out
+  home=$(jev_local_case local-status)
+  printf '6\n' > "$home/config/jev-max-load"
+  out=$(in_home "$home" "$JEV" status)
+  assert_contains "$out" 'local backend (config/jev-endpoint = http://127.0.0.1:8017)' "status did not report the local backend"
+  assert_contains "$out" 'load ceiling: 6' "status did not report the configured load ceiling"
+  home=$(jev_case local-status-off)
+  assert_contains "$(in_home "$home" "$JEV" status)" \
+    'off (no config/jev-endpoint and no OPENROUTER_API_KEY' "status did not report off with both backends absent"
+  pass "status names the active backend, its endpoint or spend, and (for local) its load ceiling"
 }
 
 test_drain_never_waits_for_jev() {
@@ -414,6 +513,11 @@ test_timeout_is_configurable
 test_timeout_pauses_until_the_next_day
 test_api_errors_pause_until_the_next_day
 test_daily_cap_pauses_after_the_spend_is_reached
+test_local_backend_takes_priority_needs_no_key_and_records_the_answering_model
+test_local_backend_missing_cost_is_not_an_error
+test_local_backend_refuses_a_non_loopback_endpoint
+test_local_backend_load_ceiling_pauses_like_the_spend_cap
+test_local_backend_status_reports_the_endpoint_and_ceiling
 test_drain_never_waits_for_jev
 test_hooks_record_actions_and_turn_ends_without_text
 test_automated_sends_record_no_steer
