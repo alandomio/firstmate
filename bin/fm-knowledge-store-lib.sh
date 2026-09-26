@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034 # FM_KS_* fields are output globals for sourcing callers.
 # Knowledge-store resolution primitives.
 # Usage: . bin/fm-knowledge-store-lib.sh
 #
