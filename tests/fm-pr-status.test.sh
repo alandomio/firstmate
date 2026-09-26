@@ -719,6 +719,17 @@ out=$(FM_TEST_PROJECT_JSON="$case_ag/project-err.json" \
   run_case "$case_ag" "$case_ag/mr.json" "$case_ag/pipelines.json" g/ag!32); rc=$?
 assert_contains "$out" "jobs=? must-succeed=?" "an unreadable project makes no CI-settings claim"
 expect_code 1 "$rc" "an unreadable project fails the run"
+printf '{"id":9,"name":"ag","visibility":"public"}' > "$case_ag/project-reduced.json"
+out=$(FM_TEST_PROJECT_JSON="$case_ag/project-reduced.json" \
+  run_case "$case_ag" "$case_ag/mr.json" "$case_ag/pipelines.json" g/ag!32); rc=$?
+assert_contains "$out" "jobs=? must-succeed=?" "a reduced project view that omits the settings makes no claim"
+expect_code 1 "$rc" "a project view that omits the CI settings fails the run"
+printf '{"id":9,"builds_access_level":"private","only_allow_merge_if_pipeline_succeeds":true}' \
+  > "$case_ag/project-bal.json"
+out=$(FM_TEST_PROJECT_JSON="$case_ag/project-bal.json" \
+  run_case "$case_ag" "$case_ag/mr.json" "$case_ag/pipelines.json" g/ag!32); rc=$?
+assert_contains "$out" "jobs=enabled must-succeed=yes" "builds_access_level=private alone reports CI as enabled"
+expect_code 0 "$rc" "a project settled by builds_access_level exits cleanly"
 pass "case AG: project CI capability and Pipelines must succeed are reported, or ? when unread"
 
 # --- fixture AH: a merged merge request still names its target branch. -----
@@ -729,4 +740,8 @@ cat > "$case_ah/mr.json" <<'JSON'
 JSON
 out=$(run_case "$case_ah" "$case_ah/mr.json" "" g/ah!33)
 assert_contains "$out" "merged  into=main on=2026-09-01" "a merged row names its target branch and date"
+sed 's/"target_branch":"main",//' "$case_ah/mr.json" > "$case_ah/mr-notarget.json"
+out=$(run_case "$case_ah" "$case_ah/mr-notarget.json" "" g/ah!33); rc=$?
+assert_contains "$out" "into=?" "a response naming no target branch reports it as unknown"
+expect_code 1 "$rc" "an unknown target branch fails the run"
 pass "case AH: a merged merge request reports its target branch"

@@ -83,7 +83,9 @@
 # jobs= is DISABLED when the project's jobs_enabled or builds_access_level
 # says CI can never run there, and must-succeed= is the project's "Pipelines
 # must succeed" setting; either prints ? when the project could not be read
-# or did not say.
+# or did not say (as GitLab's reduced view for low-permission tokens does),
+# and into= prints ? when the response named no target branch. Every ? fails
+# the run just as an unreadable read does.
 # A merged merge request prints just "repo!num merged into=<target> on=<date>",
 # and an unreadable one just "repo!num UNREACHABLE (<why>)". Draft state, what
 # the badge actually is, and any failed external status are all disclosed as
@@ -179,7 +181,7 @@ if not isinstance(d,dict) or "id" not in d:
     print("UNREADABLE"); raise SystemExit(0)
 je=d.get("jobs_enabled"); bal=d.get("builds_access_level")
 if je is False or bal == "disabled": jobs="DISABLED"
-elif je is True: jobs="enabled"
+elif je is True or bal in ("enabled", "private"): jobs="enabled"
 else: jobs="?"
 m=d.get("only_allow_merge_if_pipeline_succeeds")
 print(jobs, "yes" if m is True else "no" if m is False else "?")
@@ -188,6 +190,7 @@ print(jobs, "yes" if m is True else "no" if m is False else "?")
     STATUS=1
     val="? ?"
   fi
+  case "$val" in *'?'*) STATUS=1 ;; esac
   PROJ_CACHE_KEY=$key
   PROJ_CACHE_VAL=$val
 }
@@ -271,6 +274,7 @@ EOF
     fm_prstat_unreachable "$repo" "$iid" "unreadable response"
     return
   fi
+  [ "$target" != "?" ] || STATUS=1
 
   if [ "$merged" != "-" ] && [ -n "$merged" ]; then
     printf '%-34s  %-7s into=%s on=%s\n' "$(basename "$repo")!$iid" "merged" "$target" "$merged"
