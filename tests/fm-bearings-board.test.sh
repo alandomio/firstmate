@@ -710,6 +710,138 @@ test_changing_the_selection_drops_a_stale_queued_mark() {
   pass "changing the selection drops a stale queued mark"
 }
 
+# A board-valid quota section as bin/fm-bearings-quota.sh prints it: one stale
+# provider with an unreported value, one signed out, one fresh.
+write_quota_section() {  # <path>
+  cat > "$1" <<'EOF'
+{
+  "source": "quota-axi",
+  "generated": "2026-09-26T14:35:03.033Z",
+  "available": true,
+  "status": "ok",
+  "providers": [
+    { "provider": "claude", "label": "Anthropic", "available": true, "status": "stale",
+      "detail": "fetch failed", "plan": "max",
+      "windows": [
+        { "id": "five_hour", "label": "session", "kind": "session",
+          "percent_used": 52, "percent_remaining": 48, "resets_at": "2026-09-26T16:40:00Z" },
+        { "id": "model:fable", "label": "Fable week", "kind": "model",
+          "percent_used": null, "percent_remaining": null, "resets_at": null }
+      ],
+      "attention": [ { "kind": "stale", "detail": "fetch failed" },
+                     { "kind": "headroom_unknown", "detail": "all_models" } ] },
+    { "provider": "codex", "label": "OpenAI", "available": false, "status": "auth_required",
+      "detail": "Codex sign-in required", "plan": null, "windows": [], "attention": [] },
+    { "provider": "agy", "label": "Google", "available": true, "status": "fresh", "plan": "Google AI Pro",
+      "windows": [
+        { "id": "model:gemini-3.6-flash-high", "label": "Gemini 3.6 Flash (High)", "kind": "model",
+          "percent_used": 12, "percent_remaining": 88, "resets_at": "2026-09-26T19:11:43.000Z" }
+      ],
+      "attention": [] }
+  ]
+}
+EOF
+}
+
+test_build_accepts_an_optional_quota_section_and_refuses_a_malformed_one() {
+  local home data rc out bad
+  home=$(make_home quota)
+  data="$home/payload.json"
+  write_valid_payload "$data"
+  write_quota_section "$home/quota.json"
+  jq --slurpfile q "$home/quota.json" '.quota = $q[0]' "$data" > "$data.quota"
+  set +e; out=$(run_board "$home" build "$data.quota" 2>&1); rc=$?; set -e
+  [ "$rc" -eq 0 ] || fail "a payload carrying a valid quota section was refused: $out"
+  [ "$(extract_payload "$home/.lavish/bearings-board.html" | jq -r '.quota.providers[2].windows[0].percent_remaining')" = "88" ] \
+    || fail "the quota section did not survive injection"
+
+  for bad in '.quota.providers[0].windows[0].percent_used = 150' \
+    '.quota.providers[0].windows[0].percent_remaining = "48"' \
+    '.quota.providers[1].available = "no"' \
+    'del(.quota.providers)' \
+    '.quota.providers[0].attention[0].kind = ""' \
+    '.quota.providers[0].windows[0].label = ""' \
+    '.quota = "unavailable"'; do
+    jq "$bad" "$data.quota" > "$data.bad"
+    set +e; out=$(run_board "$home" build "$data.bad" 2>&1); rc=$?; set -e
+    [ "$rc" -ne 0 ] || fail "a malformed quota section was accepted ($bad)"
+  done
+  pass "build accepts an optional quota section and refuses a malformed one"
+}
+
+# The quota panel runs the REAL template runtime (same DOM shim as the Captain's
+# Call tests) and must show reported numbers, say "non disponibile" with the
+# reason wherever a value or provider is missing, and never take the rest of
+# the board down with it.
+test_quota_panel_renders_values_and_says_why_anything_is_unavailable() {
+  command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
+  local runtime data out texts want
+  runtime="$TMP_ROOT/quota-runtime.js"
+  extract_runtime_script "$ROOT/.agents/skills/bearings/assets/board-template.html" "$runtime"
+  data="$TMP_ROOT/quota-payload.json"
+  write_valid_payload "$data"
+  write_quota_section "$TMP_ROOT/quota.json"
+  jq --slurpfile q "$TMP_ROOT/quota.json" '.quota = $q[0]' "$data" > "$data.quota"
+
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data.quota" 1 quota 2>&1) \
+    || fail "the DOM harness crashed on a quota section: $out"
+  texts=$(printf '%s' "$out" | jq -r '.providers[0][]')
+  for want in "Anthropic" "5 ore" "usato 52% · restante 48%" "Fable week" "non disponibile" \
+    "dati non aggiornati: fetch failed" "margine residuo non misurabile: all_models"; do
+    printf '%s\n' "$texts" | grep -Fxq -- "$want" || fail "the Anthropic card did not show '$want': $out"
+  done
+  printf '%s\n' "$texts" | grep -q '^si azzera ' || fail "the Anthropic card did not show its reset time: $out"
+  printf '%s' "$out" | jq -r '.providers[1][]' \
+    | grep -Fxq "non disponibile - accesso richiesto: Codex sign-in required" \
+    || fail "the signed-out OpenAI card did not say it is unavailable and why: $out"
+  printf '%s' "$out" | jq -r '.providers[2][]' | grep -Fxq "usato 12% · restante 88%" \
+    || fail "the Google card did not show its Gemini window: $out"
+  [ "$(printf '%s' "$out" | jq -c '.fillStyles')" = '["width:52%","width:12%"]' ] \
+    || fail "usage bars were drawn for a value that was not reported: $out"
+
+  jq '.quota.providers[2].windows = [
+        {id: "gemini_5h", label: "Gemini 5-hour", kind: "session", percent_used: 10, percent_remaining: 90, resets_at: null},
+        {id: "other_5h", label: "Claude/GPT 5-hour", kind: "session", percent_used: 40, percent_remaining: 60, resets_at: null},
+        {id: "gemini_week", label: "Gemini weekly", kind: "weekly", percent_used: 20, percent_remaining: 80, resets_at: null},
+        {id: "plain_week", label: "", kind: "weekly", percent_used: 5, percent_remaining: 95, resets_at: null}]' \
+    "$data.quota" > "$data.grouped"
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data.grouped" 1 quota 2>&1) \
+    || fail "the DOM harness crashed on grouped Google windows: $out"
+  texts=$(printf '%s' "$out" | jq -r '.providers[2][]')
+  for want in "Gemini 5-hour" "Claude/GPT 5-hour" "Gemini weekly" "settimana"; do
+    printf '%s\n' "$texts" | grep -Fxq -- "$want" || fail "the Google card did not label a grouped window '$want': $out"
+  done
+
+  jq '.quota = {source: "quota-axi", generated: null, available: false, status: "tool_missing",
+        detail: "quota-axi is not installed",
+        providers: [{provider: "claude", label: "Anthropic", available: false, status: "tool_missing",
+                     detail: "quota-axi is not installed", plan: null, windows: [], attention: []}]}' \
+    "$data" > "$data.missing"
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data.missing" 1 quota 2>&1) \
+    || fail "the DOM harness crashed on a missing-tool quota section: $out"
+  printf '%s' "$out" | jq -r '.providers[0][]' \
+    | grep -Fxq "non disponibile - quota-axi non è installato: quota-axi is not installed" \
+    || fail "a missing quota-axi was not shown as unavailable with its reason: $out"
+  [ "$(printf '%s' "$out" | jq -r .subText)" = "non disponibile" ] \
+    || fail "the panel header did not say the quota is unavailable: $out"
+
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data" 1 quota 2>&1) \
+    || fail "the DOM harness crashed on a payload without quota: $out"
+  printf '%s' "$out" | jq -r '.providers[0][]' | grep -Fq "non contiene i dati di quota" \
+    || fail "a payload without quota did not say the quota is unavailable: $out"
+  [ "$(printf '%s' "$out" | jq -r .stats)" = "4" ] \
+    || fail "the rest of the board did not render beside an absent quota section: $out"
+
+  jq '.quota = {providers: [{label: "Anthropic", windows: "garbage"}]}' "$data" > "$data.garbage"
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data.garbage" 1 quota 2>&1) \
+    || fail "the DOM harness crashed on a malformed quota section: $out"
+  printf '%s' "$out" | jq -r '.providers[0][]' | grep -Fxq "non disponibile - stato sconosciuto" \
+    || fail "a malformed provider did not degrade to unavailable: $out"
+  [ "$(printf '%s' "$out" | jq -r .stats)" = "4" ] \
+    || fail "a malformed quota section took the rest of the board down: $out"
+  pass "the quota panel shows reported values and says why anything is unavailable"
+}
+
 test_build_refuses_a_template_without_exactly_one_slot() {
   local home data rc out
   home=$(make_home badslot)
@@ -742,3 +874,5 @@ test_an_option_less_card_is_built_and_answerable_through_its_freeform_box
 test_a_decision_card_shows_every_decision_card_element
 test_a_throwing_bridge_is_refused_like_a_missing_one
 test_changing_the_selection_drops_a_stale_queued_mark
+test_build_accepts_an_optional_quota_section_and_refuses_a_malformed_one
+test_quota_panel_renders_values_and_says_why_anything_is_unavailable
