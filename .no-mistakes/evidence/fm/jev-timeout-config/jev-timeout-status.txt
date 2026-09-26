@@ -1,0 +1,8 @@
+$ config/jev-timeout=''; fm-jev.sh status
+request timeout: 5s
+$ config/jev-timeout='3'; fm-jev.sh status
+request timeout: 3s
+$ config/jev-timeout='abc'; fm-jev.sh status
+request timeout: 5s (config/jev-timeout value "abc" is not a positive number, default kept)
+$ config/jev-timeout='0'; fm-jev.sh status
+request timeout: 5s (config/jev-timeout value "0" is not a positive number, default kept)
