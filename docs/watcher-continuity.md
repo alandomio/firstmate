@@ -70,18 +70,28 @@ A matching PID and identity lets an attached arm report the delivered reason and
 Only a cycle with no matching delivery record emits `watcher: FAILED - cycle ended without an actionable reason` and exits nonzero.
 
 The arm layer appends one tab-separated record per observed cycle to `state/.watch-cycle-exits.log`.
-Each record includes arm and watcher PIDs, start and end timestamps, exit code and signal, classified reason, beacon age, lock identity before and after close, and successor disposition.
+Each record includes arm and watcher PIDs, start and end timestamps, exit code and signal, classified reason, beacon age, lock identity before and after close, the forked child's own startup durations (`startup_scan_secs`, `startup_lock_secs`; `unknown` for a cycle this arm did not fork, such as an attached one), and successor disposition.
+`successor=` stays the record's last field on purpose: the predecessor-linking rewrite that fills it in from a later successor's cycle matches it anchored to end of line.
+
 The file is size-capped through `FM_WATCH_CYCLE_LOG_MAX_BYTES` and `FM_WATCH_CYCLE_LOG_KEEP_LINES`.
 `state/.watch-triage.log` remains only the watcher's bounded absorbed-wake debug log and carries no lifecycle semantics.
 
 The default 300-second grace is unchanged.
 Only the watcher process touches `state/.last-watcher-beat`; no helper process can make a wedged watcher appear healthy.
 
+### Confirming a slow-but-healthy startup
+
+Before taking the singleton lock, `bin/fm-watch.sh` runs `bin/fm-pr-check-migrate.sh --checks-safe` (non-executing PR-check migration); under a large fleet that private per-check hashing scan can take well over ten seconds, during which the watcher holds no lock and touches no authoritative beacon at all.
+`ARM_CONFIRM_DEFAULT` (60s non-Windows, 30s on Git Bash/MSYS, both overridable with `FM_ARM_CONFIRM_TIMEOUT`) already covers an ordinary slow scan.
+On top of that budget, `bin/fm-watch.sh` also touches a dedicated `state/.watch-starting-beat` marker immediately before that scan, and `bin/fm-watch-arm.sh`'s confirmation wait grants one bounded extension - up to the separate `STARTUP_GRACE` bound (`FM_ARM_STARTUP_GRACE`, default 60s) - to a forked child that is still alive and has touched that marker at or after this cycle began, rather than killing it at `CONFIRM_TIMEOUT` alone.
+That marker is deliberately never `state/.last-watcher-beat` and is read by nothing but this one extension: touching the shared beacon before the lock is held would let a process that never becomes the watcher - a failed migration scan exits before ever trying - make Claude's and Cursor's autoarm supervision model (`fm_supervision_model` in `bin/fm-wake-lib.sh`, which treats a fresh beacon alone as healthy between turns) read "healthy" with no watcher present at all.
+A child with no such evidence (dead, or one that never reached its own preflight) still fails at the ordinary `CONFIRM_TIMEOUT` deadline exactly as before.
+
 ## Regression coverage
 
 `tests/fm-pi-watch-extension.test.sh` checks Pi's first-cycle-or-explicit-repair tool metadata and ownership-based redundant-call no-ops, then simulates actionable and empty child closes against the actual Pi and OpenCode close handlers, blocks prompt delivery to prove the successor launches first, verifies single-flight behavior, changes the session lock before close to prove ownership is rechecked, and hangs each successor arm to prove bounded fallback delivery includes the typed restoration failure.
 The same suite covers ordinary same-process session replacement for `/new`, `/resume`, and `/fork`, same-instance shutdown-plus-start, stale prior-generation callbacks, repeated transitions with exactly one live cycle, disappearance of the shutting-down refusal after a valid replacement activates, and terminal quit still refusing late rearm.
-`tests/fm-watch-arm.test.sh` covers durable queue replay, real remote parent-replies ingestion into the authoritative status log, decision-only OPEN DECISIONS recovery, interrupted handling replay, generation-bound acknowledgement, a persistent live successor after recovery, a watcher close inside the handling window that must leave the printed acknowledgement valid, and the self-healing moved-generation acknowledgement that consumes its handled rows and names its remedy.
+`tests/fm-watch-arm.test.sh` covers durable queue replay, real remote parent-replies ingestion into the authoritative status log, decision-only OPEN DECISIONS recovery, interrupted handling replay, generation-bound acknowledgement, a persistent live successor after recovery, a watcher close inside the handling window that must leave the printed acknowledgement valid, the self-healing moved-generation acknowledgement that consumes its handled rows and names its remedy, and confirming a forked child through a simulated 12-second pre-lock migration scan well past a deliberately tight `CONFIRM_TIMEOUT`.
 `tests/fm-watch-recovery-loop.test.sh` covers the once-per-generation announcement bound with the real Pi extension against a refused handling handshake, and a handling successor that must surface a real crew event instead of going blind.
 `tests/fm-watcher-lock.test.sh` covers verified-successor attach, recovery publication before stale-lock removal, the typed self-eviction failure, bounded and successor-linked lifecycle rows, a SIGSTOP counterfactual that distinguishes a live PID from a stale beacon before classifying termination, and a repeat signal landing while the arm is still tearing down, which must still retire the child watcher, record the interrupted cycle row, and release the watcher lock.
 `tests/fm-subagent-pretool-check.test.sh` proves Claude retains only the non-status Bash seatbelts.
