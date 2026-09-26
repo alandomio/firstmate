@@ -11,7 +11,22 @@ TMP_ROOT=$(fm_test_tmproot fm-on)
 # and physicalize macOS's /var -> /private/var alias before transport validation.
 mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
-trap 'if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then kill "$(cat "$TMP_ROOT/remote-jobs/worker.pid")" 2>/dev/null || true; fi; rm -rf -- "$TMP_ROOT"' EXIT
+# Wait for a stopped worker to finish its own lock cleanup before removing the
+# fixture, or rm -rf races the worker still writing into worker.lock.
+cleanup_fixture() {
+  local pid
+  if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then
+    pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill "$pid" 2>/dev/null; then
+      for _ in $(seq 1 100); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.05
+      done
+    fi
+  fi
+  rm -rf -- "$TMP_ROOT"
+}
+trap cleanup_fixture EXIT
 LOCAL_HOME="$TMP_ROOT/local-home"
 REMOTE_ROOT="$TMP_ROOT/remote-root"
 REMOTE_HOME="$TMP_ROOT/remote-home"
