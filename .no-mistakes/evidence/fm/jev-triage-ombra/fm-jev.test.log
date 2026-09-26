@@ -1,0 +1,14 @@
+ok - off by default: an ambient OPENROUTER_API_KEY neither logs nor calls the network
+ok - a STATE other than the key home's own state never enables Jev
+ok - shadow mode logs presentation, answer and acknowledgement without changing the drain
+ok - only the masked reason and last status line are sent; the key stays off argv and disk
+ok - a timeout skips the wake and pauses Jev until the next day
+ok - HTTP errors, transport errors and a missing cost pause Jev until the next day
+ok - the daily spend cap stops requests and pauses Jev until the next day
+ok - the drain returns immediately while a slow Jev request runs detached
+ok - hooks record steers, decisions and how a turn ended, never its text
+ok - only sends firstmate itself makes count as steers; FM_JEV_OBSERVE=0 senders record nothing
+ok - the report credits named actions to their task's open wakes across drains and shares the rest
+ok - unacknowledged and pre-window wakes stay open, so their steers never spill onto unrelated wakes
+ok - the report computes agreement, wrongly absorbable wakes, go-live criteria and doubtful cases
+bash tests/fm-jev.test.sh  3,10s user 3,33s system 71% cpu 9,055 total

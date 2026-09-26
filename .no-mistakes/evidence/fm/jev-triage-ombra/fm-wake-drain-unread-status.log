@@ -1,0 +1,15 @@
+ok - a note: answer buried under a later routine note: is surfaced with both lines
+ok - already-presented note: lines are not re-surfaced on the next drain
+ok - a brand-new note: after presentation is surfaced without replaying handled lines
+ok - a queued status signal annotates every unread note, not only the newest
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 307093.1790420719.lr87xH
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 307093.1790420719.lr87xH
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 307093.1790420719.lr87xH
+ok - a pending-reply resolution buried under a later note surfaces once and closes OPEN DECISIONS
+ok - unread status over the former byte cap preserves every line
+ok - presentation cursor advances only through its captured endpoint
+ok - a reused task id starts its replacement status log unread at byte zero
+ok - OPEN DECISIONS still folds needs-decision/blocked independently of unread notes
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 312882.1790420722.JAFcgL
+ok - an empty-queue drain preserves routine status for a later signal annotation
+ok - routine working/done lines still print nothing on an empty-queue drain

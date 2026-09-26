@@ -1,0 +1,66 @@
+### 1. status without key (ambient OPENROUTER_API_KEY set) vs with .env key
+Jev shadow triage: off (no OPENROUTER_API_KEY in /tmp/tmp.oVAW8Ea1vk/off/.env)
+spend today: USD 0.000000 of a USD 1 daily cap
+shadow log: /tmp/tmp.oVAW8Ea1vk/off/state/jev/shadow.jsonl
+Jev shadow triage: on (OPENROUTER_API_KEY present in /tmp/tmp.oVAW8Ea1vk/on/.env)
+spend today: USD 0.000000 of a USD 1 daily cap
+shadow log: /tmp/tmp.oVAW8Ea1vk/on/state/jev/shadow.jsonl
+
+### 2. drain output: Jev off vs Jev on (must be identical)
+1790000000	1	signal	task2.status	signal: task2.status: done: PR https://github.com/o/r/pull/7 green
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 387406.1790420854.vDCsBe
+wake annotation: latest wake-EVENT observed at drain, not current state: task2.status: done: PR https://github.com/o/r/pull/7 green, notes in /home/me/wt/report.md
+=> IDENTICAL presentation (recovery-generation nonce normalized)
+off home: state/jev exists? no; curl calls: 0
+
+### 3. request body sent to OpenRouter (masked) and curl argv (key absent?)
+{
+  "model": "typesafe/jev-1.13",
+  "state": {
+    "wake_reason": "signal: task2.status: done: PR <url> green",
+    "worker_last_status": "done: PR <url> green, notes in <path>"
+  },
+  "questions": {
+    "handling": {
+      "type": "choice",
+      "instructions": "A supervisor agent (firstmate) coordinates autonomous coding workers and reports to a human captain. This wake notification just arrived. How must it be handled?",
+      "criteria": {
+        "firstmate": "Firstmate must act: steer, answer, unblock or recover a worker, review or land its work, or otherwise do something beyond acknowledging.",
+        "absorbable": "Routine, duplicate or informational progress with nothing to do: firstmate would only acknowledge it.",
+        "captain": "The captain must hear about it now: a decision only the captain can make, work ready for review, a real failure, a needed credential or login, or anything destructive or security-sensitive."
+      }
+    }
+  }
+}
+-sS -K - --max-time 2 --connect-timeout 2 -H Content-Type: application/json --data-binary @/tmp/tmp.oVAW8Ea1vk/on/state/jev/.body.xGTZJm -o /tmp/tmp.oVAW8Ea1vk/on/state/jev/.resp.E7IQEF -w %{http_code} https://openrouter.ai/api/alpha/decisions
+=> key not in argv
+=> key not in state/
+
+### 4. ack, then shadow log
+total 4
+-rw------- 1 alan alan 502 Sep 26 13:07 shadow.jsonl
+{"ev":"presented","t":1790420855,"id":"1790000000:1","seq":1,"kind":"signal","task":"task2","batch":"guNYFt"}
+{"ev":"jev","t":1790420855,"day":"2026-09-26","id":"1790000000:1","outcome":"classified","choice":"absorbable","confidence":0.83,"probabilities":{"firstmate":0.1,"absorbable":0.83,"captain":0.07},"cost":0.0000196,"ms":6,"model":"typesafe/jev-1.13","reason":"signal: task2.status: done: PR <url> green","status":"done: PR <url> green, notes in <path>"}
+{"ev":"ack","t":1790420855,"through":1}
+
+### 5. report
+Jev shadow report, 2026-09-19T11:07:35Z to 2026-09-26T11:07:35Z
+wakes presented: 1; classified: 1; skipped: 0; not sent: 0; actual handling known: 0
+agreement (absorb vs surface): n/a (0 of 0)
+wrongly absorbable (Jev would absorb, firstmate had to act): 0
+three-way agreement: n/a
+breakdown, Jev answer -> actual handling (absorbable/firstmate/captain/unknown):
+  absorbable: 0/0/0/1
+go-live criteria: zero wrongly absorbable met; agreement at least 90% NOT met; one week of shadow data NOT met (0 days)
+doubtful cases for the captain (1, most important first):
+  1. 2026-09-26T11:07:35Z signal seq 1 task task2: Jev absorbable (0.83), actual unknown (no turn end recorded) | wake: signal: task2.status: done: PR <url> green | worker: done: PR <url> green, notes in <path>
+
+### 6. timeout pauses Jev for the day; wake still presented
+1790000000	1	signal	t3.status	signal: t3.status: working
+wake annotation: latest wake-EVENT observed at drain, not current state: t3.status: working
+Jev shadow triage: on (OPENROUTER_API_KEY present in /tmp/tmp.oVAW8Ea1vk/to/.env)
+spend today: USD 0.000000 of a USD 1 daily cap
+paused until tomorrow: timeout
+shadow log: /tmp/tmp.oVAW8Ea1vk/to/state/jev/shadow.jsonl
+{"ev":"jev","t":1790420856,"day":"2026-09-26","id":"1790000000:1","outcome":"skipped","why":"timeout","detail":"no answer within 2s","reason":"signal: t3.status: working","status":"working"}
+{"ev":"disabled","t":1790420856,"day":"2026-09-26","why":"timeout"}
