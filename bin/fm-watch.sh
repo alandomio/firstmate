@@ -912,13 +912,34 @@ if [ "${BASH_SOURCE[0]}" != "$0" ]; then
   return 0
 fi
 
+# Startup-progress marker, touched before the pre-lock migration scan below
+# rather than only once this process holds the watcher lock. Under a large
+# fleet that scan can take well over ten seconds (private hashing across every
+# registered check), and until this marker existed a slow-but-healthy scan gave
+# bin/fm-watch-arm.sh no evidence at all - lock_before=pid:none the whole time
+# - so its confirmation wait had nothing to honor but a flat timeout.
+# Deliberately a SEPARATE file from state/.last-watcher-beat, never that shared
+# beacon itself: this process has not taken the lock yet and may never become
+# the watcher (a failed migration scan exits before ever trying), so touching
+# the authoritative beacon here could make a model whose supervision verdict
+# trusts a fresh beacon alone (docs/watcher-continuity.md's autoarm model) read
+# "healthy" while no watcher exists at all. Only the lock-holding watcher's own
+# beacon touch inside the main loop below is authoritative for fm_watcher_healthy
+# and everything that depends on it; this marker is read by nothing else.
+touch "$STATE/.watch-starting-beat" 2>/dev/null || true
+
 # Before acquiring the watcher lock or enumerating any runnable check, replace
 # or quarantine checks created by older versions. The migration compares bytes
 # and reads data only; it never invokes legacy check files through Bash.
-"$SCRIPT_DIR/fm-pr-check-migrate.sh" --checks-safe || {
+# FM_PR_CHECK_MIGRATE_OVERRIDE is a test-only seam (tests/fm-watch-arm.test.sh)
+# for simulating a slow scan; it is never set in production.
+PR_CHECK_MIGRATE=${FM_PR_CHECK_MIGRATE_OVERRIDE:-$SCRIPT_DIR/fm-pr-check-migrate.sh}
+scan_started_at=$(date +%s)
+"$PR_CHECK_MIGRATE" --checks-safe || {
   echo "watcher: PR check migration blocked; refusing to execute state checks" >&2
   exit 1
 }
+scan_ended_at=$(date +%s)
 
 if ! fm_lock_try_acquire "$WATCH_LOCK"; then
   BEAT="$STATE/.last-watcher-beat"
@@ -989,6 +1010,7 @@ printf '%s\n' "$WATCH_PATH" > "$WATCH_LOCK/watcher-path" || true
 FM_WATCH_DELIVERY_PID=$WATCHER_PID
 FM_WATCH_DELIVERY_IDENTITY=$(fm_pid_identity "$WATCHER_PID" 2>/dev/null || true)
 printf '%s\n' "$FM_WATCH_DELIVERY_IDENTITY" > "$WATCH_LOCK/pid-identity" 2>/dev/null || true
+lock_acquired_at=$(date +%s)
 
 [ -e "$STATE/.last-heartbeat" ] || touch "$STATE/.last-heartbeat"
 
@@ -1018,6 +1040,14 @@ resurface_after_downtime() {
   fi
   wake "check: rearm-resurface"
 }
+
+# Startup durations for the diagnosability bin/fm-watch-arm.sh folds into its
+# lifecycle ledger (state/.watch-cycle-exits.log): scan-secs is the pre-lock
+# migration scan above, lock-secs the recovery-marker bookkeeping between
+# acquiring the lock and reaching this loop. Best-effort only, read once by the
+# arm that forked this process while confirming it; never touched again.
+printf '%s\n' "$(( scan_ended_at - scan_started_at ))" > "$WATCH_LOCK/startup-scan-secs" 2>/dev/null || true
+printf '%s\n' "$(( $(date +%s) - lock_acquired_at ))" > "$WATCH_LOCK/startup-lock-secs" 2>/dev/null || true
 
 while :; do
   # Self-eviction: if the singleton lock no longer names this process, a second
