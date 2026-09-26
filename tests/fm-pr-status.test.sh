@@ -17,14 +17,17 @@ SCRIPT="$ROOT/bin/fm-pr-status.sh"
 TMP_ROOT=$(fm_test_tmproot fm-pr-status)
 
 # A fake glab that answers `api projects/.../merge_requests/<iid>` from
-# FM_TEST_MR_JSON and the `.../pipelines?per_page=30` lookup from
-# FM_TEST_PIPELINES_JSON, so each case drives fixed fixture bytes with no
-# network and no real GitLab host. Every api path it is asked for is appended to
-# FM_TEST_GLAB_LOG, so a case can assert which project path was actually
-# requested - the observable effect of shortname resolution - and that an
-# unresolved shortname produced no request at all. FM_TEST_GLAB_RC lets a case
-# drive a non-zero glab exit, and FM_TEST_GLAB_PIPELINES_RC one for the
-# pipelines call alone.
+# FM_TEST_MR_JSON, the `.../pipelines?per_page=30` lookup from
+# FM_TEST_PIPELINES_JSON, the `.../approvals` read from FM_TEST_APPROVALS_JSON,
+# and the bare `projects/<path>` read from FM_TEST_PROJECT_JSON, so each case
+# drives fixed fixture bytes with no network and no real GitLab host. The last
+# two default to "nobody approved, none required" and "CI enabled, pipelines
+# must succeed" so a case about something else need not spell them out. Every
+# api call's arguments are appended to FM_TEST_GLAB_LOG, so a case can assert
+# which project path and host were actually requested - the observable effect
+# of shortname and URL resolution - and that an unresolved shortname produced
+# no request at all. FM_TEST_GLAB_RC lets a case drive a non-zero glab exit,
+# and FM_TEST_GLAB_PIPELINES_RC one for the pipelines call alone.
 make_case() {
   local case_dir="$TMP_ROOT/$1" fakebin
   mkdir -p "$case_dir"
@@ -32,11 +35,18 @@ make_case() {
   cat > "$fakebin/glab" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = api ]; then
-  [ -n "${FM_TEST_GLAB_LOG:-}" ] && printf '%s\n' "${2:-}" >> "$FM_TEST_GLAB_LOG"
-  case "${2:-}" in
+  shift
+  [ -n "${FM_TEST_GLAB_LOG:-}" ] && printf '%s\n' "$*" >> "$FM_TEST_GLAB_LOG"
+  case "${1:-}" in
     *pipelines*) cat "${FM_TEST_PIPELINES_JSON:-/dev/null}"
                  exit "${FM_TEST_GLAB_PIPELINES_RC:-${FM_TEST_GLAB_RC:-0}}" ;;
-    *)           cat "${FM_TEST_MR_JSON:-/dev/null}" ;;
+    */approvals)
+      if [ -n "${FM_TEST_APPROVALS_JSON:-}" ]; then cat "$FM_TEST_APPROVALS_JSON"
+      else printf '{"approved":true,"approvals_required":0,"approvals_left":0,"approved_by":[]}'; fi ;;
+    */merge_requests/*) cat "${FM_TEST_MR_JSON:-/dev/null}" ;;
+    *)
+      if [ -n "${FM_TEST_PROJECT_JSON:-}" ]; then cat "$FM_TEST_PROJECT_JSON"
+      else printf '{"id":7,"jobs_enabled":true,"builds_access_level":"enabled","only_allow_merge_if_pipeline_succeeds":true}'; fi ;;
   esac
 fi
 exit "${FM_TEST_GLAB_RC:-0}"
@@ -56,6 +66,8 @@ run_case() {
     FM_TEST_GLAB_LOG="${FM_TEST_GLAB_LOG:-}" \
     FM_TEST_GLAB_RC="${FM_TEST_GLAB_RC:-0}" \
     FM_TEST_GLAB_PIPELINES_RC="${FM_TEST_GLAB_PIPELINES_RC:-}" \
+    FM_TEST_APPROVALS_JSON="${FM_TEST_APPROVALS_JSON:-}" \
+    FM_TEST_PROJECT_JSON="${FM_TEST_PROJECT_JSON:-}" \
     FM_PROJECTS_OVERRIDE="${FM_PROJECTS_OVERRIDE:-}" \
     "$SCRIPT" "$@"
 }
@@ -77,7 +89,7 @@ cat > "$case_a/pipelines.json" <<'JSON'
 JSON
 out=$(run_case "$case_a" "$case_a/mr.json" "$case_a/pipelines.json" g/a!1)
 assert_contains "$out" "green(head)" "green(head): a run on the real head is reported"
-assert_contains "$out" " ok " "zero-approvals-required: mergeable status reports ok, not NOT-APPROVED"
+assert_contains "$out" "approval=not-required" "zero-approvals-required: nobody approved and none required reads not-required, not NOT-APPROVED"
 assert_not_contains "$out" "NOT-APPROVED" "zero-approvals-required: the approved:false flag alone must not drive the verdict"
 pass "case A: green(head) verdict and zero-approvals-required mergeable status"
 
@@ -113,7 +125,7 @@ cat > "$case_c/pipelines.json" <<'JSON'
 JSON
 out=$(run_case "$case_c" "$case_c/mr.json" "$case_c/pipelines.json" g/c!3)
 assert_contains "$out" "manual(head)" "manual(head): a head run blocked on manual jobs is not reported as passed"
-assert_contains "$out" "CONFLICTS" "a real conflict is surfaced in the notes"
+assert_contains "$out" "conflicts=YES" "a real conflict is surfaced in its own column"
 pass "case C: manual(head) verdict and a real conflict"
 
 # --- fixture D: badge is a merge-result run and it failed; nothing ever ran
@@ -161,7 +173,7 @@ cat > "$case_f/mr.json" <<'JSON'
  "head_pipeline":{"sha":"ffffffff1111","status":"success"}}
 JSON
 out=$(run_case "$case_f" "$case_f/mr.json" "" g/f!6)
-assert_contains "$out" "MERGED" "an already-merged request reports MERGED"
+assert_contains "$out" " merged " "an already-merged request reports merged"
 pass "case F: a merged merge request short-circuits to MERGED"
 
 # --- fixture G: a raw control character in MR text must not break parsing -
@@ -580,7 +592,7 @@ advertised=$(printf '%s\n' "$help" \
 
 # Every verdict the tool actually prints, taken from the verdict column of the
 # rows the verdict fixtures above produce.
-verdict_of() { printf '%s\n' "$1" | awk 'NF {print $4}'; }
+verdict_of() { printf '%s\n' "$1" | awk 'NF {sub(/^ci=/, "", $4); print $4}'; }
 printed=$(
   { verdict_of "$(run_case "$case_a" "$case_a/mr.json" "$case_a/pipelines.json" g/a!1)"
     verdict_of "$(run_case "$case_b" "$case_b/mr.json" "$case_b/pipelines.json" g/b!2)"
@@ -602,3 +614,119 @@ emitted=$(run_case "$case_a" "$case_a/mr.json" "$case_a/pipelines.json" g/a!1 | 
 [ "$documented" = "$emitted" ] || fail \
   "--help documents $documented mandatory output columns but a notes-free row emits $emitted fields"
 pass "case AC: --help describes the verdicts and columns the tool really emits"
+
+# A green open merge request on the real head, shared by the cases below that
+# are about something other than the pipeline verdict.
+write_green_mr() {  # <file> <iid>
+  cat > "$1" <<JSON
+{"iid":$2,"state":"opened","draft":false,"work_in_progress":false,
+ "sha":"abcd0000$2","target_branch":"release/2.x","detailed_merge_status":"mergeable",
+ "approved":true,"approved_by":[],"has_conflicts":false,"merged_at":null,
+ "head_pipeline":{"sha":"abcd0000$2","status":"success","source":"push","ref":"feature/x"}}
+JSON
+}
+
+# --- fixture AD: a full merge request URL on a self-hosted instance. Its host
+# must be the one every read goes to, so glab's configured default host never
+# answers for a different instance, and the target branch is reported. ------
+case_ad=$(make_case ad)
+write_green_mr "$case_ad/mr.json" 30
+printf '[{"id":1,"sha":"abcd000030","ref":"feature/x","status":"success","source":"push"}]' \
+  > "$case_ad/pipelines.json"
+: > "$case_ad/glab.log"
+out=$(FM_TEST_GLAB_LOG="$case_ad/glab.log" run_case "$case_ad" "$case_ad/mr.json" "$case_ad/pipelines.json" \
+  https://git.example.org/acme/tools/widget/-/merge_requests/30); rc=$?
+expect_code 0 "$rc" "a fully readable URL row exits cleanly"
+assert_contains "$out" "widget!30" "the URL's project is reported under its own name"
+assert_contains "$out" "into=release/2.x" "the target branch is reported"
+assert_contains "$out" "ci=green(head)" "a URL row gets the same head verdict"
+assert_grep "projects/acme%2Ftools%2Fwidget/merge_requests/30 --hostname git.example.org" "$case_ad/glab.log" \
+  "the merge request is read from the URL's own host"
+assert_grep "projects/acme%2Ftools%2Fwidget --hostname git.example.org" "$case_ad/glab.log" \
+  "the project settings are read from the URL's own host"
+[ "$(grep -c -v -- '--hostname git.example.org' "$case_ad/glab.log")" = 0 ] \
+  || fail "every read for a URL row must name the URL's host"
+pass "case AD: a full URL is read from its own host and reports the target branch"
+
+# --- fixture AE: a URL that is not a GitLab merge request is refused before
+# any read, rather than guessed at. -----------------------------------------
+case_ae=$(make_case ae)
+: > "$case_ae/glab.log"
+out=$(FM_TEST_GLAB_LOG="$case_ae/glab.log" run_case "$case_ae" "" "" \
+  https://github.com/acme/widget/pull/3 2>&1); rc=$?
+expect_code 1 "$rc" "a non-GitLab URL fails the run"
+assert_contains "$out" "not a GitLab merge request URL" "the refusal names what was expected"
+[ ! -s "$case_ae/glab.log" ] || fail "a refused URL must not reach glab"
+pass "case AE: a GitHub pull request URL is refused without a read"
+
+# --- fixture AF: approvals. "approved" and "no approval required" look the
+# same through detailed_merge_status=mergeable, so the approvals read has to
+# tell them apart, and each other outcome keeps its own name. --------------
+case_af=$(make_case af)
+write_green_mr "$case_af/mr.json" 31
+printf '[{"id":1,"sha":"abcd000031","ref":"feature/x","status":"success","source":"push"}]' \
+  > "$case_af/pipelines.json"
+approval_of() {  # <approvals-json> [<detailed_merge_status>]
+  printf '%s' "$1" > "$case_af/approvals.json"
+  if [ -n "${2:-}" ]; then
+    sed "s/\"mergeable\"/\"$2\"/" "$case_af/mr.json" > "$case_af/mr-dms.json"
+  else
+    cp "$case_af/mr.json" "$case_af/mr-dms.json"
+  fi
+  FM_TEST_APPROVALS_JSON="$case_af/approvals.json" \
+    run_case "$case_af" "$case_af/mr-dms.json" "$case_af/pipelines.json" g/af!31
+}
+out=$(approval_of '{"approved":true,"approvals_left":0,"approved_by":[{"user":{"username":"a"}},{"user":{"username":"b"}}]}')
+assert_contains "$out" "approval=approved(2)" "two sign-offs with none left read approved(2)"
+out=$(approval_of '{"approved":true,"approvals_required":0,"approvals_left":0,"approved_by":[]}')
+assert_contains "$out" "approval=not-required" "no sign-off and none required reads not-required, never approved"
+assert_not_contains "$out" "approved(" "an approved:true flag with an empty approved_by is not an approval"
+out=$(approval_of '{"approved":false,"approvals_required":2,"approvals_left":1,"approved_by":[{"user":{"username":"a"}}]}' not_approved)
+assert_contains "$out" "approval=NOT-APPROVED(1-left)" "a still-required approval is reported with how many are left"
+out=$(approval_of '{"approved":true,"approved_by":[{"user":{"username":"a"}}]}' not_approved)
+assert_contains "$out" "approval=NOT-APPROVED" "detailed_merge_status=not_approved wins over a partial sign-off"
+out=$(approval_of '{"approved":false,"approved_by":[]}' ci_must_pass)
+assert_contains "$out" "approval=none-given" "no sign-off with an unknown requirement is not claimed as not-required"
+out=$(approval_of 'not json'); rc=$?
+assert_contains "$out" "approval=UNVERIFIED" "an unreadable approvals read makes no approval claim"
+expect_code 1 "$rc" "an unreadable approvals read fails the run"
+out=$(approval_of 'not json' not_approved)
+assert_contains "$out" "approval=NOT-APPROVED" "not_approved is still reported when the approvals read fails"
+assert_contains "$out" "merge=not_approved" "detailed_merge_status is reported verbatim"
+pass "case AF: approvals distinguish approved, not required, still required, and unreadable"
+
+# --- fixture AG: the project's own CI settings. A project whose builds are
+# disabled can never produce a pipeline, "Pipelines must succeed" is shown as
+# set, and a project that cannot be read makes no claim either way. The
+# project is read once for consecutive rows of the same project. -----------
+case_ag=$(make_case ag)
+write_green_mr "$case_ag/mr.json" 32
+printf '[{"id":1,"sha":"abcd000032","ref":"feature/x","status":"success","source":"push"}]' \
+  > "$case_ag/pipelines.json"
+printf '{"id":9,"jobs_enabled":true,"builds_access_level":"disabled","only_allow_merge_if_pipeline_succeeds":false}' \
+  > "$case_ag/project.json"
+: > "$case_ag/glab.log"
+out=$(FM_TEST_GLAB_LOG="$case_ag/glab.log" FM_TEST_PROJECT_JSON="$case_ag/project.json" \
+  run_case "$case_ag" "$case_ag/mr.json" "$case_ag/pipelines.json" --repo g/ag 32 32)
+assert_contains "$out" "jobs=DISABLED" "builds_access_level=disabled reports CI as disabled even with jobs_enabled=true"
+assert_contains "$out" "must-succeed=no" "an unset Pipelines must succeed is reported as no"
+[ "$(grep -c '^projects/g%2Fag$' "$case_ag/glab.log")" = 1 ] \
+  || fail "consecutive rows of one project must read its settings once"
+out=$(run_case "$case_ag" "$case_ag/mr.json" "$case_ag/pipelines.json" g/ag!32)
+assert_contains "$out" "jobs=enabled must-succeed=yes" "an enabled project with the setting on reports both"
+printf '{"message":"404 Project Not Found"}' > "$case_ag/project-err.json"
+out=$(FM_TEST_PROJECT_JSON="$case_ag/project-err.json" \
+  run_case "$case_ag" "$case_ag/mr.json" "$case_ag/pipelines.json" g/ag!32); rc=$?
+assert_contains "$out" "jobs=? must-succeed=?" "an unreadable project makes no CI-settings claim"
+expect_code 1 "$rc" "an unreadable project fails the run"
+pass "case AG: project CI capability and Pipelines must succeed are reported, or ? when unread"
+
+# --- fixture AH: a merged merge request still names its target branch. -----
+case_ah=$(make_case ah)
+cat > "$case_ah/mr.json" <<'JSON'
+{"iid":33,"state":"merged","sha":"abcd000033","target_branch":"main",
+ "merged_at":"2026-09-01T10:00:00Z","head_pipeline":null}
+JSON
+out=$(run_case "$case_ah" "$case_ah/mr.json" "" g/ah!33)
+assert_contains "$out" "merged  into=main on=2026-09-01" "a merged row names its target branch and date"
+pass "case AH: a merged merge request reports its target branch"
