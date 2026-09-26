@@ -61,8 +61,8 @@
 # findings instead go through the note: CANDIDATE status line (Rule 4;
 # AGENTS.md section 6) for firstmate to route.
 # Ship and scout briefs include a Grounding section requiring a search of the
-# configured knowledge store (config/knowledge-store; absent defaults to the
-# RAG's query_rag_hybrid/query_rag tool on rag_qdrant_server, byte-identical to
+# configured knowledge store (config/knowledge-store, resolved by
+# bin/fm-knowledge-store-lib.sh; absent defaults to the RAG, byte-identical to
 # this script's historical wording) and the local memory store before the
 # first substantive action, a repeated search whenever a later obstacle or
 # subject comes up since latency is the only cost, a check of the configured
@@ -186,29 +186,16 @@ fi
 PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 
 # Grounding wording is named by this home's optional config/knowledge-store
-# (docs/configuration.md): line 1 is the store's name as it reads in worker
-# text, line 2 is the search-instructions clause inserted in parentheses after
-# it. A NONEXISTENT file keeps this script's historical upstream wording, so
-# every home without the file gets a byte-identical brief; a PRESENT file
-# (including a 0-byte one) that lacks either line is refused, since a silent
-# default there would be exactly the unfollowable-instruction failure this
-# setting exists to prevent. The existence check must not be a non-empty
-# check (`-s`): a 0-byte file must hit the same refusal as a one-line file,
-# not silently fall back to the default.
-KS_NAME="the RAG"
-# shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
-KS_INSTRUCTIONS='`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none'
-KS_FILE="$FM_HOME/config/knowledge-store"
-if [ -f "$KS_FILE" ]; then
-  ks_name_line=$(sed -n '1p' "$KS_FILE")
-  ks_instructions_line=$(sed -n '2p' "$KS_FILE")
-  if [ -z "$ks_name_line" ] || [ -z "$ks_instructions_line" ]; then
-    echo "error: $KS_FILE must have the store name on line 1 and search instructions on line 2" >&2
-    exit 1
-  fi
-  KS_NAME=$ks_name_line
-  KS_INSTRUCTIONS=$ks_instructions_line
+# (docs/configuration.md): bin/fm-knowledge-store-lib.sh owns reading it, the
+# absent-file default, and the refusal of a present but malformed file.
+# shellcheck source=bin/fm-knowledge-store-lib.sh
+. "$SCRIPT_DIR/fm-knowledge-store-lib.sh"
+if ! fm_knowledge_store_read "$FM_HOME/config"; then
+  echo "error: $FM_KS_ERROR" >&2
+  exit 1
 fi
+KS_NAME=$FM_KS_NAME
+KS_INSTRUCTIONS=$FM_KS_INSTRUCTIONS
 
 # A needs-decision line is the source firstmate relays to the captain, so every
 # scaffold asks for the decision-card elements owned by captain-hold-lifecycle.

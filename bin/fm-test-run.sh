@@ -140,7 +140,7 @@ family_for_basename() {
     fm-composer-ghost.test.sh|fm-composer-lib.test.sh|\
     fm-crew-state.test.sh|fm-captain-hold-lifecycle.test.sh|\
     fm-documentation-audiences.test.sh|fm-ensure-agents-md.test.sh|fm-grok-harness.test.sh|\
-    fm-kimi-harness.test.sh|fm-muse-harness.test.sh|fm-herdr-lab.test.sh|fm-lint.test.sh|\
+    fm-kimi-harness.test.sh|fm-knowledge-store.test.sh|fm-muse-harness.test.sh|fm-herdr-lab.test.sh|fm-lint.test.sh|\
     fm-lint-workflows.test.sh|\
     fm-operational-input.test.sh|fm-pal-council.test.sh|fm-pi-primary-types.test.sh|\
     fm-send-popup-settle.test.sh|fm-send-settle.test.sh|\
@@ -428,6 +428,7 @@ tests/fm-herdr-submit-confirm-live-e2e.test.sh 20
 tests/fm-herdr-version-floor-live-e2e.test.sh 20
 tests/fm-inactive-reconcile.test.sh 41671
 tests/fm-kimi-harness.test.sh 15092
+tests/fm-knowledge-store.test.sh 120
 tests/fm-lint-workflows.test.sh 744
 tests/fm-muse-harness.test.sh 27414
 tests/fm-muse-signals-live-e2e.test.sh 21
