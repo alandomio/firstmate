@@ -96,6 +96,7 @@ validate_payload() {  # <data.json>
       and (optional_string("about"))
       and (optional_string("decide"))
       and (optional_string("detail"))
+      and (optional_string("recommend_reason"))
       and (optional_https_url("pr_url"))
       and (optional_string("freeform_hint"))
       and ((has("close") | not) or (.close == "done" or .close == "release"))

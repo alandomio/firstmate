@@ -79,7 +79,16 @@ Compose the payload from the same snapshot with the same ranking judgment as the
 
 - A Captain's Call decision key is the captain-held TASK ID from `decisions_open` (legacy `<origin>-decision-<key>` rows are already task ids); a merge card's key is `merge.<task-id>`; the Charted Next dispatch picker's key is `dispatch.charted`.
 - Compose exactly one decision card per captain-held task id. When one task carries multiple questions, consolidate all of them and their options into that card; never emit duplicate cards with the same task-id key.
-- Decision cards carry agent-authored copy in the decision-card shape `captain-hold-lifecycle` owns: a short noun-phrase title naming the subject in words, an `about` row saying what is decided on which project and why it matters now, a `decide` row carrying the question, the recommendation and its reason, and the link, and option labels whose hints state each option's concrete consequence, with the recommended option marked.
+- Decision cards carry the decision card `captain-hold-lifecycle` owns, mapped onto the board fields:
+  - `title` names the subject in words, never an internal key.
+  - `about` says what is being decided, on which project or customer, and why it matters.
+  - `detail` says what happens if nobody decides, plus any fact the choice depends on; write other links such as a ticket or report as full URLs or paths here.
+  - `decide` asks the question in plain words.
+  - Each option's `label` names the choice and its `hint` states the concrete consequence of choosing it.
+  - `recommend_value` marks the recommended option and `recommend_reason` says why.
+  - `pr_url` carries the full PR or MR URL when there is one.
+- Merge cards likewise say, in `title` and `detail`, what the PR changes in the captain's terms and its concrete risk, with `pr_url` set.
+- Acceptance test for every card: the captain can decide from the card text alone, without opening a report, knowing an internal id, or remembering earlier conversation. Never leave an acronym, task id, option letter, finding id, or internal code such as "D1", "R2", or "option b" unexplained; name what each one is. When the snapshot's reason is too terse to pass, expand it from the task record and its linked report or PR as in step 1.
 - Card `type` (decision, merge, credential) is your composing judgment from the row's content; no backlog field types a card for you.
 - When the card's task is a captain-gated WORK item (the answer should free it to proceed rather than complete it), set the card's `close: "release"` so the answer lifts the hold instead of closing the task; question-shaped items omit it.
 - Every Captain's Call item and every Underway, Recently Landed, and Charted Next row carries an explicit `repo` field. Fill it from the snapshot and task records wherever known; use null or an empty string only as the deliberate genuinely-no-repo marker, in which case the template may show the internal id. Ids otherwise stay in the payload only as the routing channel, and composed reasons name blockers in plain words.

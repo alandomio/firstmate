@@ -22,7 +22,8 @@
 // lose-the-bridge-after-a-success sequence on a Captain's Call card.
 // Prints one JSON line: {"isQueued":bool,"errorVisible":bool,"errorText":str,"queueCalls":n}
 // (decision modes also report stackText, the deck header's card/answered
-// label, plus hasFreeform and the text handed to queuePrompt), where
+// label, plus hasFreeform, the text handed to queuePrompt, cardTexts - every
+// non-empty text the first card shows - and linkHrefs, its link targets), where
 // errorVisible/errorText read the role="alert" .bb-limit element of the
 // surface under test.
 
@@ -194,6 +195,9 @@ if (mode === "decision" || mode === "decision-lost" || mode === "decision-repick
     hasFreeform: Boolean(freeform),
     queuedText: queueCalls.length ? String(queueCalls[queueCalls.length - 1][0]) : "",
     queueCalls: queueCalls.length,
+    cardTexts: findAll(card, (n) => !n.hidden && typeof n.textContent === "string" && n.textContent !== "")
+      .map((n) => n.textContent),
+    linkHrefs: findAll(card, (n) => n.tagName === "A").map((n) => n.href),
   });
 } else if (mode === "dispatch" || mode === "dispatch-regained" || mode === "dispatch-lost" ||
            mode === "dispatch-repick") {

@@ -602,6 +602,54 @@ test_an_option_less_card_is_built_and_answerable_through_its_freeform_box() {
   pass "an option-less card is built and answerable through its freeform box"
 }
 
+# A decision card must let the captain judge the call from its text alone, so
+# every decision-card element the composer supplies has to reach the page:
+# the stakes, the question, each option's consequence, the recommendation's
+# reason, and the PR link.
+test_a_decision_card_shows_every_decision_card_element() {
+  local home data rc out
+  home=$(make_home fullcard)
+  data="$home/payload.json"
+  write_dom_decision_payload "$data"
+  jq '.captains_call[0] += {
+        "about": "Whether the sample project keeps nightly exports",
+        "detail": "If nobody decides, exports keep failing every night",
+        "decide": "Keep nightly exports?",
+        "recommend_value": "yes",
+        "recommend_reason": "customers read the export each morning",
+        "pr_url": "https://github.com/example/sample/pull/7"
+      }
+      | .captains_call[0].options[0].hint = "exports resume tonight"
+      | .captains_call[0].options[1].hint = "exports stop for good"' \
+    "$data" > "$data.full"
+  set +e; out=$(run_board "$home" build "$data.full" 2>&1); rc=$?; set -e
+  [ "$rc" -eq 0 ] || fail "a decision card carrying every card element was refused: $out"
+
+  command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
+  local runtime texts want
+  runtime="$TMP_ROOT/full-card-runtime.js"
+  extract_runtime_script "$ROOT/.agents/skills/bearings/assets/board-template.html" "$runtime"
+  out=$(node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$data.full" 1 decision 2>&1) \
+    || fail "the DOM harness crashed on a full decision card: $out"
+  texts=$(printf '%s' "$out" | jq -r '.cardTexts[]')
+  for want in "Whether the sample project keeps nightly exports" \
+    "If nobody decides, exports keep failing every night" \
+    "Keep nightly exports?" \
+    "customers read the export each morning" \
+    "exports resume tonight" \
+    "exports stop for good"; do
+    printf '%s\n' "$texts" | grep -Fxq -- "$want" \
+      || fail "the decision card did not show '$want': $out"
+  done
+  [ "$(printf '%s' "$out" | jq -r '.linkHrefs | index("https://github.com/example/sample/pull/7") != null')" = "true" ] \
+    || fail "the decision card did not link its PR: $out"
+
+  jq '.captains_call[0].recommend_reason = 7' "$data.full" > "$data.badreason"
+  set +e; out=$(run_board "$home" build "$data.badreason" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a non-string recommend_reason was accepted: $out"
+  pass "a decision card shows every decision-card element"
+}
+
 # A bridge that takes the call and then throws is as lossy as one that was
 # never there, so both surfaces must refuse rather than claim a queued answer.
 test_a_throwing_bridge_is_refused_like_a_missing_one() {
@@ -691,5 +739,6 @@ test_dispatch_bar_clears_a_stale_refusal_once_the_bridge_returns
 test_decision_card_drops_its_queued_mark_when_a_later_answer_is_refused
 test_dispatch_bar_drops_its_queued_mark_when_a_later_dispatch_is_refused
 test_an_option_less_card_is_built_and_answerable_through_its_freeform_box
+test_a_decision_card_shows_every_decision_card_element
 test_a_throwing_bridge_is_refused_like_a_missing_one
 test_changing_the_selection_drops_a_stale_queued_mark
