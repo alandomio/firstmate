@@ -38,6 +38,9 @@
 # idempotent; a task already closed is refused rather than reopened. `--until`
 # records the captain's own deferral date through `tasks-axi hold --until`, so
 # a "revisit later" answer is stored as a date instead of a live card.
+# The --reason is the decision card the policy skill owns - what is decided on
+# which project, why it matters now, options with their consequences, the
+# recommendation, and the link - on one line with no parentheses.
 #
 # `answer` records the captain's exact words and closes the call in the same
 # act. It requires a non-empty captain decision file of at most 8192 bytes,

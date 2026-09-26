@@ -2,7 +2,7 @@
 name: captain-hold-lifecycle
 description: >-
   Agent-only policy for completing investigations and visual reviews without losing unresolved captain calls, and for closing what the captain owns with his actual words.
-  Load before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer, and on any RECORD DIVERGENCE line the wake drain prints.
+  Load before holding a task for the captain, before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer, and on any RECORD DIVERGENCE line the wake drain prints.
 user-invocable: false
 metadata:
   internal: true
@@ -18,7 +18,7 @@ The agent performs the semantic inventory because scripts must not infer captain
 
 Every unresolved question that belongs to the captain and is discovered while producing, reading, presenting, or ending an investigation or visual review must be carried by a captain-held task in the authoritative backlog of the home that owns the originating work before that work or review may be treated as complete.
 Prefer holding the work item the question gates over minting a new row; create a new task only when no work item exists to hold.
-Put the question and its options in the hold reason, and keep one held task per genuine gate: a multi-question review is one held task pointing at its report, not a row per question. Represent that task with exactly one board card that consolidates its questions and options; never fan one task id into duplicate same-key cards.
+Write the hold reason as the decision card below, and keep one held task per genuine gate: a multi-question review is one held task pointing at its report, not a row per question. Represent that task with exactly one board card that consolidates its questions and options; never fan one task id into duplicate same-key cards.
 Register or re-hold through `bin/fm-captain-hold.sh hold`, which is idempotent per task id.
 After inventorying the whole report and review surface, run `bin/fm-captain-hold.sh complete` with every captain-held task id, or with `--none` only when the reviewed surface leaves nothing waiting on the captain.
 A completed investigation and an ended visual review use this same owner and completion command; a visual tool, including Lavish, never owns a parallel completion policy.
@@ -40,13 +40,30 @@ Read such a line as "these two records disagree", never as "the captain ruled an
 Reconcile it with what actually happened - `answer` when the captain's own words exist to record, and a fresh `needs-decision` line re-opening the status decision when that resolution was not the captain's word.
 The absence of a routed work item is not a divergence and the guard never requires one: when the decision IS the deliverable there is nothing to route.
 
+## Decision card
+
+The captain must be able to judge a call from its card alone, without opening the originating work or knowing its internal names.
+This section is the one owner of that shape; every surface that records or presents a captain call - the hold reason, a Bearings Captain's Call entry, a board card, a chat relay - carries the same elements in plain language:
+
+- **What and where** - what is being decided and on which project.
+- **Why now** - why it needs deciding and what happens, or stays stuck, if nobody decides.
+- **Options** - each option with its concrete consequence, not a bare label.
+- **Recommendation** - the option you recommend and the reason.
+- **Link** - the full URL or path of the PR or MR, ticket, or report that holds the detail.
+
+Never show an internal key, task id, finding id, or shorthand such as "D1-D8", "option b", or "hold on X" without saying what it stands for.
+A multi-question card names each question in words and points at the report for the full reasoning rather than listing bare question numbers.
+The hold reason must stay one line with no parentheses, the `tasks-axi hold` contract; separate the elements with semicolons or dashes.
+When the full card will not fit comfortably on one line, put it at the top of the linked report and keep a shorter card in the reason that still names every element.
+A terse, cryptic, or truncated reason is a defect to repair: expand it from the linked report or PR and re-hold the task with the full card, which `hold` accepts idempotently.
+
 ## Operating sequence
 
 1. Read the complete investigation result and complete the visual review before declaring either complete.
 2. Inventory only genuine unresolved choices that require the captain, and find the task each one gates.
-3. Hold that task - or create one captain-held task for the review's open questions - with a concise reason carrying the question and options.
+3. Hold that task - or create one captain-held task for the review's open questions - with a reason written as the decision card above.
 4. Run `complete` with the full captain-held inventory for that review pass.
-5. Relay the choices to the captain as decisions from Bearings' Captain's Call section under `AGENTS.md` section 9; do not use the word hold in captain chat.
+5. Relay the choices to the captain as decision cards from Bearings' Captain's Call section under `AGENTS.md` section 9; do not use the word hold in captain chat.
 6. Close each call only through `answer` (or a channel that feeds `answers`), through `--until` when the captain defers it, or confirm a channel already closed it.
 7. Confirm Bearings reflects the outcome: answered calls leave Captain's Call, released work resumes, and deferred calls sit in Charted Next with their date.
 

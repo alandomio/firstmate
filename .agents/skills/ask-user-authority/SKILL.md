@@ -45,6 +45,8 @@ State all five of these elements in one concise, evidence-first escalation:
 4. The concrete consequences of accepting and declining the expansion.
 5. A recommendation with the reason it best serves the accepted intent.
 
+Shape it as the decision card `captain-hold-lifecycle` owns, so the project, the cost of not deciding, and the link to the PR or MR travel with it.
+
 Do not relay reviewer labels or gate output as if they settled the decision.
 
 ## Classification examples
