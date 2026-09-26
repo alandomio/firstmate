@@ -782,8 +782,11 @@ done
 assert_present "$TRIPWIRE_STATE/worker.ready" "the state-root tripwire worker did not become ready"
 # The reap sweep re-prepares the state tree, so a worker whose root is deleted
 # must fail fast on its heartbeat before that sweep can silently recreate an
-# unowned tree and leave two workers serving one queue.
-rm -rf -- "$TRIPWIRE_STATE"
+# unowned tree and leave two workers serving one queue. Renaming the root away
+# deletes the path atomically: an in-place rm -rf races the live worker's
+# heartbeat, which can drop a fresh temp file into the half-removed directory,
+# fail the rm with "Directory not empty", and leave the root in place.
+mv -- "$TRIPWIRE_STATE" "$TMP_ROOT/tripwire-jobs.deleted"
 for _ in $(seq 1 200); do
   kill -0 "$TRIPWIRE_WORKER_PID" 2>/dev/null || break
   sleep 0.05
