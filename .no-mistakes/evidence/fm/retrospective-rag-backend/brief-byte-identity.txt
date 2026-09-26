@@ -1,0 +1,9 @@
+# fm-brief.sh generated brief + stdout/exit, base b2696a7 vs target a159875, per config/knowledge-store variant
+config=absent mode=ship brief_bytes=9093 exit=rc=0 base-vs-target: IDENTICAL
+config=absent mode=scout brief_bytes=6790 exit=rc=0 base-vs-target: IDENTICAL
+config=pp-brain mode=ship brief_bytes=9038 exit=rc=0 base-vs-target: IDENTICAL
+config=pp-brain mode=scout brief_bytes=6734 exit=rc=0 base-vs-target: IDENTICAL
+config=pp-brain-line3 mode=ship brief_bytes=9002 exit=rc=0 base-vs-target: IDENTICAL
+config=pp-brain-line3 mode=scout brief_bytes=6698 exit=rc=0 base-vs-target: IDENTICAL
+config=malformed mode=ship brief_bytes=0 exit=rc=1 base-vs-target: IDENTICAL
+config=malformed mode=scout brief_bytes=0 exit=rc=1 base-vs-target: IDENTICAL

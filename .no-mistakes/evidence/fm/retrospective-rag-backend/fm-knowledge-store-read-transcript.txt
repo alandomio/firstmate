@@ -1,0 +1,43 @@
+## home: rag
+config/knowledge-store: (absent)
+$ FM_HOME=<home> bin/fm-knowledge-store.sh read
+name=the RAG
+backend=rag
+search=`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none
+(exit 0)
+
+## home: pp
+config/knowledge-store:
+  | PP Brain
+  | `search_knowledge` on the `pp-brain` MCP server, with both `query` and `prompt` set
+$ FM_HOME=<home> bin/fm-knowledge-store.sh read
+name=PP Brain
+backend=pp-brain
+search=`search_knowledge` on the `pp-brain` MCP server, with both `query` and `prompt` set
+(exit 0)
+
+## home: other
+config/knowledge-store:
+  | Wiki
+  | search the wiki tool
+$ FM_HOME=<home> bin/fm-knowledge-store.sh read
+name=Wiki
+backend=other
+search=search the wiki tool
+(exit 0)
+
+## home: bad3
+config/knowledge-store:
+  | Wiki
+  | search the wiki tool
+  | confluence
+$ FM_HOME=<home> bin/fm-knowledge-store.sh read
+knowledge-store: <home>/config/knowledge-store line 3 must be a backend key, rag or pp-brain, or be absent
+(exit 1)
+
+## home: empty
+config/knowledge-store:
+$ FM_HOME=<home> bin/fm-knowledge-store.sh read
+knowledge-store: <home>/config/knowledge-store must have the store name on line 1 and search instructions on line 2
+(exit 1)
+

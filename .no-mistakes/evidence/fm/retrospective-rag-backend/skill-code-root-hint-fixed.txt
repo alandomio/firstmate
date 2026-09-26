@@ -1,0 +1,18 @@
+# Retrospective skill: code-root hint, re-checked after the fix (commit ea7dbc9)
+SKILL.md line 65: Before Step 1, run `bin/fm-knowledge-store.sh read` from the Firstmate code root (three directories above this skill, the directory that contains `.agents/`), w
+three directories above the skill = /home/alan/.no-mistakes/worktrees/34c874d3722d/01M3F0M6AQ9ERGN5KKB2HNXZ82 (contains .agents: yes)
+--- FM_HOME with rag config: (cd /home/alan/.no-mistakes/worktrees/34c874d3722d/01M3F0M6AQ9ERGN5KKB2HNXZ82 && bin/fm-knowledge-store.sh read)
+name=the RAG
+backend=rag
+search=use rag_qdrant_server query_rag_hybrid
+exit=0
+--- FM_HOME with pp-brain config: (cd /home/alan/.no-mistakes/worktrees/34c874d3722d/01M3F0M6AQ9ERGN5KKB2HNXZ82 && bin/fm-knowledge-store.sh read)
+name=PP Brain
+backend=pp-brain
+search=use pp-brain search_knowledge
+exit=0
+--- FM_HOME with absent config: (cd /home/alan/.no-mistakes/worktrees/34c874d3722d/01M3F0M6AQ9ERGN5KKB2HNXZ82 && bin/fm-knowledge-store.sh read)
+name=the RAG
+backend=rag
+search=`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none
+exit=0

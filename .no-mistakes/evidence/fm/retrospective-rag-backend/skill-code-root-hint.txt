@@ -1,0 +1,11 @@
+$ cd .agents/skills/retrospective/../..   # "two directories above this skill"
+cwd=.agents
+$ bin/fm-knowledge-store.sh read
+bash: line 1: bin/fm-knowledge-store.sh: No such file or directory
+(exit 127)
+$ cd ..   # three directories above = code root
+$ bin/fm-knowledge-store.sh read
+name=the RAG
+backend=rag
+search=`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none
+(exit 0)
