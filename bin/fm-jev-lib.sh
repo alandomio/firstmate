@@ -43,8 +43,9 @@ _fm_jev_append() {  # <state> <json-line>
 }
 
 # Ground truth counts only what firstmate itself does in a handling turn, so a
-# send the watcher, bootstrap or config reread makes on its own sets
-# FM_JEV_OBSERVE=0 and records nothing.
+# send the watcher, bootstrap or config reread makes on its own, and the remote
+# relay of a send the parent home already recorded, sets FM_JEV_OBSERVE=0 and
+# records nothing.
 fm_jev_observe() {  # <home> <state> <steer|decision> [task]
   local line
   [ "${FM_JEV_OBSERVE:-1}" != 0 ] || return 0

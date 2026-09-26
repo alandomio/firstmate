@@ -363,6 +363,30 @@ test_report_attributes_actions_to_open_wakes_across_drains() {
   pass "the report credits named actions to their task's open wakes across drains and shares the rest"
 }
 
+# A wake still unacknowledged, or presented before the report window, stays open
+# for attribution: a steer naming its task never spills onto an unrelated wake.
+test_report_keeps_unacknowledged_and_earlier_wakes_open() {
+  local fixture out t0=1790000000 d=86400
+  fixture="$TMP_ROOT/open-wakes.jsonl"
+  {
+    printf '{"ev":"presented","t":%s,"id":"e:1","seq":1,"kind":"signal","task":"old","batch":"P"}\n' "$t0"
+    printf '{"ev":"presented","t":%s,"id":"e:2","seq":2,"kind":"signal","task":"late","batch":"Q"}\n' $((t0 + 3 * d))
+    printf '{"ev":"presented","t":%s,"id":"e:3","seq":3,"kind":"signal","task":"z","batch":"R"}\n' $((t0 + 3 * d + 1))
+    printf '{"ev":"jev","t":%s,"id":"e:3","outcome":"classified","choice":"absorbable","confidence":0.9}\n' $((t0 + 3 * d + 1))
+    printf '{"ev":"steer","t":%s,"task":"old"}\n' $((t0 + 3 * d + 2))
+    printf '{"ev":"decision","t":%s,"task":"late"}\n' $((t0 + 3 * d + 2))
+    printf '{"ev":"ack","t":%s,"through":1}\n' $((t0 + 3 * d + 3))
+    printf '{"ev":"presented","t":%s,"id":"e:4","seq":4,"kind":"signal","task":"y","batch":"S"}\n' $((t0 + 3 * d + 4))
+    printf '{"ev":"ack","t":%s,"through":3}\n' $((t0 + 3 * d + 5))
+    printf '{"ev":"turn_end","t":%s,"outcome":"ack"}\n' $((t0 + 3 * d + 6))
+  } > "$fixture"
+  out=$("$JEV" report --log "$fixture" --days 1 --now $((t0 + 3 * d + 60))) || fail "report failed: $out"
+  assert_contains "$out" 'wakes presented: 3;' "the wake before the window was reported"
+  assert_contains "$out" 'wrongly absorbable (Jev would absorb, firstmate had to act): 0' "a steer for an open wake spilled onto an unrelated wake"
+  assert_contains "$out" 'agreement (absorb vs surface): 100% (1 of 1)' "the unrelated wake was not a plain acknowledgement"
+  pass "unacknowledged and pre-window wakes stay open, so their steers never spill onto unrelated wakes"
+}
+
 test_off_by_default_and_not_enabled_by_the_environment
 test_foreign_state_dir_never_uses_the_key
 test_shadow_classifies_without_changing_the_presentation
@@ -374,4 +398,5 @@ test_drain_never_waits_for_jev
 test_hooks_record_actions_and_turn_ends_without_text
 test_automated_sends_record_no_steer
 test_report_attributes_actions_to_open_wakes_across_drains
+test_report_keeps_unacknowledged_and_earlier_wakes_open
 test_report_measures_agreement_and_lists_doubtful_cases

@@ -59,7 +59,9 @@
 # "absorbable" when the turn ended with the plain acknowledgement
 # ("Captain, shipshape." or no final text) and nothing else happened. A wake is
 # open from its first presentation through that turn end (or its acknowledgement
-# when no turn end was recorded). A steer or decision naming a task attributes
+# when no turn end was recorded, or indefinitely while it is unacknowledged), and
+# every presented wake in the log counts as open, not only those the report
+# window lists. A steer or decision naming a task attributes
 # only to that task's open wakes, from any drain; an unnamed one, or one naming a
 # task with no open wake, attributes to every open wake and is flagged shared. A
 # captain message attributes to every wake whose handling turn it ends, flagged
@@ -362,8 +364,7 @@ def jev_label($minconf):
 [ .[] | select(type == "object" and (.t | type) == "number") ]
 | to_entries | map(.value + {i: .key}) | sort_by([.t, .i])
 | to_entries | map(.value + {o: .key}) as $all
-| ($all | map(select(.ev == "presented" and .t >= $since and .t <= $now))
-   | group_by(.id) | map(min_by(.o))) as $wakes
+| ($all | map(select(.ev == "presented")) | group_by(.id) | map(min_by(.o))) as $wakes
 | ($all | map(select(.ev == "jev")) | group_by(.id) | map({key: .[0].id, value: .[0]}) | from_entries) as $jev
 | [ $wakes[] as $w
     | ($all | map(select(.ev == "ack" and .o > $w.o and .through >= $w.seq)) | first) as $ack
@@ -372,12 +373,12 @@ def jev_label($minconf):
     | $w + {ack: $ack, te: $te,
             end: (if $ack == null then null elif $te == null then $ack.o else $te.o end)} ] as $wins
 | ([ $all[] | select(.ev == "steer" or .ev == "decision") as $a
-     | ($wins | map(select(.end != null and $a.o > .o and $a.o <= .end))) as $open
+     | ($wins | map(select($a.o > .o and (.end == null or $a.o <= .end)))) as $open
      | ($open | map(select($a.task != "" and .task == $a.task))) as $named
      | if ($named | length) > 0 then ($named[] | {key: .id, ev: $a.ev, shared: false})
        else ($open[] | {key: .id, ev: $a.ev, shared: true}) end ]
    | group_by(.key) | map({key: .[0].key, value: map(del(.key))}) | from_entries) as $credit
-| [ $wins[] as $w
+| [ $wins[] | select(.t >= $since and .t <= $now) as $w
     | $w.ack as $ack | $w.te as $te
     | ($credit[$w.id] // []) as $mine
     | (if $ack == null then {truth: "unknown", why: "never acknowledged"}

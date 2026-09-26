@@ -194,7 +194,7 @@ cmd_send() {
   # and ssh all preserve it, so no mapping may happen here: flattening exit 3
   # into a generic failure is exactly the false-negative the parent's remote
   # send path exists to avoid.
-  FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$TARGET_HOME/state" \
+  FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$TARGET_HOME/state" FM_JEV_OBSERVE=0 \
     "$SCRIPT_DIR/fm-send.sh" "$REMOTE_ENDPOINT_TARGET" "$message"
 }
 
