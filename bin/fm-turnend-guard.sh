@@ -143,6 +143,15 @@ fi
 # so this exempts them while guarding every real secondmate home.
 fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
 
+# Opt-in Jev shadow measurement records only how this primary turn ended, never
+# its text, and is a no-op unless this home enabled it (bin/fm-jev.sh). It is
+# optional, so a missing helper can never cost this guard its verdict.
+if [ -f "$SCRIPT_DIR/fm-jev-lib.sh" ]; then
+  # shellcheck source=bin/fm-jev-lib.sh
+  . "$SCRIPT_DIR/fm-jev-lib.sh"
+  fm_jev_observe_turn_end "$FM_HOME" "$STATE" "$PAYLOAD"
+fi
+
 # --- the actual predicate ----------------------------------------------------
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"

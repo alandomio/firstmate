@@ -143,6 +143,8 @@ fi
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-jev-lib.sh
+. "$SCRIPT_DIR/fm-jev-lib.sh"
 
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the requested message WILL still be sent.' "$SCRIPT_DIR/fm-guard.sh" || true
 
@@ -504,6 +506,11 @@ fm_send_feed_resolved_holds() {  # <answer-text>
 # target_ready path before sending, while zellij verifies pane labels in its
 # send implementation. A failed backend send is still surfaced below as a hard
 # error with the attempted resolution attached.
+
+# Opt-in Jev shadow measurement: this send is firstmate acting on a worker.
+if [ -n "$RESOLVE_KEYS" ]; then JEV_SEND_EVENT=decision; else JEV_SEND_EVENT=steer; fi
+fm_jev_observe "$FM_HOME" "$STATE" "$JEV_SEND_EVENT" \
+  "$( [ -z "$TARGET_META" ] || fm_send_id_from_meta "$TARGET_META" 2>/dev/null )"
 
 if [ "${1:-}" = "--key" ]; then
   case "$*" in
