@@ -178,7 +178,7 @@ jev_timeout() {
 jev_max_load() {
   local v
   v=
-  [ -f "$CONFIG/jev-max-load" ] && v=$(tr -d '[:space:]' < "$CONFIG/jev-max-load" 2>/dev/null)
+  [ -f "$FM_HOME/config/jev-max-load" ] && v=$(tr -d '[:space:]' < "$FM_HOME/config/jev-max-load" 2>/dev/null)
   if [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
     printf '%s\n' "$v"
   else

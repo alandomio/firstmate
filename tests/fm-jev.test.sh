@@ -282,18 +282,25 @@ test_local_backend_takes_priority_needs_no_key_and_records_the_answering_model()
 }
 
 test_local_backend_endpoint_is_read_from_the_home_not_a_config_override() {
-  local home override
+  local home override out
   home=$(jev_local_case local-override)
   override="$TMP_ROOT/local-override-config"
   mkdir -p "$override"
+  printf '4\n' > "$home/config/jev-max-load"
   queue_row "$home" 1 heartbeat heartbeat heartbeat
   in_home "$home" env FM_CONFIG_OVERRIDE="$override" FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=0.1 \
     "$DRAIN" >/dev/null 2>&1 || fail "drain failed under FM_CONFIG_OVERRIDE"
   [ "$(calls "$home")" = 1 ] || fail "the home's config/jev-endpoint was not dialed under FM_CONFIG_OVERRIDE"
   assert_absent "$home/state/jev/disabled" "a valid home config/jev-endpoint was refused under FM_CONFIG_OVERRIDE"
-  assert_contains "$(in_home "$home" env FM_CONFIG_OVERRIDE="$override" "$JEV" status)" \
-    'config/jev-endpoint = http://127.0.0.1:8017' "status did not read the home's config/jev-endpoint"
-  pass "the local endpoint is read from the home's own config/, the same file that selected the backend"
+  queue_row "$home" 2 heartbeat heartbeat heartbeat
+  in_home "$home" env FM_CONFIG_OVERRIDE="$override" FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=5 \
+    "$DRAIN" >/dev/null 2>&1 || fail "drain failed under load with FM_CONFIG_OVERRIDE"
+  [ "$(calls "$home")" = 1 ] || fail "the home's config/jev-max-load was ignored under FM_CONFIG_OVERRIDE"
+  [ "$(cut -f2 "$home/state/jev/disabled")" = load ] || fail "the home's load ceiling did not pause Jev under FM_CONFIG_OVERRIDE"
+  out=$(in_home "$home" env FM_CONFIG_OVERRIDE="$override" "$JEV" status)
+  assert_contains "$out" 'config/jev-endpoint = http://127.0.0.1:8017' "status did not read the home's config/jev-endpoint"
+  assert_contains "$out" 'load ceiling: 4' "status did not read the home's config/jev-max-load"
+  pass "the local endpoint and load ceiling are read from the home's own config/, the same place that selected the backend"
 }
 
 test_blank_jev_endpoint_does_not_override_openrouter() {
