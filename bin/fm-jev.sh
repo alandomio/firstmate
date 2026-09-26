@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # fm-jev.sh - Jev (TypeSafe's decision model on OpenRouter, or a local
-# Jev-compatible server) as a SHADOW-ONLY, advisory classifier of supervision
+# Rizzo Flow server) as a SHADOW-ONLY, advisory classifier of supervision
 # wakes, plus the measurement that decides whether it may ever do more.
 #
 # Usage:
@@ -17,10 +17,11 @@
 # key is read from .env only at request time, handed to curl on stdin rather
 # than argv, and never printed, logged, or written anywhere. A home opts into
 # the LOCAL backend instead by carrying a base URL in its private, gitignored
-# config/jev-endpoint - a Jev-compatible server such as Rizzo Flow's
-# `rizzo serve` (POST /v1/decisions, its native typed-decision API, on
-# 127.0.0.1:8017 by default; see the rizzo-flow skill). That file takes
-# priority when present: no key is read or required for it. A STATE directory
+# config/jev-endpoint - a Rizzo Flow server (`rizzo serve`), which must
+# expose Rizzo Flow's native typed-decision API (POST /v1/decisions, on
+# 127.0.0.1:8017 by default; see the rizzo-flow skill) - a server offering
+# only the Jev-compatible /v1/systemone answers every row as an api-error.
+# That file takes priority when present: no key is read or required for it. A STATE directory
 # other than the home's own never uses either backend (bin/fm-jev-lib.sh
 # fm_jev_backend/fm_jev_enabled).
 #
@@ -61,7 +62,10 @@
 # it for the day: a 1-minute load average at or above config/jev-max-load
 # (default 8; checked before each request), a timeout, or an API/transport
 # error each only skip that one row (why=load/timeout/api-error), and the
-# very next drain tries again. The sole exception is an invalid
+# very next drain tries again. A timeout also skips the rest of that same
+# drain's rows (why=timeout) without dialing, so a stuck server costs one
+# timeout per drain rather than one per row, and the classify lock is never
+# held long enough for detached drains to pile up behind it. The sole exception is an invalid
 # config/jev-endpoint, which still pauses the local backend for the day
 # because that is a configuration mistake to surface, not a transient
 # condition to retry. The wake itself is untouched in every case because
@@ -327,8 +331,9 @@ jev_request_body() {
 # One request against either backend. Prints nothing; logs a classified or
 # skipped event. Only the OpenRouter backend ever pauses for the day here
 # (timeout, API error, or a missing cost); the local backend only skips this
-# one row on any of those, and the caller applies its load-ceiling skip
-# before ever calling this.
+# one row on any of those (a timeout also sets JEV_LOCAL_TIMED_OUT so the
+# caller skips the rest of this drain), and the caller applies its
+# load-ceiling skip before ever calling this.
 jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-before> <cap>
   local id=$1 reason=$2 status=$3 backend=$4 spend=$5 cap=$6
   local day key model endpoint timeout body resp code rc start ms cost event
@@ -372,7 +377,11 @@ jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-be
   if [ "$rc" -eq 28 ]; then
     rm -f "$resp"
     jev_log_skip "$id" timeout "no answer within ${timeout}s" "$reason" "$status"
-    [ "$backend" = local ] || jev_pause "$day" timeout
+    if [ "$backend" = local ]; then
+      JEV_LOCAL_TIMED_OUT=1
+    else
+      jev_pause "$day" timeout
+    fi
     return 0
   fi
   if [ "$rc" -ne 0 ]; then
@@ -449,6 +458,7 @@ cmd_observe_drain() {  # <spool> <epoch>
   fm_lock_acquire_wait "$JEV_LOCK" || { rm -f "$spool"; exit 0; }
   day=$(date +%F)
   JEV_TIMEOUT=$(jev_timeout)
+  JEV_LOCAL_TIMED_OUT=
   if [ "$backend" = local ]; then
     base=$(tr -d '[:space:]' < "$FM_HOME/config/jev-endpoint" 2>/dev/null)
     if jev_local_url_ok "$base"; then
@@ -481,6 +491,10 @@ cmd_observe_drain() {  # <spool> <epoch>
       if [ -z "$JEV_LOCAL_ENDPOINT" ]; then
         jev_log_skip "$id" invalid-endpoint "config/jev-endpoint must be a loopback URL with no path" "$reason" "$status"
         jev_pause "$day" invalid-endpoint
+        continue
+      fi
+      if [ -n "$JEV_LOCAL_TIMED_OUT" ]; then
+        jev_log_skip "$id" timeout "an earlier row in this drain got no answer within ${JEV_TIMEOUT}s" "$reason" "$status"
         continue
       fi
       load=$(jev_load_avg)

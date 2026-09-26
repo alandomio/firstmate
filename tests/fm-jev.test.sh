@@ -32,7 +32,7 @@ jev_case() {
   fakebin=$(fm_fakebin "$home")
   cat > "$fakebin/curl" <<'SH'
 #!/usr/bin/env bash
-# Fake network target (OpenRouter or a local Jev-compatible server): records
+# Fake network target (OpenRouter or a local Rizzo Flow server): records
 # each call and never touches the network.
 log=${FAKE_CURL_LOG:?}
 printf 'call\n' >> "$log/calls"
@@ -399,16 +399,33 @@ test_local_backend_load_ceiling_skips_without_a_day_pause() {
 
 test_local_backend_timeout_and_api_errors_skip_without_a_day_pause() {
   local mode home
-  for mode in timeout http500 refused; do
+  for mode in http500 refused; do
     home=$(jev_local_case "local-$mode")
     queue_row "$home" 1 heartbeat heartbeat heartbeat
     queue_row "$home" 2 stale default:w1:p1 'stale: default:w1:p1'
     in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE="$mode" FM_JEV_LOAD_OVERRIDE=0.1 "$DRAIN" >/dev/null 2>&1 \
       || fail "drain failed on $mode"
     [ "$(calls "$home")" = 2 ] || fail "$mode: the local backend did not retry the very next row"
+    [ "$(jev_events "$home" 'select(.outcome == "skipped" and .why == "api-error")' | wc -l | tr -d ' ')" = 2 ] \
+      || fail "$mode: each failed row was not logged as skipped with why=api-error"
     assert_absent "$home/state/jev/disabled" "$mode paused the local backend for the day"
   done
-  pass "a timeout or an API/transport error on the local backend only skips that row; the next one is still attempted, unlike OpenRouter"
+  home=$(jev_local_case local-timeout)
+  queue_row "$home" 1 heartbeat heartbeat heartbeat
+  queue_row "$home" 2 stale default:w1:p1 'stale: default:w1:p1'
+  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=timeout FM_JEV_LOAD_OVERRIDE=0.1 "$DRAIN" >/dev/null 2>&1 \
+    || fail "drain failed on a local timeout"
+  [ "$(calls "$home")" = 1 ] || fail "a local timeout did not stop the rest of that drain dialing a stuck server"
+  [ "$(jev_events "$home" 'select(.outcome == "skipped" and .why == "timeout")' | wc -l | tr -d ' ')" = 2 ] \
+    || fail "the timed-out row and the rest of its drain were not logged as skipped with why=timeout"
+  assert_absent "$home/state/jev/disabled" "a timeout paused the local backend for the day"
+  queue_row "$home" 3 heartbeat heartbeat heartbeat
+  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=0.1 "$DRAIN" >/dev/null 2>&1 \
+    || fail "drain failed after a local timeout"
+  [ "$(calls "$home")" = 2 ] || fail "the very next drain after a local timeout did not try again"
+  jev_events "$home" 'select(.id == "1790000000:3" and .outcome == "classified")' | grep -q . \
+    || fail "the wake presented in the drain after a local timeout was not classified"
+  pass "a local timeout skips the rest of that drain and an API/transport error only its row, each logged with the reason; the next drain tries again with no day pause, unlike OpenRouter"
 }
 
 test_local_backend_status_reports_the_endpoint_and_ceiling() {
