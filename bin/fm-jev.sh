@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# fm-jev.sh - Jev (TypeSafe's decision model on OpenRouter) as a SHADOW-ONLY,
-# advisory classifier of supervision wakes, plus the measurement that decides
-# whether it may ever do more.
+# fm-jev.sh - Jev (TypeSafe's decision model on OpenRouter, or a local
+# Jev-compatible server) as a SHADOW-ONLY, advisory classifier of supervision
+# wakes, plus the measurement that decides whether it may ever do more.
 #
 # Usage:
 #   fm-jev.sh status
@@ -9,14 +9,25 @@
 #   fm-jev.sh mask                          (stdin -> the masked text that would leave the machine)
 #   fm-jev.sh observe-drain <spool> <epoch> (internal: called detached by bin/fm-jev-lib.sh)
 #
-# Switch. Off by default. A home opts in only by carrying a non-empty
-# OPENROUTER_API_KEY in its private, gitignored .env, the same presence gate
-# Relay uses for FMX_PAIRING_TOKEN (docs/configuration.md "Jev shadow wake
-# triage"). The ambient environment never enables it, and a STATE directory
-# other than the home's own never uses it (bin/fm-jev-lib.sh fm_jev_enabled).
-# The key is read from .env only at request time, is handed to curl on stdin
-# rather than argv, and is never printed, logged, or written anywhere; no other
-# .env value is read.
+# Switch. Off by default, and only one backend runs per home. A home opts into
+# the OpenRouter backend by carrying a non-empty OPENROUTER_API_KEY in its
+# private, gitignored .env, the same presence gate Relay uses for
+# FMX_PAIRING_TOKEN (docs/configuration.md "Jev shadow wake triage"); the
+# ambient environment never enables it, no other .env value is read, and the
+# key is read from .env only at request time, handed to curl on stdin rather
+# than argv, and never printed, logged, or written anywhere. A home opts into
+# the LOCAL backend instead by carrying a base URL in its private, gitignored
+# config/jev-endpoint - a Jev-compatible server such as Rizzo Flow's
+# `rizzo serve` (POST /v1/systemone on 127.0.0.1:8017 by default). That file
+# takes priority when present: no key is read or required for it. A STATE
+# directory other than the home's own never uses either backend
+# (bin/fm-jev-lib.sh fm_jev_backend/fm_jev_enabled).
+#
+# Loopback-only enforcement. config/jev-endpoint must resolve to
+# 127.0.0.1/localhost/::1 with no path (jev_local_url_ok); anything else is
+# refused outright rather than dialed, logged as a skipped "invalid-endpoint"
+# row, and pauses classification for the day exactly like any other error -
+# this file must never become a back door to a hosted API.
 #
 # Shadow contract. For every wake row a drain presents, this script asks Jev
 # one three-way choice - "firstmate" (needs firstmate), "absorbable", or
@@ -30,16 +41,26 @@
 # What leaves the machine: the wake's reason line and the worker's last status
 # line, each masked (URLs -> <url>, any token containing a path separator ->
 # <path>) and cut to 500 characters, plus this script's fixed question text.
-# Nothing else is sent. `mask` prints exactly the masking applied.
+# Nothing else is sent. `mask` prints exactly the masking applied. For the
+# local backend nothing leaves the machine at all (no egress); masking is kept
+# anyway for prompt-length hygiene, not data governance.
 #
-# Limits. Each request has a hard timeout (default 5 seconds; override with a
-# positive number in config/jev-timeout, an invalid value keeps the default and
-# `status` says so). A daily spend cap (USD,
-# default 1; override with a decimal number in config/jev-daily-cap) is summed
-# from the usage.cost each response reports. A timeout, an API or transport
-# error, a response without a cost, or reaching the cap pauses classification
-# until the next local calendar day (state/jev/disabled). The wake itself is
-# untouched in every case because shadow mode never held it.
+# Limits. Each request, on either backend, has a hard timeout (default 5
+# seconds; override with a positive number in config/jev-timeout, an invalid
+# value keeps the default and `status` says so) - warm local requests measured
+# well under a second, so the 5 second default still stops a stuck local
+# server hanging the classify loop. The OpenRouter backend also has a daily
+# spend cap (USD, default 1; override with a decimal number in
+# config/jev-daily-cap), summed from the usage.cost each response reports; a
+# missing cost is an API error there. The local backend has no per-request
+# cost - a missing usage.cost is expected, not an error - so it is instead
+# gated on machine load: a 1-minute load-average ceiling (default 8; override
+# with a decimal number in config/jev-max-load) checked before each request;
+# a wake presented at or above it is only skipped (why=load), so the next
+# reading below the ceiling classifies again. Either backend's timeout,
+# API/transport error, or (OpenRouter) reaching the spend cap pauses
+# classification until the next local calendar day (state/jev/disabled). The
+# wake itself is untouched in every case because shadow mode never held it.
 #
 # Private log: state/jev/shadow.jsonl, append-only, mode 0600, one JSON object
 # per line:
@@ -94,10 +115,12 @@ JEV_DIR="$STATE/jev"
 JEV_LOG="$JEV_DIR/shadow.jsonl"
 JEV_DISABLED="$JEV_DIR/disabled"
 JEV_LOCK="$JEV_DIR/.classify.lock"
-JEV_MODEL=typesafe/jev-1.13
-JEV_ENDPOINT=https://openrouter.ai/api/alpha/decisions
+JEV_OR_MODEL=typesafe/jev-1.13
+JEV_OR_ENDPOINT=https://openrouter.ai/api/alpha/decisions
 JEV_DEFAULT_TIMEOUT=5
 JEV_DEFAULT_CAP=1
+JEV_LOCAL_MODEL=jev-latest
+JEV_DEFAULT_MAX_LOAD=8
 
 # The single definition of what may leave the machine; `mask` exposes it.
 JEV_JQ_MASK='def fm_jev_mask:
@@ -151,6 +174,35 @@ jev_timeout() {
   else
     printf '%s\n' "$JEV_DEFAULT_TIMEOUT"
   fi
+}
+
+jev_max_load() {
+  local v
+  v=
+  [ -f "$FM_HOME/config/jev-max-load" ] && v=$(tr -d '[:space:]' < "$FM_HOME/config/jev-max-load" 2>/dev/null)
+  if [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    printf '%s\n' "$v"
+  else
+    printf '%s\n' "$JEV_DEFAULT_MAX_LOAD"
+  fi
+}
+
+# 1-minute load average, portable across Linux (/proc/loadavg) and macOS
+# (sysctl vm.loadavg); FM_JEV_LOAD_OVERRIDE is a test-only stand-in for both.
+jev_load_avg() {
+  if [ -n "${FM_JEV_LOAD_OVERRIDE:-}" ]; then
+    printf '%s\n' "$FM_JEV_LOAD_OVERRIDE"
+  elif [ -r /proc/loadavg ]; then
+    awk '{print $1}' /proc/loadavg 2>/dev/null
+  elif command -v sysctl >/dev/null 2>&1; then
+    sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}'
+  fi
+}
+
+# Refuses anything but a bare loopback origin (scheme://host[:port], no path)
+# so config/jev-endpoint can never become a back door to a hosted API.
+jev_local_url_ok() {  # <base-url>
+  printf '%s' "$1" | grep -Eq '^https?://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]+)?/?$'
 }
 
 jev_spend_today() {  # <day>
@@ -212,8 +264,8 @@ jev_log_skip() {  # <id> <why> <detail> <reason> <status>
       reason: $reason, status: $status}')"
 }
 
-jev_request_body() {  # <reason> <status>
-  jq -cn --arg model "$JEV_MODEL" --arg r "$1" --arg s "$2" '{
+jev_request_body() {  # <reason> <status> <model>
+  jq -cn --arg model "$3" --arg r "$1" --arg s "$2" '{
     model: $model,
     state: ({wake_reason: $r} + (if $s == "" then {} else {worker_last_status: $s} end)),
     questions: {
@@ -230,35 +282,53 @@ jev_request_body() {  # <reason> <status>
   }'
 }
 
-# One request. Prints nothing; logs a classified or skipped event and pauses
-# for the day on timeout, API error, missing cost, or the cap.
-jev_classify_row() {  # <id> <reason-masked> <status-masked> <spend-before> <cap>
-  local id=$1 reason=$2 status=$3 spend=$4 cap=$5 day key body resp code rc start ms cost event
+# One request against either backend. Prints nothing; logs a classified or
+# skipped event and pauses for the day on timeout, API error, or (OpenRouter
+# only) a missing cost or the spend cap; the caller applies the local
+# backend's load-ceiling skip before ever calling this.
+jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-before> <cap>
+  local id=$1 reason=$2 status=$3 backend=$4 spend=$5 cap=$6
+  local day key model endpoint timeout body resp code rc start ms cost event
   day=$(date +%F)
-  key=$(fmx_env_get OPENROUTER_API_KEY "$FM_HOME/.env")
-  case "$key" in
-    ''|*[!A-Za-z0-9._-]*)
-      key=
-      jev_log_skip "$id" api-error "unusable OPENROUTER_API_KEY value" "$reason" "$status"
-      jev_pause "$day" api-error
-      return 0
-      ;;
-  esac
+  timeout=$JEV_TIMEOUT
+  if [ "$backend" = local ]; then
+    key=
+    model=$JEV_LOCAL_MODEL
+    endpoint=$JEV_LOCAL_ENDPOINT
+  else
+    key=$(fmx_env_get OPENROUTER_API_KEY "$FM_HOME/.env")
+    case "$key" in
+      ''|*[!A-Za-z0-9._-]*)
+        key=
+        jev_log_skip "$id" api-error "unusable OPENROUTER_API_KEY value" "$reason" "$status"
+        jev_pause "$day" api-error
+        return 0
+        ;;
+    esac
+    model=$JEV_OR_MODEL
+    endpoint=$JEV_OR_ENDPOINT
+  fi
   body=$(umask 077 && mktemp "$JEV_DIR/.body.XXXXXX") || return 0
   resp=$(umask 077 && mktemp "$JEV_DIR/.resp.XXXXXX") || { rm -f "$body"; return 0; }
-  jev_request_body "$reason" "$status" > "$body" || { rm -f "$body" "$resp"; return 0; }
+  jev_request_body "$reason" "$status" "$model" > "$body" || { rm -f "$body" "$resp"; return 0; }
   start=$(jev_now_ms)
   rc=0
-  code=$(printf 'header = "Authorization: Bearer %s"\n' "$key" \
-    | curl -sS -K - --max-time "$JEV_TIMEOUT" --connect-timeout "$JEV_TIMEOUT" \
+  if [ -n "$key" ]; then
+    code=$(printf 'header = "Authorization: Bearer %s"\n' "$key" \
+      | curl -sS -K - --max-time "$timeout" --connect-timeout "$timeout" \
+          -H 'Content-Type: application/json' --data-binary "@$body" \
+          -o "$resp" -w '%{http_code}' "$endpoint" 2>/dev/null) || rc=$?
+  else
+    code=$(curl -q --noproxy '*' -sS --max-time "$timeout" --connect-timeout "$timeout" \
         -H 'Content-Type: application/json' --data-binary "@$body" \
-        -o "$resp" -w '%{http_code}' "$JEV_ENDPOINT" 2>/dev/null) || rc=$?
+        -o "$resp" -w '%{http_code}' "$endpoint" 2>/dev/null) || rc=$?
+  fi
   key=
   ms=$(( $(jev_now_ms) - start ))
   rm -f "$body"
   if [ "$rc" -eq 28 ]; then
     rm -f "$resp"
-    jev_log_skip "$id" timeout "no answer within ${JEV_TIMEOUT}s" "$reason" "$status"
+    jev_log_skip "$id" timeout "no answer within ${timeout}s" "$reason" "$status"
     jev_pause "$day" timeout
     return 0
   fi
@@ -278,7 +348,7 @@ jev_classify_row() {  # <id> <reason-masked> <status-masked> <spend-before> <cap
       ;;
   esac
   cost=$(jq -r '.usage.cost | select(type == "number")' "$resp" 2>/dev/null) || cost=
-  if [ -z "$cost" ]; then
+  if [ "$backend" != local ] && [ -z "$cost" ]; then
     rm -f "$resp"
     jev_log_skip "$id" api-error "response carried no usage.cost" "$reason" "$status"
     jev_pause "$day" api-error
@@ -301,19 +371,22 @@ jev_classify_row() {  # <id> <reason-masked> <status-masked> <spend-before> <cap
     return 0
   fi
   _fm_jev_append "$STATE" "$event"
-  JEV_SPEND=$(awk -v a="$spend" -v b="$cost" 'BEGIN { printf "%.9f", a + b }')
-  if jev_ge "$JEV_SPEND" "$cap"; then
-    jev_pause "$day" cap
+  if [ "$backend" != local ]; then
+    JEV_SPEND=$(awk -v a="$spend" -v b="${cost:-0}" 'BEGIN { printf "%.9f", a + b }')
+    if jev_ge "$JEV_SPEND" "$cap"; then
+      jev_pause "$day" cap
+    fi
   fi
 }
 
 cmd_observe_drain() {  # <spool> <epoch>
-  local spool=${1:-} now=${2:-} batch epoch seq kind key payload id task reason status day cap
+  local spool=${1:-} now=${2:-} batch epoch seq kind key payload id task reason status
+  local day cap backend base maxload load
   [ -n "$spool" ] && [ -f "$spool" ] || exit 0
   case "$now" in ''|*[!0-9]*) now=$(date +%s) ;; esac
   batch=$(basename "$spool")
   batch=${batch#.spool.}
-  fm_jev_enabled "$FM_HOME" "$STATE" || { rm -f "$spool"; exit 0; }
+  backend=$(fm_jev_backend "$FM_HOME" "$STATE") || { rm -f "$spool"; exit 0; }
   command -v jq >/dev/null 2>&1 || { rm -f "$spool"; exit 0; }
 
   while IFS=$(printf '\t') read -r epoch seq kind key payload; do
@@ -326,9 +399,19 @@ cmd_observe_drain() {  # <spool> <epoch>
 
   fm_lock_acquire_wait "$JEV_LOCK" || { rm -f "$spool"; exit 0; }
   day=$(date +%F)
-  cap=$(jev_cap)
   JEV_TIMEOUT=$(jev_timeout)
-  JEV_SPEND=$(jev_spend_today "$day")
+  if [ "$backend" = local ]; then
+    base=$(tr -d '[:space:]' < "$FM_HOME/config/jev-endpoint" 2>/dev/null)
+    if jev_local_url_ok "$base"; then
+      JEV_LOCAL_ENDPOINT="${base%/}/v1/systemone"
+    else
+      JEV_LOCAL_ENDPOINT=
+    fi
+    maxload=$(jev_max_load)
+  else
+    cap=$(jev_cap)
+    JEV_SPEND=$(jev_spend_today "$day")
+  fi
   while IFS=$(printf '\t') read -r epoch seq kind key payload; do
     case "$epoch:$seq" in *[!0-9:]*|:*|*:) continue ;; esac
     id="$epoch:$seq"
@@ -345,34 +428,59 @@ cmd_observe_drain() {  # <spool> <epoch>
       jev_log_skip "$id" disabled "$(cut -f2 < "$JEV_DISABLED" 2>/dev/null)" "$reason" "$status"
       continue
     fi
-    if jev_ge "$JEV_SPEND" "$cap"; then
-      jev_pause "$day" cap
-      jev_log_skip "$id" cap "daily cap of USD $cap reached" "$reason" "$status"
-      continue
+    if [ "$backend" = local ]; then
+      if [ -z "$JEV_LOCAL_ENDPOINT" ]; then
+        jev_log_skip "$id" invalid-endpoint "config/jev-endpoint must be a loopback URL with no path" "$reason" "$status"
+        jev_pause "$day" invalid-endpoint
+        continue
+      fi
+      load=$(jev_load_avg)
+      if [ -n "$load" ] && jev_ge "$load" "$maxload"; then
+        jev_log_skip "$id" load "1-minute load average $load at or above the $maxload ceiling" "$reason" "$status"
+        continue
+      fi
+      jev_classify_row "$id" "$reason" "$status" local 0 0
+    else
+      if jev_ge "$JEV_SPEND" "$cap"; then
+        jev_pause "$day" cap
+        jev_log_skip "$id" cap "daily cap of USD $cap reached" "$reason" "$status"
+        continue
+      fi
+      jev_classify_row "$id" "$reason" "$status" openrouter "$JEV_SPEND" "$cap"
     fi
-    jev_classify_row "$id" "$reason" "$status" "$JEV_SPEND" "$cap"
   done < "$spool"
   fm_lock_release "$JEV_LOCK"
   rm -f "$spool"
 }
 
 cmd_status() {
-  local day cap spend
+  local day cap spend backend base traw
   day=$(date +%F)
-  if fm_jev_enabled "$FM_HOME" "$STATE"; then
-    printf 'Jev shadow triage: on (OPENROUTER_API_KEY present in %s/.env)\n' "$FM_HOME"
-  else
-    printf 'Jev shadow triage: off (no OPENROUTER_API_KEY in %s/.env)\n' "$FM_HOME"
-  fi
-  cap=$(jev_cap)
-  spend=$(awk -v s="$(jev_spend_today "$day")" 'BEGIN { printf "%.6f", s }')
-  printf 'spend today: USD %s of a USD %s daily cap\n' "$spend" "$cap"
-  local traw
-  traw=$(jev_timeout_raw)
-  if [ -n "$traw" ] && ! jev_timeout_valid "$traw"; then
-    printf 'request timeout: %ss (config/jev-timeout value "%s" is not a positive number, default kept)\n' "$JEV_DEFAULT_TIMEOUT" "$traw"
-  else
-    printf 'request timeout: %ss\n' "$(jev_timeout)"
+  backend=$(fm_jev_backend "$FM_HOME" "$STATE") || backend=
+  case "$backend" in
+    local)
+      base=$(tr -d '[:space:]' < "$FM_HOME/config/jev-endpoint" 2>/dev/null)
+      printf 'Jev shadow triage: on, local backend (config/jev-endpoint = %s)\n' "$base"
+      jev_local_url_ok "$base" || printf 'config/jev-endpoint is not a loopback URL: classification is refused\n'
+      printf 'load ceiling: %s (1-minute average)\n' "$(jev_max_load)"
+      ;;
+    openrouter)
+      printf 'Jev shadow triage: on, OpenRouter backend (OPENROUTER_API_KEY present in %s/.env)\n' "$FM_HOME"
+      cap=$(jev_cap)
+      spend=$(awk -v s="$(jev_spend_today "$day")" 'BEGIN { printf "%.6f", s }')
+      printf 'spend today: USD %s of a USD %s daily cap\n' "$spend" "$cap"
+      ;;
+    *)
+      printf 'Jev shadow triage: off (no config/jev-endpoint and no OPENROUTER_API_KEY in %s/.env)\n' "$FM_HOME"
+      ;;
+  esac
+  if [ -n "$backend" ]; then
+    traw=$(jev_timeout_raw)
+    if [ -n "$traw" ] && ! jev_timeout_valid "$traw"; then
+      printf 'request timeout: %ss (config/jev-timeout value "%s" is not a positive number, default kept)\n' "$JEV_DEFAULT_TIMEOUT" "$traw"
+    else
+      printf 'request timeout: %ss\n' "$(jev_timeout)"
+    fi
   fi
   if jev_paused_today "$day"; then
     printf 'paused until tomorrow: %s\n' "$(cut -f2 < "$JEV_DISABLED")"

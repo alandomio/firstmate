@@ -606,24 +606,34 @@ The session-start digest separately prints a "Public commitments" subsection fro
 `FM_PF_RETRY_BACKOFF_SECS` (default 900) sets the next-attempt time recorded with a retryable delivery error.
 See [verification/public-followup.md](verification/public-followup.md) for the current maintainer evidence behind restart recovery, retained-loop disposition, and the relay-disabled zero-overhead guarantee.
 
-## Jev shadow wake triage (.env OPENROUTER_API_KEY / config/jev-daily-cap, config/jev-timeout)
+## Jev shadow wake triage (.env OPENROUTER_API_KEY / config/jev-endpoint / config/jev-timeout / config/jev-daily-cap / config/jev-max-load)
 
 Jev is TypeSafe's decision model, reached through OpenRouter as `typesafe/jev-1.13`.
 Firstmate uses it only as an advisory, shadow-only classifier of supervision wakes: it asks one three-way question per presented wake (needs firstmate, absorbable, or urgent for the captain), logs the answer next to what firstmate actually did, and acts on nothing.
 It never delays, drops, reorders, absorbs, or alters a wake, and nothing reads its answer to decide a merge, a destructive or security-sensitive action, or a captain call.
 
-It is off unless this home's gitignored `.env` carries a non-empty `OPENROUTER_API_KEY`, the same presence gate Relay uses.
-An `OPENROUTER_API_KEY` in the ambient environment never enables it, and no other `.env` value is read.
-Use a dedicated OpenRouter key with its own spend limit on OpenRouter as well.
-A home without the key pays one cheap `.env` check per drain, send, lifecycle action, captain hold, and primary turn end, and writes nothing.
+One of two backends runs per home, config/jev-endpoint taking priority when present:
+
+- **OpenRouter** (unchanged): off unless this home's gitignored `.env` carries a non-empty `OPENROUTER_API_KEY`, the same presence gate Relay uses.
+  An `OPENROUTER_API_KEY` in the ambient environment never enables it, and no other `.env` value is read.
+  Use a dedicated OpenRouter key with its own spend limit on OpenRouter as well.
+- **Local**: on when this home's gitignored `config/jev-endpoint` carries a base URL for a Jev-compatible server, such as Rizzo Flow's `rizzo serve` (`POST /v1/systemone` on `http://127.0.0.1:8017` by default).
+  No key is read or required.
+  The URL must resolve to `127.0.0.1`, `localhost`, or `::1` with no path; anything else is refused outright, logged as a skipped `invalid-endpoint` row, and pauses classification for the day rather than ever being dialed.
+
+A home with neither pays one cheap file check per drain, send, lifecycle action, captain hold, and primary turn end, and writes nothing.
 
 Only the wake's reason line and the worker's last status line leave the machine, with URLs and paths masked; `bin/fm-jev.sh mask` shows the exact masking.
-Each request has a 5 second timeout by default, `config/jev-timeout` optionally overrides it with a positive number of seconds (an invalid value keeps the default and `bin/fm-jev.sh status` says so), and `config/jev-daily-cap` optionally overrides the default USD 1 daily spend cap with a decimal number.
-A timeout, an API or transport error, a response without a cost, or reaching the cap pauses classification until the next local day while every wake still surfaces exactly as it would without Jev.
+For the local backend nothing leaves the machine at all (no egress); masking is kept only for prompt-length hygiene, not data governance.
 
-`bin/fm-jev.sh status` reports the switch, today's spend, and any pause.
-`bin/fm-jev.sh report` measures the shadow window: agreement between Jev and firstmate's actual handling, the count of wakes Jev would have absorbed that needed firstmate, and about twenty doubtful cases for the captain.
-The go-live criteria are zero wrongly absorbable wakes and at least 90% agreement over one week; activation is a separate change.
+Each request, on either backend, has a 5 second timeout by default; `config/jev-timeout` optionally overrides it with a positive number of seconds (an invalid value keeps the default and `bin/fm-jev.sh status` says so).
+The OpenRouter backend also has a daily spend cap (USD, default 1; override with a decimal number in `config/jev-daily-cap`), summed from each response's `usage.cost`; a response without a cost is an API error there.
+The local backend has no per-request cost - a missing cost is expected, not an error - so it is instead gated on a 1-minute load-average ceiling (default 8; override with a decimal number in `config/jev-max-load`) checked before each request; a wake presented at or above it is only skipped (logged with `why=load`), so classification resumes as soon as a later reading is back below the ceiling.
+Either backend's timeout or an API/transport error, and (OpenRouter) reaching the spend cap, pauses classification until the next local day while every wake still surfaces exactly as it would without Jev.
+
+`bin/fm-jev.sh status` reports the active backend (or that both are off), the OpenRouter spend or the local endpoint and load ceiling, and any pause.
+`bin/fm-jev.sh report` measures the shadow window: agreement between Jev and firstmate's actual handling, the count of wakes Jev would have absorbed that needed firstmate, and about twenty doubtful cases for the captain; each classified row records which model actually answered.
+The go-live criteria are zero wrongly absorbable wakes and at least 90% agreement over one week; activation is a separate change, and evaluating a local model's calibration against these criteria is a captain decision, not an assumption carried over from OpenRouter's defaults.
 The ground truth for "needed firstmate" (a steer, a decision, or a captain-facing final message in the handling turn) depends on the primary harness reporting its final message on turn end; Claude Code and Codex do, and other harnesses leave that part unknown.
 `bin/fm-jev.sh`'s header owns the log format, the attribution rules, and the exact limits.
 
@@ -777,6 +787,7 @@ FMX_PAIRING_TOKEN=      # Relay pairing token; .env opt-in authorizes replies an
 OPENROUTER_API_KEY=     # read from $FM_HOME/.env only, never the environment: opt-in for Jev shadow wake triage (see "Jev shadow wake triage")
 FM_JEV_FOREGROUND=0     # test-only: run the Jev shadow classifier synchronously inside the drain instead of detached
 FM_JEV_OBSERVE=1        # 0 marks an automated fm-send.sh (watcher resend, bootstrap nudge, config reread, remote relay) so it never counts as a firstmate steer
+FM_JEV_LOAD_OVERRIDE=   # test-only: stand-in 1-minute load average for the Jev local backend's load-ceiling check, bypassing /proc/loadavg or sysctl
 FMX_RELAY_URL=https://myfirstmate.io   # optional Relay endpoint override, mainly for local relay development
 FMX_ENV_FILE=           # optional alternate .env file for direct Relay client invocations; bootstrap still checks $FM_HOME/.env
 FMX_DRY_RUN=            # truthy previews Relay replies and dismissals to state/x-outbox/ without posting or requiring a token
