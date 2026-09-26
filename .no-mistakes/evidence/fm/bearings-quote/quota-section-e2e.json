@@ -1,0 +1,109 @@
+{
+  "source": "quota-axi",
+  "generated": "2026-09-26T14:35:03.033Z",
+  "available": true,
+  "status": "ok",
+  "providers": [
+    {
+      "provider": "claude",
+      "label": "Anthropic",
+      "available": true,
+      "status": "stale",
+      "plan": "max",
+      "windows": [
+        {
+          "id": "five_hour",
+          "label": "session",
+          "kind": "session",
+          "percent_used": 52,
+          "percent_remaining": 48,
+          "resets_at": "2026-09-26T16:40:00Z"
+        },
+        {
+          "id": "seven_day",
+          "label": "week",
+          "kind": "weekly",
+          "percent_used": 33,
+          "percent_remaining": 67,
+          "resets_at": "2026-10-02T07:00:00Z"
+        },
+        {
+          "id": "model:fable",
+          "label": "Fable week",
+          "kind": "model",
+          "percent_used": null,
+          "percent_remaining": null,
+          "resets_at": null
+        }
+      ],
+      "attention": [
+        {
+          "kind": "stale",
+          "detail": "fetch failed"
+        },
+        {
+          "kind": "headroom_unknown",
+          "detail": "all_models"
+        }
+      ],
+      "detail": "fetch failed"
+    },
+    {
+      "provider": "codex",
+      "label": "OpenAI",
+      "available": false,
+      "status": "auth_required",
+      "plan": null,
+      "windows": [],
+      "attention": [
+        {
+          "kind": "auth_required",
+          "detail": "Codex sign-in required"
+        }
+      ],
+      "detail": "Codex sign-in required"
+    },
+    {
+      "provider": "agy",
+      "label": "Google",
+      "available": true,
+      "status": "fresh",
+      "plan": "pro",
+      "windows": [
+        {
+          "id": "gemini_5h",
+          "label": "Gemini 5-hour",
+          "kind": "session",
+          "percent_used": 12,
+          "percent_remaining": 88,
+          "resets_at": "2026-09-26T18:00:00Z"
+        },
+        {
+          "id": "cg_5h",
+          "label": "Claude/GPT 5-hour",
+          "kind": "session",
+          "percent_used": 35,
+          "percent_remaining": 65,
+          "resets_at": "2026-09-26T18:00:00Z"
+        },
+        {
+          "id": "gemini_w",
+          "label": "Gemini weekly",
+          "kind": "weekly",
+          "percent_used": 6,
+          "percent_remaining": 94,
+          "resets_at": "2026-10-01T00:00:00Z"
+        },
+        {
+          "id": "flash",
+          "label": "Gemini 3 Flash",
+          "kind": "model",
+          "percent_used": 0,
+          "percent_remaining": 100,
+          "resets_at": null
+        }
+      ],
+      "attention": []
+    }
+  ]
+}

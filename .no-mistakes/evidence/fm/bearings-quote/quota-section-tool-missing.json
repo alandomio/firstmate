@@ -1,0 +1,39 @@
+{
+  "source": "quota-axi",
+  "generated": null,
+  "available": false,
+  "status": "tool_missing",
+  "detail": "quota-axi is not installed",
+  "providers": [
+    {
+      "provider": "claude",
+      "label": "Anthropic",
+      "available": false,
+      "status": "tool_missing",
+      "detail": "quota-axi is not installed",
+      "plan": null,
+      "windows": [],
+      "attention": []
+    },
+    {
+      "provider": "codex",
+      "label": "OpenAI",
+      "available": false,
+      "status": "tool_missing",
+      "detail": "quota-axi is not installed",
+      "plan": null,
+      "windows": [],
+      "attention": []
+    },
+    {
+      "provider": "agy",
+      "label": "Google",
+      "available": false,
+      "status": "tool_missing",
+      "detail": "quota-axi is not installed",
+      "plan": null,
+      "windows": [],
+      "attention": []
+    }
+  ]
+}
