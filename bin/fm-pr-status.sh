@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# fm-pr-status.sh - one compact line per GitLab merge request: merged,
-# approved, conflicted, and whether its reported pipeline is ACTUALLY green.
+# fm-pr-status.sh - one compact line per GitLab merge request: its state,
+# target branch, approvals, merge status, conflicts, whether its pipeline is
+# ACTUALLY green on the real head, and whether its project runs CI at all and
+# requires a passing pipeline to merge. Read-only: it never merges, approves,
+# or comments. Read merge request state with this tool rather than a
+# hand-rolled glab/jq pipeline, which has misread each trap below.
 #
 # The trap this exists to close: GitLab's head_pipeline is frequently a
 # MERGE-RESULT run against a synthetic merge commit, not the branch head, so a
@@ -34,9 +38,16 @@
 # Three further traps stay encoded because they were each got wrong by hand:
 #   - merge request descriptions routinely carry raw control characters that
 #     break `jq`/`json.load` mid-parse; the API response is scrubbed first.
-#   - approval is read from detailed_merge_status, not the `approved` flag:
-#     approved==true with an empty approved_by list means zero approvals were
-#     REQUIRED, not that anyone signed off.
+#   - approval is never read from the `approved` flag: approved==true with an
+#     empty approved_by list means zero approvals were REQUIRED, not that anyone
+#     signed off. The approvals endpoint's approved_by and approvals_left decide
+#     it, with detailed_merge_status=not_approved always winning:
+#       approved(<n>)          n people approved and none are still required
+#       not-required           nobody approved and none are required
+#       NOT-APPROVED[(<k>-left)]  approval is still required
+#       none-given             nobody approved; whether any is required could
+#                              not be told from the response
+#       UNVERIFIED             the approvals could not be read at all
 #   - a merge request's pipeline list mixes real CI runs with source=external
 #     entries that third-party tools (Atlantis and friends) post through the
 #     commit status API. Only non-external runs decide a verdict; a red
@@ -57,17 +68,29 @@
 # carries no hardcoded organization. An unresolvable shortname fails with a
 # clear message naming what it looked for rather than guessing a prefix.
 #
+# A full merge request URL (https://<host>/<group>/<project>/-/merge_requests/<iid>)
+# is parsed by bin/fm-pr-lib.sh and read from that URL's own host, so any
+# instance works; every other form reads glab's configured default host.
+#
 # Usage:
+#   fm-pr-status.sh <mr-url> [<mr-url>...]
 #   fm-pr-status.sh <repo> <iid> [<iid>...]
 #   fm-pr-status.sh <repo!iid> [<repo!iid>...]
 #   fm-pr-status.sh --repo group/subgroup/project <iid>...
 #   fm-pr-status.sh -h | --help
 #
-# Output columns: repo!num  state  approval  pipeline  head-sha  [- notes]
-# A merged merge request prints just "repo!num  MERGED  on <date>", and an
-# unreadable one just "repo!num  UNREACHABLE (<why>)". Conflicts, draft state,
-# what the badge actually is, and any failed external status are all disclosed
-# as their own notes - never folded into the pipeline verdict.
+# Output columns: repo!num state into=<target> ci=<verdict> approval=<approval> merge=<detailed_merge_status> conflicts=<no|YES> head=<sha> jobs=<enabled|DISABLED|?> must-succeed=<yes|no|?> [- notes]
+# jobs= is DISABLED when the project's jobs_enabled or builds_access_level
+# says CI can never run there, and must-succeed= is the project's "Pipelines
+# must succeed" setting; either prints ? when the project could not be read
+# or did not say (as GitLab's reduced view for low-permission tokens does),
+# and into= prints ? when the response named no target branch. Every ? fails
+# the run just as an unreadable read does.
+# A merged merge request prints just "repo!num merged into=<target> on=<date>",
+# and an unreadable one just "repo!num UNREACHABLE (<why>)". Draft state, what
+# the badge actually is, and any failed external status are all disclosed as
+# their own notes - never folded into the pipeline verdict.
+# Exit status is non-zero when any row, or any part of one, could not be read.
 #
 # Requires: glab (authenticated against the target GitLab host), python3.
 set -u
@@ -76,6 +99,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
+
+# shellcheck source=bin/fm-pr-lib.sh
+. "$SCRIPT_DIR/fm-pr-lib.sh"
 
 usage() {
   awk '
@@ -124,17 +150,95 @@ urlenc() { printf '%s' "$1" | sed 's|/|%2F|g'; }
 # jq/json.load mid-parse; strip them before anything touches the response.
 scrub() { tr -d '\000-\010\013\014\016-\037'; }
 
+# One GitLab API read, scrubbed. ROW_HOST is the host a full URL named, or
+# empty for glab's configured default. The exit status is glab's own.
+fm_prstat_api() {  # <api-path>
+  local out rc=0
+  if [ -n "$ROW_HOST" ]; then
+    out=$(glab api "$1" --hostname "$ROW_HOST" 2>/dev/null) || rc=$?
+  else
+    out=$(glab api "$1" 2>/dev/null) || rc=$?
+  fi
+  printf '%s' "$out" | scrub
+  return "$rc"
+}
+
+# The project's CI capability and "Pipelines must succeed" setting, left in
+# PROJ_CACHE_VAL as "<jobs> <must-succeed>". Called directly, never in a
+# subshell, so consecutive rows of one project reuse one read and an
+# unreadable project still marks the run failed.
+PROJ_CACHE_KEY=""
+PROJ_CACHE_VAL=""
+fm_prstat_project() {  # <repo-path> <encoded-path>
+  local key="$ROW_HOST|$1" raw rc=0 val
+  [ "$key" != "$PROJ_CACHE_KEY" ] || return 0
+  raw=$(fm_prstat_api "projects/$2") || rc=$?
+  val=$(printf '%s' "$raw" | python3 -c '
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: d=None
+if not isinstance(d,dict) or "id" not in d:
+    print("UNREADABLE"); raise SystemExit(0)
+je=d.get("jobs_enabled"); bal=d.get("builds_access_level")
+if je is False or bal == "disabled": jobs="DISABLED"
+elif je is True or bal in ("enabled", "private"): jobs="enabled"
+else: jobs="?"
+m=d.get("only_allow_merge_if_pipeline_succeeds")
+print(jobs, "yes" if m is True else "no" if m is False else "?")
+' 2>/dev/null)
+  if [ "$rc" -ne 0 ] || [ -z "$val" ] || [ "$val" = UNREADABLE ]; then
+    STATUS=1
+    val="? ?"
+  fi
+  case "$val" in *'?'*) STATUS=1 ;; esac
+  PROJ_CACHE_KEY=$key
+  PROJ_CACHE_VAL=$val
+}
+
+# Who approved and whether any approval is still required, left in
+# ROW_APPROVAL; the verdicts are listed in the header and
+# detailed_merge_status=not_approved always wins. Called directly, never in a
+# subshell, so an unreadable response still marks the run failed.
+ROW_APPROVAL=""
+fm_prstat_approval() {  # <encoded-path> <iid> <detailed_merge_status>
+  local raw rc=0 val
+  raw=$(fm_prstat_api "projects/$1/merge_requests/$2/approvals") || rc=$?
+  [ "$rc" -eq 0 ] || raw=""
+  val=$(printf '%s' "$raw" | python3 -c '
+import json,sys
+dms=sys.argv[1]
+try: d=json.load(sys.stdin)
+except Exception: d=None
+if not isinstance(d,dict) or not ("approved_by" in d or "approvals_left" in d):
+    print("NOT-APPROVED" if dms == "not_approved" else "UNVERIFIED"); raise SystemExit(0)
+by=d.get("approved_by")
+n=len(by) if isinstance(by,list) else 0
+left=d.get("approvals_left")
+if isinstance(left,bool) or not isinstance(left,int): left=None
+if dms == "not_approved" or (left is not None and left > 0):
+    print("NOT-APPROVED(%d-left)" % left if left else "NOT-APPROVED")
+elif n > 0: print("approved(%d)" % n)
+elif left == 0 or dms == "mergeable": print("not-required")
+else: print("none-given")
+' "$3" 2>/dev/null)
+  if [ -z "$val" ]; then
+    val="UNVERIFIED"
+  fi
+  [ "$val" != UNVERIFIED ] || STATUS=1
+  ROW_APPROVAL=$val
+}
+
 fm_prstat_unreachable() {  # <repo-path> <iid> <why>
   printf '%-34s  %s\n' "$(basename "$1")!$2" "UNREACHABLE ($3 - check repo/number/auth)"
   STATUS=1
 }
 
+ROW_HOST=""
 fm_prstat_one() {  # <repo-path> <iid>
-  local repo="$1" iid="$2" enc j rc=0 state sha pipe_sha pipe pipe_source pipe_ref dms conflicts merged draft
+  local repo="$1" iid="$2" enc j rc=0 state sha pipe_sha pipe pipe_source pipe_ref dms conflicts merged draft target
   enc=$(urlenc "$repo")
 
-  j=$(glab api "projects/$enc/merge_requests/$iid" 2>/dev/null) || rc=$?
-  j=$(printf '%s' "$j" | scrub)
+  j=$(fm_prstat_api "projects/$enc/merge_requests/$iid") || rc=$?
   if [ "$rc" -ne 0 ] || [ -z "$j" ]; then
     fm_prstat_unreachable "$repo" "$iid" "no data"
     return
@@ -143,7 +247,7 @@ fm_prstat_one() {  # <repo-path> <iid>
   # The parser emits a lone UNREADABLE sentinel rather than defaulted fields:
   # `glab api` prints an error body on stdout for a non-2xx, and defaulting
   # that to "- / - / none" would compare equal and fabricate a head verdict.
-  read -r state draft sha pipe_sha pipe pipe_source pipe_ref dms conflicts merged <<EOF
+  read -r state draft sha pipe_sha pipe pipe_source pipe_ref dms conflicts merged target <<EOF
 $(printf '%s' "$j" | python3 -c '
 import json,sys
 try: d=json.load(sys.stdin)
@@ -162,6 +266,7 @@ print(" ".join(str(x) for x in (
   d.get("detailed_merge_status") or "?",
   "yes" if d.get("has_conflicts") else "no",
   (d.get("merged_at") or "-")[:10],
+  "".join(str(d.get("target_branch") or "?").split()) or "?",
 )))
 ' 2>/dev/null)
 EOF
@@ -169,9 +274,10 @@ EOF
     fm_prstat_unreachable "$repo" "$iid" "unreadable response"
     return
   fi
+  [ "$target" != "?" ] || STATUS=1
 
   if [ "$merged" != "-" ] && [ -n "$merged" ]; then
-    printf '%-34s  %-7s %s\n' "$(basename "$repo")!$iid" "MERGED" "on $merged"
+    printf '%-34s  %-7s into=%s on=%s\n' "$(basename "$repo")!$iid" "merged" "$target" "$merged"
     return
   fi
 
@@ -190,8 +296,8 @@ EOF
   # wrong: it is the only place a red external status is visible, and dropping
   # it on the rows whose badge happens to match would hide exactly the signal
   # the notes promise to disclose.
-  praw=$(glab api "projects/$enc/merge_requests/$iid/pipelines?per_page=30" 2>/dev/null) || prc=$?
-  plook=$(printf '%s' "$praw" | scrub | python3 -c '
+  praw=$(fm_prstat_api "projects/$enc/merge_requests/$iid/pipelines?per_page=30") || prc=$?
+  plook=$(printf '%s' "$praw" | python3 -c '
 import json,sys
 want,badge_ref,badge_source,badge_sha=sys.argv[1:5]
 def is_merge_result(ref):
@@ -273,23 +379,19 @@ print(kind)
   fi
   [ -n "$ext_red" ] && notes="${notes:+$notes; }external status red: $ext_red"
 
-  # Approval, read from the merge status rather than a third API call:
-  # approved==true with an empty approved_by list just means none was required.
-  local appr
-  case "$dms" in
-    not_approved)  appr="NOT-APPROVED" ;;
-    draft_status)  appr="draft" ;;
-    mergeable)     appr="ok" ;;
-    conflict)      appr="-" ;;
-    checking)      appr="checking" ;;
-    *)             appr="$dms" ;;
-  esac
+  fm_prstat_approval "$enc" "$iid" "$dms"
+  fm_prstat_project "$repo" "$enc"
+  local jobs must conflict_col=no
+  [ "$conflicts" = yes ] && conflict_col=YES
+  read -r jobs must <<EOF
+$PROJ_CACHE_VAL
+EOF
 
-  [ "$conflicts" = "yes" ] && notes="${notes:+$notes; }CONFLICTS"
   [ "$draft" = "draft" ] && notes="${notes:+$notes; }DRAFT - cannot merge until marked ready"
 
-  printf '%-34s  %-7s %-13s %-13s %-9s %s\n' \
-    "$(basename "$repo")!$iid" "$state" "$appr" "$verdict" "$sha_short" "${notes:+- $notes}"
+  printf '%-34s  %-7s into=%s ci=%s approval=%s merge=%s conflicts=%s head=%s jobs=%s must-succeed=%s%s\n' \
+    "$(basename "$repo")!$iid" "$state" "$target" "$verdict" "$ROW_APPROVAL" "$dms" \
+    "$conflict_col" "$sha_short" "$jobs" "$must" "${notes:+ - $notes}"
 }
 
 [ "$#" -gt 0 ] || { usage; exit 0; }
@@ -304,6 +406,16 @@ while [ "$#" -gt 0 ]; do
       CUR=$(fm_prstat_repo_path "$1") || exit 1
       ;;
     -h|--help) usage; exit 0 ;;
+    https://*)
+      if fm_pr_url_parse "$1" && [ "$FM_PR_PROVIDER" = gitlab ]; then
+        ROW_HOST=$FM_PR_HOST
+        fm_prstat_one "$FM_PR_PATH" "$FM_PR_NUMBER"
+        ROW_HOST=""
+      else
+        echo "error: '$1' is not a GitLab merge request URL (https://<host>/<group>/<project>/-/merge_requests/<iid>)" >&2
+        STATUS=1
+      fi
+      ;;
     *!*)
       repo=$(fm_prstat_repo_path "${1%%!*}") || { STATUS=1; shift; continue; }
       fm_prstat_one "$repo" "${1##*!}"
