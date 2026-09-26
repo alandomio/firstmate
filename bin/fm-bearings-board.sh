@@ -35,8 +35,10 @@
 # only as the deliberate genuinely-no-repo marker. In that exceptional case
 # the template may display the routing id. Every Captain's Call item also
 # carries `allow_freeform: true`; there is no card the composer may render
-# without an open response textbox. Anything else refuses before the
-# existing board is touched.
+# without an open response textbox. The optional `quota` section is exactly
+# what bin/fm-bearings-quota.sh prints (that script's header owns its shape);
+# a payload without it still validates, and one carrying it must satisfy that
+# shape. Anything else refuses before the existing board is touched.
 #
 # The board path is stable - $FM_HOME/.lavish/bearings-board.html - so a
 # re-invocation rebuilds the same file in place, which keeps the same Lavish
@@ -116,6 +118,23 @@ validate_payload() {  # <data.json>
       type == "object" and repo_marker and (.id | slug(128))
       and (.title | nonempty_string) and (.reason | type == "string")
       and (.dispatchable | type == "boolean");
+    def percent: . == null or (type == "number" and . >= 0 and . <= 100);
+    def nullable_string($name): (.[$name] == null) or (.[$name] | type == "string");
+    def quota_window:
+      type == "object" and (.label | nonempty_string) and (.kind | type == "string")
+      and (.percent_used | percent) and (.percent_remaining | percent)
+      and nullable_string("resets_at");
+    def quota_attention: type == "object" and (.kind | slug(64)) and optional_string("detail");
+    def quota_provider:
+      type == "object" and (.provider | slug(64)) and (.label | nonempty_string)
+      and (.available | type == "boolean") and (.status | slug(64))
+      and optional_string("detail") and nullable_string("plan")
+      and (.windows | type == "array") and ([.windows[] | quota_window] | all)
+      and (.attention | type == "array") and ([.attention[] | quota_attention] | all);
+    def quota_section:
+      type == "object" and (.available | type == "boolean") and (.status | slug(64))
+      and optional_string("detail") and nullable_string("generated")
+      and (.providers | type == "array") and ([.providers[] | quota_provider] | all);
     type == "object"
     and (.schema == $schema)
     and (.home | nonempty_string)
@@ -131,6 +150,7 @@ validate_payload() {  # <data.json>
     and ([.underway[] | underway_item] | all)
     and ([.landed[] | landed_item] | all)
     and ([.charted[] | charted_item] | all)
+    and ((has("quota") | not) or (.quota | quota_section))
   ' "$1" >/dev/null
 }
 
