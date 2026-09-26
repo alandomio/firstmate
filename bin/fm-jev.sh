@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# fm-jev.sh - Jev (TypeSafe's decision model on OpenRouter) as a SHADOW-ONLY,
-# advisory classifier of supervision wakes, plus the measurement that decides
-# whether it may ever do more.
+# fm-jev.sh - Jev (TypeSafe's decision model on OpenRouter, or a local
+# Jev-compatible server) as a SHADOW-ONLY, advisory classifier of supervision
+# wakes, plus the measurement that decides whether it may ever do more.
 #
 # Usage:
 #   fm-jev.sh status
@@ -56,10 +56,10 @@
 # cost - a missing usage.cost is expected, not an error - so it is instead
 # gated on machine load: a 1-minute load-average ceiling (default 8; override
 # with a decimal number in config/jev-max-load) checked before each request.
-# Either backend's timeout, API/transport error, or
-# (OpenRouter) reaching the spend cap or (local) the load ceiling pauses
-# classification until the next local calendar day (state/jev/disabled). The
-# wake itself is untouched in every case because shadow mode never held it.
+# Either backend's timeout, API/transport error, or (OpenRouter) reaching the
+# spend cap or (local) the load ceiling pauses classification until the next
+# local calendar day (state/jev/disabled). The wake itself is untouched in
+# every case because shadow mode never held it.
 #
 # Private log: state/jev/shadow.jsonl, append-only, mode 0600, one JSON object
 # per line:
