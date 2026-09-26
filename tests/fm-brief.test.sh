@@ -339,68 +339,71 @@ test_faster_paths_use_configured_authority_without_stacked_review() {
   pass "fm-brief.sh: faster paths use configured authority without stacked review"
 }
 
-# The captain's standing rule (2026-09-09): every ship brief whose mode can open
-# a PR/MR must order the mr-description skill and pre-authorize the worker to
-# act as the human it hands off to (agentmemory receipt 2026-09-06: two workers
-# independently stalled ~2h at that skill's human-facing closing line before
-# this contract existed). local-only and scout never open a PR/MR, so they
-# must not reference the skill at all. Covers both GitHub and GitLab vocabulary
-# so a forge-specific regression in the new paragraph cannot go quietly past.
-test_mr_description_rule_present() {
+# Every ship brief whose mode can open a PR/MR must have the worker write the
+# description itself and pre-authorize it to create the PR/MR without waiting
+# for confirmation (agentmemory receipt 2026-09-06: two workers independently
+# stalled ~2h waiting on a human handoff before this contract existed).
+# No brief may name the mr-description skill: it does not exist, so the
+# scaffold must never send a worker to it. local-only and scout never open a
+# PR/MR, so they carry no description rule at all. Covers both GitHub and
+# GitLab vocabulary so a forge-specific regression cannot go quietly past.
+test_pr_description_rule_present() {
   local home brief
 
-  home="$TMP_ROOT/mrdesc-skill-home"
+  home="$TMP_ROOT/prdesc-home"
   mkdir -p "$home/data"
   write_project_clone "$home" gh-proj https://github.com/acme/gh-proj.git
   write_project_clone "$home" gl-proj https://gitlab.com/peterpark/gl-proj.git
 
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-mr-desc-directpr-gh gh-proj --mode direct-PR >/dev/null 2>&1
-  brief="$home/data/brief-mr-desc-directpr-gh/brief.md"
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'Write the pull request description with the mr-description skill (`~/.claude/skills/mr-description`), never by hand.' "$brief" \
-    "direct-PR/GitHub brief must order the mr-description skill in PR vocabulary"
-  assert_grep 'you are that human here, so create the pull request yourself and never wait for confirmation' "$brief" \
-    "direct-PR/GitHub brief must pre-authorize the worker to act as the skill's human handoff"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-pr-desc-directpr-gh gh-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/brief-pr-desc-directpr-gh/brief.md"
+  assert_grep 'Write the pull request description yourself.' "$brief" \
+    "direct-PR/GitHub brief must have the worker write the description in PR vocabulary"
+  assert_grep 'Create the pull request yourself and never wait for confirmation' "$brief" \
+    "direct-PR/GitHub brief must pre-authorize the worker to create the pull request"
   assert_grep 'Do not include a "Generated with Claude Code" trailer or other orchestration vocabulary in the description.' "$brief" \
     "direct-PR/GitHub brief must forbid the Claude Code trailer and orchestration vocabulary"
+  assert_no_grep 'mr-description' "$brief" "direct-PR/GitHub brief must not name the nonexistent mr-description skill"
   assert_no_grep 'merge request' "$brief" "direct-PR/GitHub brief must not mix MR vocabulary into a GitHub brief"
 
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-mr-desc-directpr-gl gl-proj --mode direct-PR >/dev/null 2>&1
-  brief="$home/data/brief-mr-desc-directpr-gl/brief.md"
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'Write the merge request description with the mr-description skill (`~/.claude/skills/mr-description`), never by hand.' "$brief" \
-    "direct-PR/GitLab brief must order the mr-description skill in MR vocabulary"
-  assert_grep 'you are that human here, so create the merge request yourself and never wait for confirmation' "$brief" \
-    "direct-PR/GitLab brief must pre-authorize the worker to act as the skill's human handoff"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-pr-desc-directpr-gl gl-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/brief-pr-desc-directpr-gl/brief.md"
+  assert_grep 'Write the merge request description yourself.' "$brief" \
+    "direct-PR/GitLab brief must have the worker write the description in MR vocabulary"
+  assert_grep 'Create the merge request yourself and never wait for confirmation' "$brief" \
+    "direct-PR/GitLab brief must pre-authorize the worker to create the merge request"
+  assert_no_grep 'mr-description' "$brief" "direct-PR/GitLab brief must not name the nonexistent mr-description skill"
   assert_no_grep 'pull request' "$brief" "direct-PR/GitLab brief must not mix PR vocabulary into a GitLab brief"
 
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-mr-desc-nomistakes-gh gh-proj --mode no-mistakes >/dev/null 2>&1
-  brief="$home/data/brief-mr-desc-nomistakes-gh/brief.md"
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'Write the pull request description with the mr-description skill (`~/.claude/skills/mr-description`), never by hand.' "$brief" \
-    "no-mistakes/GitHub brief must order the mr-description skill in PR vocabulary"
-  assert_grep 'you are that human here, so create or update the pull request yourself and never wait for confirmation' "$brief" \
-    "no-mistakes/GitHub brief must pre-authorize the worker to act as the skill's human handoff"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-pr-desc-nomistakes-gh gh-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-pr-desc-nomistakes-gh/brief.md"
+  assert_grep 'Write the pull request description yourself.' "$brief" \
+    "no-mistakes/GitHub brief must have the worker write the description in PR vocabulary"
+  assert_grep 'Create or update the pull request yourself and never wait for confirmation' "$brief" \
+    "no-mistakes/GitHub brief must pre-authorize the worker to create or update the pull request"
+  assert_no_grep 'mr-description' "$brief" "no-mistakes/GitHub brief must not name the nonexistent mr-description skill"
 
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-mr-desc-nomistakes-gl gl-proj --mode no-mistakes >/dev/null 2>&1
-  brief="$home/data/brief-mr-desc-nomistakes-gl/brief.md"
-  # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
-  assert_grep 'Write the merge request description with the mr-description skill (`~/.claude/skills/mr-description`), never by hand.' "$brief" \
-    "no-mistakes/GitLab brief must order the mr-description skill in MR vocabulary"
-  assert_grep 'you are that human here, so create or update the merge request yourself and never wait for confirmation' "$brief" \
-    "no-mistakes/GitLab brief must pre-authorize the worker to act as the skill's human handoff"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-pr-desc-nomistakes-gl gl-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/brief-pr-desc-nomistakes-gl/brief.md"
+  assert_grep 'Write the merge request description yourself.' "$brief" \
+    "no-mistakes/GitLab brief must have the worker write the description in MR vocabulary"
+  assert_grep 'Create or update the merge request yourself and never wait for confirmation' "$brief" \
+    "no-mistakes/GitLab brief must pre-authorize the worker to create or update the merge request"
+  assert_no_grep 'mr-description' "$brief" "no-mistakes/GitLab brief must not name the nonexistent mr-description skill"
 
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-mr-desc-localonly gh-proj --mode local-only >/dev/null 2>&1
-  brief="$home/data/brief-mr-desc-localonly/brief.md"
-  assert_no_grep 'mr-description' "$brief" \
-    "local-only brief must not reference the mr-description skill (it never opens a PR)"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-pr-desc-localonly gh-proj --mode local-only >/dev/null 2>&1
+  brief="$home/data/brief-pr-desc-localonly/brief.md"
+  assert_no_grep 'description yourself' "$brief" \
+    "local-only brief must not carry the PR description rule (it never opens a PR)"
+  assert_no_grep 'mr-description' "$brief" "local-only brief must not name the nonexistent mr-description skill"
 
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-mr-desc-scout gh-proj --scout >/dev/null 2>&1
-  brief="$home/data/brief-mr-desc-scout/brief.md"
-  assert_no_grep 'mr-description' "$brief" \
-    "scout brief must not reference the mr-description skill (it never opens a PR)"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-pr-desc-scout gh-proj --scout >/dev/null 2>&1
+  brief="$home/data/brief-pr-desc-scout/brief.md"
+  assert_no_grep 'description yourself' "$brief" \
+    "scout brief must not carry the PR description rule (it never opens a PR)"
+  assert_no_grep 'mr-description' "$brief" "scout brief must not name the nonexistent mr-description skill"
 
-  pass "fm-brief.sh: every PR/MR-opening ship brief orders the mr-description skill in its forge's vocabulary"
+  pass "fm-brief.sh: every PR/MR-opening ship brief has the worker write the description itself in its forge's vocabulary"
 }
 
 # Pin the specific line the bug lived on: the no-mistakes DOD's no-mistakes
@@ -1445,7 +1448,7 @@ test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
-test_mr_description_rule_present
+test_pr_description_rule_present
 test_no_mistakes_dod_wording
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
