@@ -617,7 +617,7 @@ A home without the key pays one cheap `.env` check per drain, send, lifecycle ac
 
 Only the wake's reason line and the worker's last status line leave the machine, with URLs and paths masked; `bin/fm-jev.sh mask` shows the exact masking.
 Each request has a 2 second timeout, and `config/jev-daily-cap` optionally overrides the default USD 1 daily spend cap with a decimal number.
-A timeout, an API error, or reaching the cap pauses classification until the next local day while every wake still surfaces exactly as it would without Jev.
+A timeout, an API or transport error, a response without a cost, or reaching the cap pauses classification until the next local day while every wake still surfaces exactly as it would without Jev.
 
 `bin/fm-jev.sh status` reports the switch, today's spend, and any pause.
 `bin/fm-jev.sh report` measures the shadow window: agreement between Jev and firstmate's actual handling, the count of wakes Jev would have absorbed that needed firstmate, and about twenty doubtful cases for the captain.
