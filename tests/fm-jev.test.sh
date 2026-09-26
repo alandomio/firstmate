@@ -5,7 +5,7 @@
 # off-by-default switch, that shadow mode never changes what a drain presents
 # or how fast it returns, the limits (timeout, API error, missing cost, daily
 # cap, next-day resume) for the OpenRouter backend and (no key, missing cost is
-# not an error, loopback-only enforcement, load-ceiling pause) for the local
+# not an error, loopback-only enforcement, load-ceiling skip) for the local
 # backend, what leaves the machine (masking, only two state fields, the key
 # never in argv or on disk), and the ground-truth report over a fixture log.
 # tests/fm-jev-local-rizzo-live.test.sh is the opt-in live counterpart against
@@ -308,7 +308,8 @@ test_local_backend_endpoint_is_read_from_the_home_not_a_config_override() {
   in_home "$home" env FM_CONFIG_OVERRIDE="$override" FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=5 \
     "$DRAIN" >/dev/null 2>&1 || fail "drain failed under load with FM_CONFIG_OVERRIDE"
   [ "$(calls "$home")" = 1 ] || fail "the home's config/jev-max-load was ignored under FM_CONFIG_OVERRIDE"
-  [ "$(cut -f2 "$home/state/jev/disabled")" = load ] || fail "the home's load ceiling did not pause Jev under FM_CONFIG_OVERRIDE"
+  jev_events "$home" 'select(.id == "1790000000:2" and .why == "load")' | grep -q . \
+    || fail "the home's load ceiling did not skip the wake under FM_CONFIG_OVERRIDE"
   out=$(in_home "$home" env FM_CONFIG_OVERRIDE="$override" "$JEV" status)
   assert_contains "$out" 'config/jev-endpoint = http://127.0.0.1:8017' "status did not read the home's config/jev-endpoint"
   assert_contains "$out" 'load ceiling: 4' "status did not read the home's config/jev-max-load"
@@ -352,29 +353,26 @@ test_local_backend_refuses_a_non_loopback_endpoint() {
   pass "a non-loopback or path-carrying config/jev-endpoint is refused, never dialed, and pauses Jev"
 }
 
-test_local_backend_load_ceiling_pauses_like_the_spend_cap() {
+test_local_backend_load_ceiling_skips_without_a_day_pause() {
   local home
   home=$(jev_local_case local-load)
   printf '4\n' > "$home/config/jev-max-load"
   queue_row "$home" 1 heartbeat heartbeat heartbeat
   queue_row "$home" 2 stale default:w1:p1 'stale: default:w1:p1'
-  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=9.5 "$DRAIN" >/dev/null 2>&1 \
+  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=4 "$DRAIN" >/dev/null 2>&1 \
     || fail "drain failed under load"
-  [ "$(calls "$home")" = 0 ] || fail "Jev classified while the load ceiling was exceeded"
-  [ "$(cut -f2 "$home/state/jev/disabled")" = load ] || fail "an exceeded load ceiling did not pause Jev"
-  jev_events "$home" 'select(.why == "load")' | grep -q . || fail "the load pause was not logged"
-  printf '2000-01-01\tload\n' > "$home/state/jev/disabled"
+  [ "$(calls "$home")" = 0 ] || fail "Jev classified while the load was at the ceiling"
+  [ "$(jev_events "$home" 'select(.outcome == "skipped" and .why == "load")' | wc -l | tr -d ' ')" = 2 ] \
+    || fail "each wake presented at the load ceiling was not skipped with why=load"
+  assert_absent "$home/state/jev/disabled" "a load spike paused Jev for the whole day"
   queue_row "$home" 3 heartbeat heartbeat heartbeat
   in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=0.5 "$DRAIN" >/dev/null 2>&1 \
-    || fail "drain failed the next day"
-  [ "$(calls "$home")" = 1 ] || fail "Jev did not resume on a later day once the load fell"
-  home=$(jev_local_case local-load-ok)
-  printf '4\n' > "$home/config/jev-max-load"
-  queue_row "$home" 1 heartbeat heartbeat heartbeat
-  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=0.5 "$DRAIN" >/dev/null 2>&1 \
-    || fail "drain failed under a normal load"
-  [ "$(calls "$home")" = 1 ] || fail "Jev did not classify below the load ceiling"
-  pass "a 1-minute load average at or above config/jev-max-load pauses Jev like the spend cap; below it, Jev classifies"
+    || fail "drain failed once the load fell"
+  [ "$(calls "$home")" = 1 ] || fail "Jev did not resume the same day once the load fell below the ceiling"
+  jev_events "$home" 'select(.id == "1790000000:3" and .outcome == "classified")' | grep -q . \
+    || fail "the wake presented after the load fell was not classified"
+  assert_absent "$home/state/jev/disabled" "a day pause was set across the load spike"
+  pass "a 1-minute load average at or above config/jev-max-load skips only that wake; a later reading below it classifies again"
 }
 
 test_local_backend_status_reports_the_endpoint_and_ceiling() {
@@ -574,7 +572,7 @@ test_local_backend_endpoint_is_read_from_the_home_not_a_config_override
 test_blank_jev_endpoint_does_not_override_openrouter
 test_local_backend_missing_cost_is_not_an_error
 test_local_backend_refuses_a_non_loopback_endpoint
-test_local_backend_load_ceiling_pauses_like_the_spend_cap
+test_local_backend_load_ceiling_skips_without_a_day_pause
 test_local_backend_status_reports_the_endpoint_and_ceiling
 test_drain_never_waits_for_jev
 test_hooks_record_actions_and_turn_ends_without_text

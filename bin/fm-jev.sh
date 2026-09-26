@@ -55,11 +55,12 @@
 # missing cost is an API error there. The local backend has no per-request
 # cost - a missing usage.cost is expected, not an error - so it is instead
 # gated on machine load: a 1-minute load-average ceiling (default 8; override
-# with a decimal number in config/jev-max-load) checked before each request.
-# Either backend's timeout, API/transport error, or (OpenRouter) reaching the
-# spend cap or (local) the load ceiling pauses classification until the next
-# local calendar day (state/jev/disabled). The wake itself is untouched in
-# every case because shadow mode never held it.
+# with a decimal number in config/jev-max-load) checked before each request;
+# a wake presented at or above it is only skipped (why=load), so the next
+# reading below the ceiling classifies again. Either backend's timeout,
+# API/transport error, or (OpenRouter) reaching the spend cap pauses
+# classification until the next local calendar day (state/jev/disabled). The
+# wake itself is untouched in every case because shadow mode never held it.
 #
 # Private log: state/jev/shadow.jsonl, append-only, mode 0600, one JSON object
 # per line:
@@ -284,7 +285,7 @@ jev_request_body() {  # <reason> <status> <model>
 # One request against either backend. Prints nothing; logs a classified or
 # skipped event and pauses for the day on timeout, API error, or (OpenRouter
 # only) a missing cost or the spend cap; the caller applies the local
-# backend's load-ceiling pause before ever calling this.
+# backend's load-ceiling skip before ever calling this.
 jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-before> <cap>
   local id=$1 reason=$2 status=$3 backend=$4 spend=$5 cap=$6
   local day key model endpoint timeout body resp code rc start ms cost event
@@ -435,7 +436,6 @@ cmd_observe_drain() {  # <spool> <epoch>
       fi
       load=$(jev_load_avg)
       if [ -n "$load" ] && jev_ge "$load" "$maxload"; then
-        jev_pause "$day" load
         jev_log_skip "$id" load "1-minute load average $load at or above the $maxload ceiling" "$reason" "$status"
         continue
       fi

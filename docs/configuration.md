@@ -626,8 +626,8 @@ For the local backend nothing leaves the machine at all (no egress); masking is 
 
 Each request, on either backend, has a 5 second timeout by default; `config/jev-timeout` optionally overrides it with a positive number of seconds (an invalid value keeps the default and `bin/fm-jev.sh status` says so).
 The OpenRouter backend also has a daily spend cap (USD, default 1; override with a decimal number in `config/jev-daily-cap`), summed from each response's `usage.cost`; a response without a cost is an API error there.
-The local backend has no per-request cost - a missing cost is expected, not an error - so it is instead gated on a 1-minute load-average ceiling (default 8; override with a decimal number in `config/jev-max-load`) checked before each request.
-Either backend's timeout or an API/transport error, and (OpenRouter) reaching the spend cap or (local) the load ceiling, pauses classification until the next local day while every wake still surfaces exactly as it would without Jev.
+The local backend has no per-request cost - a missing cost is expected, not an error - so it is instead gated on a 1-minute load-average ceiling (default 8; override with a decimal number in `config/jev-max-load`) checked before each request; a wake presented at or above it is only skipped (logged with `why=load`), so classification resumes as soon as a later reading is back below the ceiling.
+Either backend's timeout or an API/transport error, and (OpenRouter) reaching the spend cap, pauses classification until the next local day while every wake still surfaces exactly as it would without Jev.
 
 `bin/fm-jev.sh status` reports the active backend (or that both are off), the OpenRouter spend or the local endpoint and load ceiling, and any pause.
 `bin/fm-jev.sh report` measures the shadow window: agreement between Jev and firstmate's actual handling, the count of wakes Jev would have absorbed that needed firstmate, and about twenty doubtful cases for the captain; each classified row records which model actually answered.
