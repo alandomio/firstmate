@@ -17,6 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-jev-lib.sh
+. "$SCRIPT_DIR/fm-jev-lib.sh"
 
 DRAIN_TMP=
 DRAIN_LOCK_HELD=false
@@ -323,6 +325,8 @@ if [ -n "$ACK_THROUGH" ]; then
   DRAIN_TMP=
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
+  # Opt-in Jev shadow measurement only; a no-op unless this home enabled it.
+  fm_jev_observe_ack "$FM_HOME" "$STATE" "$ACK_THROUGH"
   if [ "$RECOVERY_ACK_MOVED" = true ]; then
     printf 'wake drain: acknowledged wakes through %s, but a newer recovery episode is pending; re-run bin/fm-wake-drain.sh and use the new WAKE_ACK_REQUIRED command\n' \
       "$ACK_THROUGH" >&2
@@ -400,5 +404,8 @@ printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --a
   "$ACK_THROUGH" "${RECOVERY_MARKER_TOKEN##*:}" >&2
 
 (print_status_presentation "$RAW_ROWS") || true
+# Opt-in Jev shadow classification (bin/fm-jev.sh): detached, never alters the
+# presentation above, and a no-op unless this home enabled it.
+fm_jev_observe_drain "$FM_HOME" "$STATE" "$RAW_ROWS"
 assert_watcher_liveness
 exit 0

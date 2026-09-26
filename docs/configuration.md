@@ -11,7 +11,7 @@ The shared orchestrator behavior lives in [`AGENTS.md`](../AGENTS.md) - edit it 
 This section is the single owner of the top-level operational-home layout; producer script headers and their help own exact child-file fields and mutation contracts.
 The tracked code root contains the shared instruction, skill, documentation, workflow, and `bin/` surfaces, while each effective `FM_HOME` contains private operational directories.
 `data/` holds durable private fleet records such as the project and secondmate registries, captain preferences, optional shared captain preferences, learnings, backlog, briefs, and scout reports.
-`state/` holds runtime records such as task metadata, append-only status events, endpoint signals, watcher and wake-queue coordination, inactive terminal-outcome receipts under `state/terminal-outcomes/`, away-mode state, generated Relay artifacts, private secondmate config-reread generations with their retry and quarantine state, and parent-owned secondmate pending-reply records under `state/pending-replies/` (`bin/fm-pending-reply-lib.sh`).
+`state/` holds runtime records such as task metadata, append-only status events, endpoint signals, watcher and wake-queue coordination, inactive terminal-outcome receipts under `state/terminal-outcomes/`, away-mode state, generated Relay artifacts, the opt-in Jev shadow wake-triage log under `state/jev/`, private secondmate config-reread generations with their retry and quarantine state, and parent-owned secondmate pending-reply records under `state/pending-replies/` (`bin/fm-pending-reply-lib.sh`).
 `config/` holds local gitignored operating choices, and `projects/` holds the local project clones that Firstmate reads but changes only through the narrow guarded and concrete captain-approved exceptions in `AGENTS.md`.
 
 `bin/fm-spawn.sh` owns the base task-metadata fields it emits, while the runtime-backend section below owns backend-specific fields and selector interpretation.
@@ -604,6 +604,27 @@ The session-start digest separately prints a "Public commitments" subsection fro
 `FM_PF_RETRY_BACKOFF_SECS` (default 900) sets the next-attempt time recorded with a retryable delivery error.
 See [verification/public-followup.md](verification/public-followup.md) for the current maintainer evidence behind restart recovery, retained-loop disposition, and the relay-disabled zero-overhead guarantee.
 
+## Jev shadow wake triage (.env OPENROUTER_API_KEY / config/jev-daily-cap)
+
+Jev is TypeSafe's decision model, reached through OpenRouter as `typesafe/jev-1.13`.
+Firstmate uses it only as an advisory, shadow-only classifier of supervision wakes: it asks one three-way question per presented wake (needs firstmate, absorbable, or urgent for the captain), logs the answer next to what firstmate actually did, and acts on nothing.
+It never delays, drops, reorders, absorbs, or alters a wake, and nothing reads its answer to decide a merge, a destructive or security-sensitive action, or a captain call.
+
+It is off unless this home's gitignored `.env` carries a non-empty `OPENROUTER_API_KEY`, the same presence gate Relay uses.
+An `OPENROUTER_API_KEY` in the ambient environment never enables it, and no other `.env` value is read.
+Use a dedicated OpenRouter key with its own spend limit on OpenRouter as well.
+A home without the key pays one cheap `.env` check per drain, send, lifecycle action, captain hold, and primary turn end, and writes nothing.
+
+Only the wake's reason line and the worker's last status line leave the machine, with URLs and paths masked; `bin/fm-jev.sh mask` shows the exact masking.
+Each request has a 2 second timeout, and `config/jev-daily-cap` optionally overrides the default USD 1 daily spend cap with a decimal number.
+A timeout, an API or transport error, a response without a cost, or reaching the cap pauses classification until the next local day while every wake still surfaces exactly as it would without Jev.
+
+`bin/fm-jev.sh status` reports the switch, today's spend, and any pause.
+`bin/fm-jev.sh report` measures the shadow window: agreement between Jev and firstmate's actual handling, the count of wakes Jev would have absorbed that needed firstmate, and about twenty doubtful cases for the captain.
+The go-live criteria are zero wrongly absorbable wakes and at least 90% agreement over one week; activation is a separate change.
+The ground truth for "needed firstmate" (a steer, a decision, or a captain-facing final message in the handling turn) depends on the primary harness reporting its final message on turn end; Claude Code and Codex do, and other harnesses leave that part unknown.
+`bin/fm-jev.sh`'s header owns the log format, the attribution rules, and the exact limits.
+
 ## Process-to-event sources (state/procevent)
 
 A long-polling external process is registered as a *source* through its adapter, whose header and `--help` own the commands and flags.
@@ -750,6 +771,9 @@ FM_TEARDOWN_PROCESS_SCAN_TIMEOUT_SECS=30   # whole seconds allowed per leftover-
 FM_CREW_STATE_RUNS_LIMIT=200  # recent no-mistakes run rows scanned when axi status cannot be attributed to the current code
 FM_CREW_STATE_BIN=bin/fm-crew-state.sh   # test override for the current-state reader used by working/paused watcher triage
 FMX_PAIRING_TOKEN=      # Relay pairing token; .env opt-in authorizes replies and eligible lifecycle actions
+OPENROUTER_API_KEY=     # read from $FM_HOME/.env only, never the environment: opt-in for Jev shadow wake triage (see "Jev shadow wake triage")
+FM_JEV_FOREGROUND=0     # test-only: run the Jev shadow classifier synchronously inside the drain instead of detached
+FM_JEV_OBSERVE=1        # 0 marks an automated fm-send.sh (watcher resend, bootstrap nudge, config reread, remote relay) so it never counts as a firstmate steer
 FMX_RELAY_URL=https://myfirstmate.io   # optional Relay endpoint override, mainly for local relay development
 FMX_ENV_FILE=           # optional alternate .env file for direct Relay client invocations; bootstrap still checks $FM_HOME/.env
 FMX_DRY_RUN=            # truthy previews Relay replies and dismissals to state/x-outbox/ without posting or requiring a token

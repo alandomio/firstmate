@@ -116,6 +116,7 @@ install_guard_scripts() {
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
   cp "$ROOT/bin/fm-hook-host-lib.sh" "$dir/bin/fm-hook-host-lib.sh"
+  cp "$ROOT/bin/fm-jev-lib.sh" "$dir/bin/fm-jev-lib.sh"
   mkdir -p "$dir/docs"
   cp -R "$ROOT/docs/supervision-protocols" "$dir/docs/supervision-protocols"
   chmod +x "$dir/bin/fm-turnend-guard.sh" "$dir/bin/fm-turnend-guard-grok.sh" "$dir/bin/fm-operational-input.sh" "$dir/bin/fm-supervision-instructions.sh" "$dir/bin/fm-harness.sh"
@@ -226,6 +227,30 @@ test_hook_silent_when_no_work_in_flight() {
   expect_code 0 "$status" "hook must exit 0 with no in-flight work"
   [ -z "$out" ] || fail "hook produced output with no in-flight work: $out"
   pass "fm-turnend-guard: silent no-op with nothing in flight"
+}
+
+# The opt-in Jev shadow measurement (bin/fm-jev.sh) records how an opted-in
+# primary turn ended and nothing else: the guard's verdict, exit status, and
+# output stay exactly what they are without it, and the text is never kept.
+test_hook_jev_turn_end_record_leaves_the_verdict_unchanged() {
+  local dir home out status log
+  dir=$(make_primary_dir "$TMP_ROOT/hook-jev")
+  home=$(cd "$dir" && pwd)
+  log="$dir/state/jev/shadow.jsonl"
+  printf 'OPENROUTER_API_KEY=sk-or-v1-guardtest\n' > "$dir/.env"
+  out=$(printf '{"stop_hook_active":false,"last_assistant_message":"Captain, shipshape."}' \
+    | CLAUDECODE=1 FM_HOME="$home" bash "$dir/bin/fm-turnend-guard.sh" 2>&1); status=$?
+  expect_code 0 "$status" "an opted-in idle primary must still end its turn"
+  [ -z "$out" ] || fail "the Jev record added guard output: $out"
+  [ "$(jq -r 'select(.ev == "turn_end") | .outcome' "$log")" = ack ] || fail "the plain acknowledgement was not recorded: $(cat "$log" 2>/dev/null)"
+  : > "$dir/state/task1.meta"
+  out=$(printf '{"stop_hook_active":false,"last_assistant_message":"Captain, private words."}' \
+    | CLAUDECODE=1 FM_HOME="$home" bash "$dir/bin/fm-turnend-guard.sh" 2>&1); status=$?
+  expect_code 2 "$status" "an opted-in primary with work in flight and no watcher must still block"
+  assert_contains "$out" "$REQUIRED_REASON" "the block reason changed with the Jev record"
+  [ "$(jq -r 'select(.ev == "turn_end") | .outcome' "$log" | tail -n1)" = message ] || fail "the captain message was not recorded"
+  ! grep -F 'private words' "$log" >/dev/null || fail "the turn-end record kept the message text"
+  pass "fm-turnend-guard: the opt-in Jev turn-end record leaves the verdict unchanged"
 }
 
 test_hook_blocks_when_fresh_beacon_has_no_live_lock() {
@@ -1686,6 +1711,7 @@ test_predicate_queue_pending_flag
 test_predicate_x_mode_needs_supervision
 test_predicate_source_needs_supervision
 test_hook_silent_when_no_work_in_flight
+test_hook_jev_turn_end_record_leaves_the_verdict_unchanged
 test_hook_blocks_when_fresh_beacon_has_no_live_lock
 test_hook_blocks_source_only_home
 test_hook_blocks_when_dead_lock_has_fresh_beacon

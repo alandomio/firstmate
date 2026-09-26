@@ -143,6 +143,9 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-wake-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-jev-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-jev-lib.sh"
 
 CAPTAIN_META_LOCK=
 CAPTAIN_META_LOCK_HELD=0
@@ -990,8 +993,9 @@ EOF
 }
 
 case "${1:-}" in
-  hold) shift; command_hold "$@" ;;
-  answer) shift; command_answer "$@" ;;
+  # Opt-in Jev shadow measurement: holding or answering a captain call is a decision.
+  hold) shift; fm_jev_observe "$FM_HOME" "$STATE" decision "${1:-}"; command_hold "$@" ;;
+  answer) shift; fm_jev_observe "$FM_HOME" "$STATE" decision "${1:-}"; command_answer "$@" ;;
   answers) shift; command_answers "$@" ;;
   bind) shift; command_bind "$@" ;;
   unbind) shift; command_unbind "$@" ;;
