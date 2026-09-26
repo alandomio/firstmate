@@ -33,7 +33,7 @@ fm_jev_backend() {  # <home> <state> -> prints "local" or "openrouter"
   local home=${1:-} state=${2:-}
   [ -n "$home" ] && [ -n "$state" ] || return 1
   [ "$state" -ef "$home/state" ] || return 1
-  if [ -s "$home/config/jev-endpoint" ]; then
+  if grep -q '[^[:space:]]' "$home/config/jev-endpoint" 2>/dev/null; then
     printf 'local\n'
     return 0
   fi

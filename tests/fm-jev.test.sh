@@ -274,7 +274,38 @@ test_local_backend_takes_priority_needs_no_key_and_records_the_answering_model()
   log="$home/state/jev/shadow.jsonl"
   jq -e 'select(.ev == "jev" and .outcome == "classified" and .model == "rizzo-flow-1.7b-q8_0" and .cost == null)' "$log" >/dev/null \
     || fail "the local answer was not logged with its model and a null cost: $(cat "$log")"
+  grep -Fxq 'http://127.0.0.1:8017/v1/systemone' "$home/curl/argv" || fail "the local request did not dial the endpoint's /v1/systemone"
+  [ "$(head -n 1 "$home/curl/argv")" = -q ] || fail "the local request did not skip ~/.curlrc (-q first)"
+  grep -A1 -Fx -- '--noproxy' "$home/curl/argv" | grep -Fxq '*' || fail "the local request could be routed through a proxy"
+  jq -e '.model == "jev-latest"' "$home/curl/body.1" >/dev/null || fail "the local request did not ask for jev-latest: $(cat "$home/curl/body.1")"
   pass "config/jev-endpoint selects the local backend over an OPENROUTER_API_KEY, needs no key, and records the answering model"
+}
+
+test_local_backend_endpoint_is_read_from_the_home_not_a_config_override() {
+  local home override
+  home=$(jev_local_case local-override)
+  override="$TMP_ROOT/local-override-config"
+  mkdir -p "$override"
+  queue_row "$home" 1 heartbeat heartbeat heartbeat
+  in_home "$home" env FM_CONFIG_OVERRIDE="$override" FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=0.1 \
+    "$DRAIN" >/dev/null 2>&1 || fail "drain failed under FM_CONFIG_OVERRIDE"
+  [ "$(calls "$home")" = 1 ] || fail "the home's config/jev-endpoint was not dialed under FM_CONFIG_OVERRIDE"
+  assert_absent "$home/state/jev/disabled" "a valid home config/jev-endpoint was refused under FM_CONFIG_OVERRIDE"
+  assert_contains "$(in_home "$home" env FM_CONFIG_OVERRIDE="$override" "$JEV" status)" \
+    'config/jev-endpoint = http://127.0.0.1:8017' "status did not read the home's config/jev-endpoint"
+  pass "the local endpoint is read from the home's own config/, the same file that selected the backend"
+}
+
+test_blank_jev_endpoint_does_not_override_openrouter() {
+  local home
+  home=$(jev_case local-blank with-key)
+  printf '  \n' > "$home/config/jev-endpoint"
+  queue_row "$home" 1 heartbeat heartbeat heartbeat
+  in_home "$home" env FM_JEV_FOREGROUND=1 "$DRAIN" >/dev/null 2>&1 || fail "drain failed with a blank config/jev-endpoint"
+  [ "$(calls "$home")" = 1 ] || fail "a blank config/jev-endpoint stopped the OpenRouter backend"
+  assert_grep ok "$home/curl/auth" "a blank config/jev-endpoint did not leave OpenRouter in charge"
+  assert_absent "$home/state/jev/disabled" "a blank config/jev-endpoint paused Jev"
+  pass "a whitespace-only config/jev-endpoint does not select the local backend"
 }
 
 test_local_backend_missing_cost_is_not_an_error() {
@@ -313,6 +344,11 @@ test_local_backend_load_ceiling_pauses_like_the_spend_cap() {
   [ "$(calls "$home")" = 0 ] || fail "Jev classified while the load ceiling was exceeded"
   [ "$(cut -f2 "$home/state/jev/disabled")" = load ] || fail "an exceeded load ceiling did not pause Jev"
   jev_events "$home" 'select(.why == "load")' | grep -q . || fail "the load pause was not logged"
+  printf '2000-01-01\tload\n' > "$home/state/jev/disabled"
+  queue_row "$home" 3 heartbeat heartbeat heartbeat
+  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=localok FM_JEV_LOAD_OVERRIDE=0.5 "$DRAIN" >/dev/null 2>&1 \
+    || fail "drain failed the next day"
+  [ "$(calls "$home")" = 1 ] || fail "Jev did not resume on a later day once the load fell"
   home=$(jev_local_case local-load-ok)
   printf '4\n' > "$home/config/jev-max-load"
   queue_row "$home" 1 heartbeat heartbeat heartbeat
@@ -514,6 +550,8 @@ test_timeout_pauses_until_the_next_day
 test_api_errors_pause_until_the_next_day
 test_daily_cap_pauses_after_the_spend_is_reached
 test_local_backend_takes_priority_needs_no_key_and_records_the_answering_model
+test_local_backend_endpoint_is_read_from_the_home_not_a_config_override
+test_blank_jev_endpoint_does_not_override_openrouter
 test_local_backend_missing_cost_is_not_an_error
 test_local_backend_refuses_a_non_loopback_endpoint
 test_local_backend_load_ceiling_pauses_like_the_spend_cap

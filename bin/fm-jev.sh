@@ -47,18 +47,16 @@
 #
 # Limits. Each request, on either backend, has a hard timeout (default 5
 # seconds; override with a positive number in config/jev-timeout, an invalid
-# value keeps the default and `status` says so) - config/jev-endpoint's own
-# README measured ~50ms/decision on dedicated GPU hardware, and live
-# measurement against a real `rizzo serve` on this Mac's Metal backend, warm,
-# was ~0.22-0.26s wall-clock per request, so the 5 second default leaves ample
-# margin without letting a stuck local server hang the classify loop. The
-# OpenRouter backend also has a daily spend cap (USD, default 1; override with
-# a decimal number in config/jev-daily-cap), summed from the usage.cost each
-# response reports; a missing cost is an API error there. The local backend
-# has no per-request cost - a missing usage.cost is expected, not an error -
-# so it is instead gated on machine load: a 1-minute load-average ceiling
-# (default 8; override with a decimal number in config/jev-max-load) checked
-# before each request. Either backend's timeout, API/transport error, or
+# value keeps the default and `status` says so) - warm local requests measured
+# well under a second, so the 5 second default still stops a stuck local
+# server hanging the classify loop. The OpenRouter backend also has a daily
+# spend cap (USD, default 1; override with a decimal number in
+# config/jev-daily-cap), summed from the usage.cost each response reports; a
+# missing cost is an API error there. The local backend has no per-request
+# cost - a missing usage.cost is expected, not an error - so it is instead
+# gated on machine load: a 1-minute load-average ceiling (default 8; override
+# with a decimal number in config/jev-max-load) checked before each request.
+# Either backend's timeout, API/transport error, or
 # (OpenRouter) reaching the spend cap or (local) the load ceiling pauses
 # classification until the next local calendar day (state/jev/disabled). The
 # wake itself is untouched in every case because shadow mode never held it.
@@ -320,7 +318,7 @@ jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-be
           -H 'Content-Type: application/json' --data-binary "@$body" \
           -o "$resp" -w '%{http_code}' "$endpoint" 2>/dev/null) || rc=$?
   else
-    code=$(curl -sS --max-time "$timeout" --connect-timeout "$timeout" \
+    code=$(curl -q --noproxy '*' -sS --max-time "$timeout" --connect-timeout "$timeout" \
         -H 'Content-Type: application/json' --data-binary "@$body" \
         -o "$resp" -w '%{http_code}' "$endpoint" 2>/dev/null) || rc=$?
   fi
@@ -402,7 +400,7 @@ cmd_observe_drain() {  # <spool> <epoch>
   day=$(date +%F)
   JEV_TIMEOUT=$(jev_timeout)
   if [ "$backend" = local ]; then
-    base=$(tr -d '[:space:]' < "$CONFIG/jev-endpoint" 2>/dev/null)
+    base=$(tr -d '[:space:]' < "$FM_HOME/config/jev-endpoint" 2>/dev/null)
     if jev_local_url_ok "$base"; then
       JEV_LOCAL_ENDPOINT="${base%/}/v1/systemone"
     else
@@ -461,7 +459,7 @@ cmd_status() {
   backend=$(fm_jev_backend "$FM_HOME" "$STATE") || backend=
   case "$backend" in
     local)
-      base=$(tr -d '[:space:]' < "$CONFIG/jev-endpoint" 2>/dev/null)
+      base=$(tr -d '[:space:]' < "$FM_HOME/config/jev-endpoint" 2>/dev/null)
       printf 'Jev shadow triage: on, local backend (config/jev-endpoint = %s)\n' "$base"
       jev_local_url_ok "$base" || printf 'config/jev-endpoint is not a loopback URL: classification is refused\n'
       printf 'load ceiling: %s (1-minute average)\n' "$(jev_max_load)"
