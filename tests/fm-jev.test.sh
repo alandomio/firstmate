@@ -162,8 +162,9 @@ test_only_masked_reason_and_status_leave_the_machine() {
   assert_not_contains "$body" "$FAKE_KEY" "the key leaked into the request body"
   assert_no_grep "$FAKE_KEY" "$home/curl/argv" "the key was passed on curl's argv"
   assert_grep ok "$home/curl/auth" "the key did not reach curl on stdin"
-  grep -F -- '--max-time' "$home/curl/argv" >/dev/null && grep -Fx 2 "$home/curl/argv" >/dev/null \
-    || fail "the request was not bounded by the 2 second timeout"
+  if ! grep -F -- '--max-time' "$home/curl/argv" >/dev/null || ! grep -Fx 2 "$home/curl/argv" >/dev/null; then
+    fail "the request was not bounded by the 2 second timeout"
+  fi
   ! grep -rF "$FAKE_KEY" "$home/state" >/dev/null || fail "the key was written under state/"
   assert_contains "$(printf 'see http://a.b/c and ./x/y and C:\\tmp\\z plain\n' | "$JEV" mask)" \
     'see <url> and <path> and <path> plain' "mask did not mask URLs and paths"

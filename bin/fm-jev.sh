@@ -351,6 +351,7 @@ cmd_status() {
   printf 'shadow log: %s\n' "$JEV_LOG"
 }
 
+# shellcheck disable=SC2016 # a jq program; its $names are jq variables, not shell ones.
 JEV_JQ_REPORT='
 def pct(a; b): if b == 0 then "n/a" else ((a * 1000 / b | round) / 10 | tostring) + "%" end;
 def iso: todate;
