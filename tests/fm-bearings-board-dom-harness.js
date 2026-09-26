@@ -12,7 +12,7 @@
 // that shim, since Node's own global FormData does not support the browser's
 // `new FormData(formElement)` reflection.
 //
-// Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1|throw> <mode:decision|decision-lost|decision-repick|dispatch|dispatch-regained|dispatch-lost|dispatch-repick>
+// Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1|throw> <mode:decision|decision-lost|decision-repick|dispatch|dispatch-regained|dispatch-lost|dispatch-repick|quota>
 // The bridge argument picks what window.lavish.queuePrompt does: 0 withholds
 // the bridge entirely, 1 accepts the call, throw raises.
 // dispatch-regained is dispatch run with <bridge:0>, clicked once, then given
@@ -25,7 +25,10 @@
 // label, plus hasFreeform, the text handed to queuePrompt, cardTexts - every
 // non-empty text the first card shows - and linkHrefs, its link targets), where
 // errorVisible/errorText read the role="alert" .bb-limit element of the
-// surface under test.
+// surface under test. The quota mode instead reports the provider-quota
+// panel: subText (its header note), providers (every non-empty text of each
+// provider card, in order), fillStyles (each usage bar's style), and stats
+// (how many stat tiles rendered, proving the rest of the board survived).
 
 "use strict";
 const fs = require("fs");
@@ -105,7 +108,7 @@ function findAll(root, pred, out) {
 const registry = {};
 ["bb-provenance", "bb-stats", "bb-call-sub", "bb-call", "bb-stack-count", "bb-stack-prev",
   "bb-stack-next", "bb-underway", "bb-landed", "bb-charted", "bb-charted-sub", "bb-dispatch",
-  "bb-dispatch-count", "bb-dispatch-limit", "bb-dispatch-btn"].forEach((id) => { registry[id] = new FakeNode("div"); });
+  "bb-dispatch-count", "bb-dispatch-limit", "bb-dispatch-btn", "bb-quota", "bb-quota-sub"].forEach((id) => { registry[id] = new FakeNode("div"); });
 // stackNav = stackCount.parentNode in the real script - give it a wrapper so
 // that property resolves the same way it would in the shipped page.
 const stackNav = new FakeNode("div");
@@ -224,6 +227,16 @@ if (mode === "decision" || mode === "decision-lost" || mode === "decision-repick
     errorVisible: barLimit.classList.contains("is-visible"),
     errorText: barLimit.textContent,
     queueCalls: queueCalls.length,
+  });
+} else if (mode === "quota") {
+  const box = registry["bb-quota"];
+  snapshot = () => ({
+    subText: registry["bb-quota-sub"].textContent,
+    providers: box.children.map((c) => [c].concat(findAll(c, () => true))
+      .filter((n) => typeof n.textContent === "string" && n.textContent !== "")
+      .map((n) => n.textContent)),
+    fillStyles: findAll(box, (n) => n.classList.contains("bb-quota__fill")).map((n) => n.getAttribute("style")),
+    stats: registry["bb-stats"].children.length,
   });
 } else {
   throw new Error("unknown mode: " + mode);

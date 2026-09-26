@@ -270,6 +270,25 @@ a { color: inherit; text-decoration: none; }
 .bb-dispatch__count { flex: 1 1 auto; font-size: var(--fs-xs); font-weight: 800; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: 0.07em; }
 
+/* ---- provider quota panel (Italian, like the captain reads it) ---- */
+.bb-quota { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.bb-quota__prov { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; min-width: 0;
+  background: var(--surface-card-warm); border: 1px solid var(--border-soft); border-radius: var(--radius-md); }
+.bb-quota__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.bb-quota__name { font-size: var(--fs-sm); font-weight: 800; color: var(--text-strong); }
+.bb-quota__plan { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint); }
+.bb-quota__win { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bb-quota__line { display: flex; justify-content: space-between; gap: 8px; font-size: var(--fs-xs); color: var(--text-body); }
+.bb-quota__wlabel { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bb-quota__pct { font-family: var(--font-mono); white-space: nowrap; }
+.bb-quota__bar { height: 6px; border-radius: 999px; background: var(--paper-200); overflow: hidden; }
+.bb-quota__fill { height: 100%; background: var(--status-online); }
+.bb-quota__fill--warn { background: var(--status-warn); }
+.bb-quota__fill--danger { background: var(--status-danger); }
+.bb-quota__reset { font-size: var(--fs-2xs); color: var(--text-muted); }
+.bb-quota__note { font-size: var(--fs-xs); color: var(--status-warn); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bb-quota__na { font-size: var(--fs-sm); color: var(--text-muted); }
+
 .bb-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--border-default); padding-top: 14px; }
 
 @media (max-width: 900px) {
@@ -365,6 +384,17 @@ a { color: inherit; text-decoration: none; }
       <div class="fm-card"><div class="bb-rows" id="bb-landed"></div></div>
     </section>
   </div>
+
+  <section class="bb-section">
+    <div class="bb-section__head">
+      <span class="fm-sign fm-sign--eyebrow">
+        <svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 12 19 5"/><path d="M12 2v4"/></svg>
+        Quote dei fornitori
+      </span>
+      <span class="fm-sign fm-sign--muted" id="bb-quota-sub"></span>
+    </div>
+    <div class="bb-quota" id="bb-quota"></div>
+  </section>
 
   <footer class="bb-foot">
     <span class="bb-meta-mono" id="bb-provenance">-</span>
@@ -675,6 +705,103 @@ __FM_BEARINGS_BOARD_DATA__
     }
     ld.appendChild(row);
   });
+
+  /* Provider quota - optional payload section from bin/fm-bearings-quota.sh.
+     It renders in its own guard so a malformed or absent section degrades to
+     "non disponibile" without taking the fleet board down with it; it never
+     shows a number the payload did not carry. */
+  (function renderQuota() {
+    var box = document.getElementById("bb-quota");
+    var sub = document.getElementById("bb-quota-sub");
+    if (!box) return;
+    var STATUS_IT = {
+      stale: "dati non aggiornati",
+      auth_required: "accesso richiesto",
+      headroom_unknown: "margine residuo non misurabile",
+      not_reported: "quota-axi non riporta questo fornitore",
+      no_windows: "nessuna finestra di quota riportata",
+      tool_missing: "quota-axi non è installato",
+      timeout: "quota-axi non ha risposto in tempo",
+      failed: "quota-axi ha restituito un errore",
+      unreadable: "la risposta di quota-axi non è leggibile",
+      unknown: "stato sconosciuto"
+    };
+    var KIND_IT = { session: "5 ore", weekly: "settimana" };
+    function plain(code) { return STATUS_IT[code] || String(code); }
+    function withDetail(code, detail) {
+      return plain(code) + (typeof detail === "string" && detail ? ": " + detail : "");
+    }
+    function isPct(v) { return typeof v === "number" && v >= 0 && v <= 100; }
+    function when(iso) {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      try {
+        return d.toLocaleString("it-IT",
+          { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      } catch (e) {
+        return d.toISOString();
+      }
+    }
+    function resetText(iso) { return "si azzera " + when(iso); }
+    function unavailable(msg) {
+      box.innerHTML = "";
+      box.appendChild(el("div", "bb-empty", "Quote non disponibili - " + msg + "."));
+      if (sub) sub.textContent = "non disponibile";
+    }
+    var q = data.quota;
+    if (!q || typeof q !== "object") { unavailable("questa board non contiene i dati di quota"); return; }
+    try {
+      if (!Array.isArray(q.providers) || !q.providers.length) {
+        unavailable(withDetail(q.status || "unknown", q.detail));
+        return;
+      }
+      if (sub) sub.textContent = q.available && q.generated ? "letto " + when(q.generated) : "non disponibile";
+      q.providers.forEach(function (p) {
+        var card = el("div", "bb-quota__prov");
+        var head = el("div", "bb-quota__head");
+        head.appendChild(el("span", "bb-quota__name", p.label || p.provider));
+        if (p.plan) head.appendChild(el("span", "bb-quota__plan", p.plan));
+        card.appendChild(head);
+        var windows = Array.isArray(p.windows) ? p.windows : [];
+        if (!p.available || !windows.length) {
+          card.appendChild(el("div", "bb-quota__na", "non disponibile - " + withDetail(p.status || "unknown", p.detail)));
+          box.appendChild(card);
+          return;
+        }
+        windows.forEach(function (w) {
+          var win = el("div", "bb-quota__win");
+          var line = el("div", "bb-quota__line");
+          line.appendChild(el("span", "bb-quota__wlabel", KIND_IT[w.kind] || w.label || w.id));
+          var used = isPct(w.percent_used) ? w.percent_used : null;
+          var left = isPct(w.percent_remaining) ? w.percent_remaining : null;
+          var pct = used == null && left == null ? "non disponibile" :
+            (used == null ? "" : "usato " + used + "%") +
+            (used != null && left != null ? " · " : "") +
+            (left == null ? "" : "restante " + left + "%");
+          line.appendChild(el("span", "bb-quota__pct", pct));
+          win.appendChild(line);
+          if (used != null) {
+            var bar = el("div", "bb-quota__bar");
+            var fill = el("div", "bb-quota__fill" +
+              (used >= 90 ? " bb-quota__fill--danger" : used >= 70 ? " bb-quota__fill--warn" : ""));
+            fill.setAttribute("style", "width:" + used + "%");
+            bar.appendChild(fill);
+            win.appendChild(bar);
+          }
+          if (typeof w.resets_at === "string" && w.resets_at) win.appendChild(el("div", "bb-quota__reset", resetText(w.resets_at)));
+          card.appendChild(win);
+        });
+        (Array.isArray(p.attention) ? p.attention : []).forEach(function (a) {
+          var note = el("div", "bb-quota__note", withDetail(a.kind, a.detail));
+          note.title = note.textContent;
+          card.appendChild(note);
+        });
+        box.appendChild(card);
+      });
+    } catch (e) {
+      unavailable("i dati di quota non si possono mostrare");
+    }
+  })();
 
   /* Charted Next + dispatch picker */
   var ch = document.getElementById("bb-charted");
