@@ -32,7 +32,9 @@
 # <path>) and cut to 500 characters, plus this script's fixed question text.
 # Nothing else is sent. `mask` prints exactly the masking applied.
 #
-# Limits. Each request has a hard 2 second timeout. A daily spend cap (USD,
+# Limits. Each request has a hard timeout (default 5 seconds; override with a
+# positive number in config/jev-timeout, an invalid value keeps the default and
+# `status` says so). A daily spend cap (USD,
 # default 1; override with a decimal number in config/jev-daily-cap) is summed
 # from the usage.cost each response reports. A timeout, an API or transport
 # error, a response without a cost, or reaching the cap pauses classification
@@ -94,7 +96,7 @@ JEV_DISABLED="$JEV_DIR/disabled"
 JEV_LOCK="$JEV_DIR/.classify.lock"
 JEV_MODEL=typesafe/jev-1.13
 JEV_ENDPOINT=https://openrouter.ai/api/alpha/decisions
-JEV_TIMEOUT=2
+JEV_DEFAULT_TIMEOUT=5
 JEV_DEFAULT_CAP=1
 
 # The single definition of what may leave the machine; `mask` exposes it.
@@ -129,6 +131,25 @@ jev_cap() {
     printf '%s\n' "$v"
   else
     printf '%s\n' "$JEV_DEFAULT_CAP"
+  fi
+}
+
+jev_timeout_raw() {
+  [ -f "$CONFIG/jev-timeout" ] && tr -d '[:space:]' < "$CONFIG/jev-timeout" 2>/dev/null
+  return 0
+}
+
+jev_timeout_valid() {  # <value> -> 0 when a positive decimal number
+  [[ "$1" =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk -v a="$1" 'BEGIN { exit !((a + 0) > 0) }'
+}
+
+jev_timeout() {
+  local v
+  v=$(jev_timeout_raw)
+  if jev_timeout_valid "$v"; then
+    printf '%s\n' "$v"
+  else
+    printf '%s\n' "$JEV_DEFAULT_TIMEOUT"
   fi
 }
 
@@ -306,6 +327,7 @@ cmd_observe_drain() {  # <spool> <epoch>
   fm_lock_acquire_wait "$JEV_LOCK" || { rm -f "$spool"; exit 0; }
   day=$(date +%F)
   cap=$(jev_cap)
+  JEV_TIMEOUT=$(jev_timeout)
   JEV_SPEND=$(jev_spend_today "$day")
   while IFS=$(printf '\t') read -r epoch seq kind key payload; do
     case "$epoch:$seq" in *[!0-9:]*|:*|*:) continue ;; esac
@@ -345,6 +367,13 @@ cmd_status() {
   cap=$(jev_cap)
   spend=$(awk -v s="$(jev_spend_today "$day")" 'BEGIN { printf "%.6f", s }')
   printf 'spend today: USD %s of a USD %s daily cap\n' "$spend" "$cap"
+  local traw
+  traw=$(jev_timeout_raw)
+  if [ -n "$traw" ] && ! jev_timeout_valid "$traw"; then
+    printf 'request timeout: %ss (config/jev-timeout value "%s" is not a positive number, default kept)\n' "$JEV_DEFAULT_TIMEOUT" "$traw"
+  else
+    printf 'request timeout: %ss\n' "$(jev_timeout)"
+  fi
   if jev_paused_today "$day"; then
     printf 'paused until tomorrow: %s\n' "$(cut -f2 < "$JEV_DISABLED")"
   fi
