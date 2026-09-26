@@ -1,6 +1,6 @@
 ---
 name: retrospective
-description: Performs comprehensive analysis of the active session, examines git logs, updates codebase guidelines (CLAUDE.md), persists lessons to agentmemory and PP Brain, and writes a detailed retrospective report. Invoke when the user asks for a retrospective, when a session that produced durable learnings or a failure receipt is ending, or when a supervising agent needs to close out its own session's learnings.
+description: Performs comprehensive analysis of the active session, examines git logs, updates codebase guidelines (CLAUDE.md), persists lessons to agentmemory and the org-wide knowledge store this home is configured with (the RAG or PP Brain), and writes a detailed retrospective report. Invoke when the user asks for a retrospective, when a session that produced durable learnings or a failure receipt is ending, or when a supervising agent needs to close out its own session's learnings.
 user-invocable: true
 metadata:
   internal: true
@@ -27,7 +27,7 @@ In that third case, and only in it:
 - Skip the Step 2 substantive questions. Say in the report that they were not asked and why. Do
   not invent the answers you would have got.
 - The **auto-detector alone** chooses full vs quick. A missing answer never counts as "routine".
-- `CLAUDE.md` / `AGENTS.md` edits, ADRs, PP Brain writes, and `feedback`/`user` memory files are
+- `CLAUDE.md` / `AGENTS.md` edits, ADRs, org-store writes, and `feedback`/`user` memory files are
   **not written**. Draft each one verbatim into section 4 as pending, with the approver named.
   These gates exist because the write changes behaviour or reaches the whole org; an absent human
   is a withheld answer, never an implied yes.
@@ -53,11 +53,21 @@ above, because a judgment made at the end of a long session is worse than the di
 - a decision was made that a future session would need explained;
 - the diff touches >=3 files, or the branch carries >=1 commit;
 
-Otherwise take the **quick** path: pre-flight recall (Step 1), one `memory_lesson_save`, a **short dated report** (sections 1, 4 and 5 only), and a short chat summary. No Brain write, no `CLAUDE.md` proposal, no ADR.
+Otherwise take the **quick** path: pre-flight recall (Step 1), one `memory_lesson_save`, a **short dated report** (sections 1, 4 and 5 only), and a short chat summary. No org-store write, no `CLAUDE.md` proposal, no ADR.
 
 **Flags override the detector**: `/retrospective --full` or `/retrospective --quick`.
 
-**The quick path is where knowledge goes to die, so it is not silent, and it never claims an unverified write.** State what is being skipped and quote the identifier you got back: *"Quick retrospective — lesson `lsn_…` saved, no Brain write. Say `--full` for the write-up."* If the save returned no id, say the save failed. If a failure receipt turns up after quick was chosen, **stop and escalate**: *"This has a failure worth recording — switch to full, or confirm quick?"* Never downgrade silently.
+**The quick path is where knowledge goes to die, so it is not silent, and it never claims an unverified write.** State what is being skipped and quote the identifier you got back: *"Quick retrospective — lesson `lsn_…` saved, no org-store write. Say `--full` for the write-up."* If the save returned no id, say the save failed. If a failure receipt turns up after quick was chosen, **stop and escalate**: *"This has a failure worth recording — switch to full, or confirm quick?"* Never downgrade silently.
+
+## Resolve the org store first
+
+The org-wide layer is whichever knowledge store this home is configured with, because the same skill runs on machines with different MCP servers installed.
+Before Step 1, run `bin/fm-knowledge-store.sh read` from the Firstmate code root (three directories above this skill, the directory that contains `.agents/`), with `FM_HOME` as the session has it.
+It prints `name=`, `backend=` and `search=`; that script and `docs/configuration.md` "Knowledge store naming" own the setting, its default, and the refusals.
+Everywhere below, "the org store" means the store it names: call it by `name` in chat and in the report, and take its recall and write verbs from `reference.md` for that `backend`.
+`backend=other` is a store with no write contract known here: recall through the `search=` instructions and leave every org-store write pending, saying why.
+If the command is missing or refuses, the org store is unreachable - apply the unreachable-layer rule in Step 5 and quote the refusal.
+Never call another backend's tools to compensate; they are not installed where they were not configured.
 
 ## Step 1 — Pre-flight recall (before drafting anything)
 
@@ -66,7 +76,7 @@ Query what is already known first, so learnings *reinforce* rather than duplicat
 - `memory_recall(query, format: 'compact')` — past session observations on the same files/concepts.
 - `memory_lesson_recall(query, minConfidence: 0.1)` — lessons already learned. A hit means **re-save the identical content** (duplicates auto-strengthen confidence) rather than writing a near-duplicate variant.
 - `memory_patterns(project)` — recurring cross-session patterns; this is what turns "it happened" into "it keeps happening".
-- `search_knowledge(query, prompt)` — PP Brain, with **both** fields populated. Company conventions here supersede in-repo docs, so a hit often means "follow the existing convention", not "add a new `CLAUDE.md` rule".
+- The org store's recall verb for its `backend` (`reference.md`). Company conventions here supersede in-repo docs, so a hit often means "follow the existing convention", not "add a new `CLAUDE.md` rule".
 - **The most recent prior report** for the target repo (path in Step 6) — the newest one only, not the whole directory. It carries the last run's Next Steps and any unresolved pending writes. If there is none, say "no prior report" rather than implying a continuity that does not exist.
 
 Record whether recall actually changed anything. That is what the kill criterion at the bottom of this file measures.
@@ -144,28 +154,28 @@ Fits nowhere -> session trivia. Leave it in the report only.
 |---|---|---|
 | harness auto-memory | this workstation, this project | it must load into context at every session start |
 | agentmemory | this workstation, cross-project | it is true of *how you work here* — local env, tooling, personal workflow |
-| PP Brain | the whole company, every repo and machine | a colleague on a different machine would need it |
+| the org store | the whole company, every repo and machine | a colleague on a different machine would need it |
 
-The failure is asymmetric and silent both ways. agentmemory writes **never reach a teammate or your other machine** — a colleague-relevant learning filed only there is lost to the org, which is NPC Mode one level up. Brain writes reach **everyone** — workstation noise (local ports, Docker state, `$HOME` paths, machine-only env vars) is unfalsifiable for anyone else and pollutes org search. A learning with both a general rule and a local detail gets split: rule to Brain, detail to agentmemory, cross-referenced in the report.
+The failure is asymmetric and silent both ways. agentmemory writes **never reach a teammate or your other machine** — a colleague-relevant learning filed only there is lost to the org, which is NPC Mode one level up. Org-store writes reach **everyone** — workstation noise (local ports, Docker state, `$HOME` paths, machine-only env vars) is unfalsifiable for anyone else and pollutes org search. A learning with both a general rule and a local detail gets split: rule to the org store, detail to agentmemory, cross-referenced in the report.
 
-**Firstmate-home override for harness auto-memory.** When the repo this session modified (Step 6) is a firstmate home — `$FM_HOME` if set, else the Firstmate code root, call it `home_root`, and it qualifies only if `home_root/.agents/skills/stow/SKILL.md` exists — a "harness auto-memory" finding does not go to the generic `~/.claude/projects/<slug>/memory/` path. It goes to that home's own `stow`-tiered memory instead, so the next `/stow` pass finds it already shaped rather than unmarked and paying a grace cycle. Mechanics in `reference.md`; tier semantics and marker spellings stay owned by the `stow` skill and are never restated here. This override applies only to the destination and stamping of a harness-auto-memory finding — agentmemory and PP Brain routing for the same session are unaffected.
+**Firstmate-home override for harness auto-memory.** When the repo this session modified (Step 6) is a firstmate home — `$FM_HOME` if set, else the Firstmate code root, call it `home_root`, and it qualifies only if `home_root/.agents/skills/stow/SKILL.md` exists — a "harness auto-memory" finding does not go to the generic `~/.claude/projects/<slug>/memory/` path. It goes to that home's own `stow`-tiered memory instead, so the next `/stow` pass finds it already shaped rather than unmarked and paying a grace cycle. Mechanics in `reference.md`; tier semantics and marker spellings stay owned by the `stow` skill and are never restated here. This override applies only to the destination and stamping of a harness-auto-memory finding — agentmemory and org-store routing for the same session are unaffected.
 
 ## Step 5 — Execute the writes
 
 **Nothing is claimed that was not written.** Draft section 4 *after* the writes return, and record the identifier each gave back (file path, lesson id, permalink). No identifier, no claim. A write that is declined, skipped or fails says so in section 4, and a routed artifact that was not written is **pending**, not done.
 
-**Axis A artifacts are code changes** and follow the same discipline as any other edit. `CLAUDE.md`: show the diff, wait for an answer, then apply — amend an existing rule rather than appending a near-duplicate, link to Brain if it already documents the convention, and never write a rule into a repo this session did not touch. For `.claude/skills/`, `docs/`, `llm/kb/` and ADRs, each has its own contribution convention — see `reference.md`; hand ADRs to `adr-draft`.
+**Axis A artifacts are code changes** and follow the same discipline as any other edit. `CLAUDE.md`: show the diff, wait for an answer, then apply — amend an existing rule rather than appending a near-duplicate, link to the org store if it already documents the convention, and never write a rule into a repo this session did not touch. For `.claude/skills/`, `docs/`, `llm/kb/` and ADRs, each has its own contribution convention — see `reference.md`; hand ADRs to `adr-draft`.
 
 **The approval gates. These are this skill's safety boundary; everything else in Step 5 is mechanics.**
 
 - **Show before writing** any `feedback` or `user` memory file — those change how future sessions behave, and a wrong one bends your working style invisibly for months. Inside a firstmate home this maps to `data/captain.md`: same gate, same reason. Never write `data/captain-shared.md` from this skill — it is primary-owned; route a shared-preference finding to the primary the way `stow` does.
 - **Show a diff before any overwrite** of an existing memory file, whatever its type.
-- **Ask before any Brain write.** Local files and agentmemory are note-taking; Brain is publication to the whole company.
+- **Ask before any org-store write.** Local files and agentmemory are note-taking; the org store is publication to the whole company.
 - `project` and `reference` creations proceed automatically and are reported after.
 
-**Three judgment calls, and they are the only judgment here.** *Blast radius* picks the layer via the Step 4 table — wrong is silent in both directions. *Confidence* on a lesson: **0.5** single observation, **0.7** reproduced twice or user-confirmed, **0.8+** only with a failing-to-passing test; do not inflate, because confidence decays unused and an over-confident wrong lesson outranks a correct cautious one. *Sensitivity* before any Brain write: no employee or HR data, no named B2C/parker personal data, no raw plates — use the `plateId`; revenue and B2B operator information are fine, and raw log output belongs in the local report.
+**Three judgment calls, and they are the only judgment here.** *Blast radius* picks the layer via the Step 4 table — wrong is silent in both directions. *Confidence* on a lesson: **0.5** single observation, **0.7** reproduced twice or user-confirmed, **0.8+** only with a failing-to-passing test; do not inflate, because confidence decays unused and an over-confident wrong lesson outranks a correct cautious one. *Sensitivity* before any org-store write: no employee or HR data, no named B2C/parker personal data, no raw plates — use the `plateId`; revenue and B2B operator information are fine, and raw log output belongs in the local report.
 
-**Three traps that have actually bitten.** Never call `submit_session_intel` — despite the name it is plugin telemetry, not a retrospective sink. Never put an agentmemory id in a Brain body — that layer is machine-local and decaying, so it is a dead link for every colleague. Never describe a pointer into agentmemory as permanent retention.
+**Three traps that have actually bitten.** Never call `submit_session_intel` — despite the name it is plugin telemetry, not a retrospective sink. Never put an agentmemory id in an org-store body — that layer is machine-local and decaying, so it is a dead link for every colleague. Never describe a pointer into agentmemory as permanent retention.
 
 Signatures, required fields, paths and frontmatter live in `reference.md`, deliberately not here.
 
@@ -222,7 +232,7 @@ In chat: the report path, which Axis A artifacts changed, which Axis B layers we
 
 **Axis A** — CLAUDE.md: [rule, or No + why] · Skills: [paths] · Docs: [paths] · ADRs: [path or "offered, declined"]
 
-**Axis B** — Harness auto-memory: [files + shown-first confirmations, or none] · agentmemory: [ids with confidence] · PP Brain: [permalinks, or "not approved" / "unreachable — pending: ..."] · Promotion candidates: [local learnings that belong in Brain later, or none]
+**Axis B** — Harness auto-memory: [files + shown-first confirmations, or none] · agentmemory: [ids with confidence] · Org store ([name]): [identifiers, or "not approved" / "unreachable — pending: ..."] · Promotion candidates: [local learnings that belong in the org store later, or none]
 
 ## 5. Recall Effectiveness (kill-criterion ledger)
 - **Did Step 1 change the output?** [yes — how | no]
@@ -234,10 +244,10 @@ In chat: the report path, which Axis A artifacts changed, which Axis B layers we
 ## Guardrails
 
 - **Never** commit or push unless asked. Writing the report and updating memory is the deliverable; version control is the user's call.
-- **Never** apply `CLAUDE.md` edits without showing the diff and getting an answer; never write to Brain without approval; never write a `feedback`/`user` memory or overwrite a memory file without showing it first.
-- Do not fabricate error logs, test results, commit ranges, memory writes, or a permalink `add_knowledge` did not return. If the build was never run, write "not run" — an invented green checkmark poisons every future session that reads the report.
+- **Never** apply `CLAUDE.md` edits without showing the diff and getting an answer; never write to the org store without approval; never write a `feedback`/`user` memory or overwrite a memory file without showing it first.
+- Do not fabricate error logs, test results, commit ranges, memory writes, or an identifier the org-store write did not return. If the build was never run, write "not run" — an invented green checkmark poisons every future session that reads the report.
 - Keep it specific. "Improved error handling" is worthless; "wrapped the Prisma call in a transaction because the retry re-inserted the row" is the point. Doubly so for lessons, which get recalled out of context months later.
-- The sensitivity gate applies to committed reports too, not only at the Brain boundary.
+- The sensitivity gate applies to committed reports too, not only at the org-store boundary.
 
 ### Anti-rationalization
 
@@ -248,7 +258,7 @@ In chat: the report path, which Axis A artifacts changed, which Axis B layers we
 | "I remember what I learned, I don't need the diff." | Your recollection is a summary of a summary. The diff is the only record of what changed. |
 | "This lesson is obviously right — 0.9." | Confidence decays when unused and strengthens on reinforcement. An inflated wrong lesson outranks a correct cautious one. 0.5 unless reproduced or confirmed. |
 | "The write probably succeeded." | Report only identifiers you received back. No id, no claim. |
-| "This is generally useful, put it in Brain." | Brain reaches everyone. If it is only true on this machine, it is agentmemory. |
+| "This is generally useful, put it in the org store." | The org store reaches everyone. If it is only true on this machine, it is agentmemory. |
 | "Quick path is fine, it was a small session." | Small sessions containing a correction are exactly the ones worth recording. State what you are skipping and let the user override. |
 | "This is a `project` fact, not `feedback` — no need to show it." | If the content tells a future session how to behave — "always", "prefer", "never", "ask before" — it is `feedback` whatever the frontmatter says, and it gets shown first. Type is decided by what the text does, not by which label avoids the prompt. |
 | "It's a quick run, so I don't need to work out the repo target." | The report is written on every path, so the destination is always required. Derive it from the Step 0 diff. |
