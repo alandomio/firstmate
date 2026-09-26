@@ -1,0 +1,34 @@
+$ fm-pr-status.sh acme/api!11 acme/api!12 acme/api!13 acme/api!14 https://gitlab.example.org/acme/docs/-/merge_requests/5
+api!11                              opened  into=main ci=NO-HEAD-RUN approval=not-required merge=mergeable conflicts=no head=1111aaaa jobs=enabled must-succeed=yes - badge is merge-result (success on 9999ffff)
+api!12                              opened  into=release/2.0 ci=FAILED(head) approval=approved(2) merge=ci_must_pass conflicts=no head=1212bbbb jobs=enabled must-succeed=yes - badge is merge-result (success on 8888eeee)
+api!13                              opened  into=main ci=green(head) approval=NOT-APPROVED(1-left) merge=not_approved conflicts=YES head=1313cccc jobs=enabled must-succeed=yes
+api!14                              merged  into=main on=2026-09-20
+docs!5                              opened  into=main ci=manual(head) approval=not-required merge=draft_status conflicts=no head=0505eeee jobs=DISABLED must-succeed=no - DRAFT - cannot merge until marked ready
+[exit 0]
+
+# every glab call made (read-only GETs only; project settings read once per consecutive project):
+glab api projects/acme%2Fapi/merge_requests/11
+glab api projects/acme%2Fapi/merge_requests/11/pipelines?per_page=30
+glab api projects/acme%2Fapi/merge_requests/11/approvals
+glab api projects/acme%2Fapi
+glab api projects/acme%2Fapi/merge_requests/12
+glab api projects/acme%2Fapi/merge_requests/12/pipelines?per_page=30
+glab api projects/acme%2Fapi/merge_requests/12/approvals
+glab api projects/acme%2Fapi/merge_requests/13
+glab api projects/acme%2Fapi/merge_requests/13/pipelines?per_page=30
+glab api projects/acme%2Fapi/merge_requests/13/approvals
+glab api projects/acme%2Fapi/merge_requests/14
+glab api projects/acme%2Fdocs/merge_requests/5 --hostname gitlab.example.org
+glab api projects/acme%2Fdocs/merge_requests/5/pipelines?per_page=30 --hostname gitlab.example.org
+glab api projects/acme%2Fdocs/merge_requests/5/approvals --hostname gitlab.example.org
+glab api projects/acme%2Fdocs --hostname gitlab.example.org
+
+# reduced project view (non-member token): settings omitted
+$ fm-pr-status.sh acme/api!13
+api!13                              opened  into=main ci=green(head) approval=NOT-APPROVED(1-left) merge=not_approved conflicts=YES head=1313cccc jobs=? must-succeed=?
+[exit 1]
+
+# MR read fails
+$ fm-pr-status.sh acme/api!99
+api!99                              UNREACHABLE (no data - check repo/number/auth)
+[exit 1]
