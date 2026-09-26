@@ -1,0 +1,32 @@
+=== bin/fm-brief.sh ev-dp-gh gh-proj --mode direct-PR ===
+mr-description mentions: 0
+86:Write the pull request description yourself.
+87-Create the pull request yourself and never wait for confirmation on a step this brief already authorizes.
+88-Do not include a "Generated with Claude Code" trailer or other orchestration vocabulary in the description.
+
+=== bin/fm-brief.sh ev-dp-gl gl-proj --mode direct-PR ===
+mr-description mentions: 0
+86:Write the merge request description yourself.
+87-Create the merge request yourself and never wait for confirmation on a step this brief already authorizes.
+88-Do not include a "Generated with Claude Code" trailer or other orchestration vocabulary in the description.
+
+=== bin/fm-brief.sh ev-nm-gh gh-proj --mode no-mistakes ===
+mr-description mentions: 0
+100:Write the pull request description yourself.
+101-Create or update the pull request yourself and never wait for confirmation on a step this brief already authorizes.
+102-Do not include a "Generated with Claude Code" trailer or other orchestration vocabulary in the description.
+
+=== bin/fm-brief.sh ev-nm-gl gl-proj --mode no-mistakes ===
+mr-description mentions: 0
+100:Write the merge request description yourself.
+101-Create or update the merge request yourself and never wait for confirmation on a step this brief already authorizes.
+102-Do not include a "Generated with Claude Code" trailer or other orchestration vocabulary in the description.
+
+=== bin/fm-brief.sh ev-lo gh-proj --mode local-only ===
+mr-description mentions: 0
+(no PR/MR description rule — expected for local-only/scout)
+
+=== bin/fm-brief.sh ev-sc gh-proj --scout ===
+mr-description mentions: 0
+(no PR/MR description rule — expected for local-only/scout)
+
