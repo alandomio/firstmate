@@ -640,6 +640,24 @@ The go-live criteria are zero wrongly absorbable wakes and at least 90% agreemen
 The ground truth for "needed firstmate" (a steer, a decision, or a captain-facing final message in the handling turn) depends on the primary harness reporting its final message on turn end; Claude Code and Codex do, and other harnesses leave that part unknown.
 `bin/fm-jev.sh`'s header owns the log format, the attribution rules, and the exact limits.
 
+### Gated wake absorption (config/jev-absorb / config/jev-absorb-threshold)
+
+Absorption lets the same local Jev classifier skip queuing (and waking the supervising session for) a wake at exactly two allowlisted call sites, instead of only watching: a routine working/paused "signal" wake whose crew is not provably working, and a declared-pause "stale" recheck.
+It is off by default and requires ALL of the following, checked at the moment of that wake:
+
+- `config/jev-absorb`'s first non-blank line is exactly `on`.
+- The LOCAL backend specifically (never OpenRouter - absorption changes real behavior, so it never runs on a request that could leave the machine), with `config/jev-endpoint` a valid loopback URL.
+- `config/jev-absorb-threshold` (default 0.9) is a number no lower than 0.9; this floor must be calibrated against a home's own shadow report, never guessed low.
+- Either the go-live gate (`bin/fm-jev.sh absorb-gate`: zero wrongly absorbable, at least 90% agreement, and a minimum sample of 300 classified wakes over a recent window) is met, or `config/jev-absorb`'s second non-blank line is exactly `override` - a captain override that skips the measured gate but never the other requirements above.
+- For this wake specifically: the Rizzo native answer's status is `ok`, its choice is `absorbable`, and its top probability is at or above the threshold.
+
+Never eligible, regardless of the above: needs-decision, blocked, done, failed, a merge/check result, a heartbeat, a captain inbox note, Relay, a process-event wake, a secondmate's routed-reply channel, or any task with an open decision.
+Any doubt anywhere in that chain - disabled, ineligible, an unmet gate, a classifier timeout, error, or low-confidence answer - falls through to today's unconditional behavior.
+Absorption adds no latency on the wake path beyond the existing per-request classify timeout, and only for a wake it might absorb; the go-live gate's own computation is cached for a few minutes rather than re-scanned on every wake.
+Nothing is lost: every absorbed wake is appended, masked, to `state/jev/absorbed.jsonl`, which `bin/fm-wake-drain.sh` prints - a count plus one line each - the next time any drain runs, whether that is a real wake or a heartbeat, so nothing absorbed can rot unseen and absorption itself never wakes the supervising session on its own.
+`bin/fm-jev.sh status` reports whether absorption is requested, its threshold, and whether the gate is currently met; `bin/fm-jev.sh absorb-gate` reports the gate's own criteria in detail.
+`bin/fm-jev.sh`'s header owns absorb-try's exact eligibility rules.
+
 ## Process-to-event sources (state/procevent)
 
 A long-polling external process is registered as a *source* through its adapter, whose header and `--help` own the commands and flags.

@@ -47,8 +47,13 @@ ack_stopped_cycle() {  # <state>
 watch_bg() {  # <state> <fakebin> <out> [extra env assignments...]
   local state=$1 fakebin=$2 out=$3
   shift 3
+  # The extra assignments are runtime strings (positional parameters), not
+  # literal `NAME=value` tokens the shell parser can recognize as an
+  # assignment prefix, so they are handed to `env` (which parses its own argv
+  # for NAME=value pairs at runtime) rather than placed directly in front of
+  # the command.
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
-    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$@" "$WATCH" > "$out" &
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 env "$@" "$WATCH" > "$out" &
 }
 
 # Wait up to <limit> 0.1s ticks while <pid> stays alive; 0 if still alive, 1 if it died.
@@ -2882,6 +2887,147 @@ test_afk_paused_changed_pane_hands_off_plain_stale() {
   pass "AFK changed paused panes hand off plain stale identities for daemon-owned pause triage"
 }
 
+# --- gated Jev absorption (config/jev-absorb; bin/fm-jev.sh cmd_absorb_try) --
+# These drive the real watcher with a fake local Rizzo Flow server (a fake
+# curl on PATH) so the two allowlisted call sites - a routine working/paused
+# signal whose crew is not provably working, and a declared-pause recheck -
+# can be absorbed before ever reaching the wake queue. bin/fm-jev.sh's own
+# suite (tests/fm-jev.test.sh) owns every eligibility rule and the go-live
+# gate as pure unit tests; these confirm the watcher actually wires into them.
+
+# Installs a fake curl into <fakebin> that answers every request "ok, choice,
+# top_probability" as the local Rizzo Flow API would, and points <dir>'s
+# config at it with absorption requested and the go-live gate overridden.
+jev_absorb_enable() {  # <dir> <fakebin> [choice] [confidence]
+  local dir=$1 fakebin=$2 choice=${3:-absorbable} conf=${4:-0.95}
+  mkdir -p "$dir/config"
+  printf 'on\noverride\n' > "$dir/config/jev-absorb"
+  printf 'http://127.0.0.1:8017\n' > "$dir/config/jev-endpoint"
+  cat > "$fakebin/curl" <<SH
+#!/usr/bin/env bash
+out=''
+while [ "\$#" -gt 0 ]; do case "\$1" in -o) out=\$2; shift ;; esac; shift; done
+printf '{"answers":{"handling":{"type":"choice","status":"ok","choice":"%s","uncertainty":{"top_probability":%s}}}}' \\
+  "$choice" "$conf" > "\$out"
+printf '200'
+SH
+  chmod +x "$fakebin/curl"
+}
+
+test_jev_absorbs_a_routine_signal_the_provably_working_check_would_escalate() {
+  local dir state fakebin out status_file pid
+  dir=$(make_case jev-absorb-signal); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  status_file="$state/task.status"
+  printf 'working: waiting on a slow external call\n' > "$status_file"
+  # Not provably working: the ordinary trigger to escalate.
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+  jev_absorb_enable "$dir" "$fakebin"
+  watch_bg "$state" "$fakebin" "$out" FM_HOME="$dir"
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "watcher exited for a signal Jev should have absorbed: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || fail "an absorbed signal printed a wake reason: $(cat "$out")"
+  [ ! -s "$state/.wake-queue" ] || fail "an absorbed signal enqueued a durable wake record"
+  [ -s "$state/jev/absorbed.jsonl" ] || fail "the absorbed signal was not recorded in the durable digest"
+  grep -F '"task":"task"' "$state/jev/absorbed.jsonl" >/dev/null || fail "the digest entry did not name its task"
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  pass "a routine working: signal the provably-working check would otherwise escalate is absorbed by Jev and recorded in the digest"
+}
+
+test_jev_off_still_surfaces_the_same_signal() {
+  local dir state fakebin out status_file pid
+  dir=$(make_case jev-absorb-signal-off); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  status_file="$state/task.status"
+  printf 'working: waiting on a slow external call\n' > "$status_file"
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+  # No config/jev-absorb at all: absorption stays off, so this must surface
+  # exactly like test_turn_ended_not_working_surfaced's baseline.
+  watch_bg "$state" "$fakebin" "$out" FM_HOME="$dir"
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "watcher did not surface a not-provably-working signal with absorption off"
+  assert_contains "$(cat "$out")" 'signal:' "the signal reason was not printed"
+  [ -s "$state/.wake-queue" ] || fail "the signal was not enqueued with absorption off"
+  assert_absent "$state/jev" "absorption wrote state while off"
+  unset FM_FAKE_CREW_STATE
+  pass "with config/jev-absorb absent, the same signal surfaces exactly as before"
+}
+
+test_jev_absorbs_a_declared_pause_recheck() {
+  local dir state fakebin out capture_file window key pane_hash sig pid back statusf
+  dir=$(make_case jev-absorb-stale); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-jev-held"
+  printf 'idle, holding for upstream' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/held.meta"
+  statusf="$state/held.status"
+  printf 'paused: holding for the upstream tool release\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle, holding for upstream")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · holding for the upstream tool release'
+  jev_absorb_enable "$dir" "$fakebin"
+  # Age the pause past the re-surface threshold up front so this single run
+  # takes the recheck branch (handle_paused_stale's resurface_due gate),
+  # exactly the point Jev's absorb-try is now consulted from.
+  back=$(( $(date +%s) - 500 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
+  else touch -m -d "@$back" "$statusf"; fi
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+    watch_bg "$state" "$fakebin" "$out" FM_HOME="$dir" FM_PAUSE_RESURFACE_SECS=240
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "watcher exited for a declared-pause recheck Jev should have absorbed: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || fail "an absorbed pause recheck printed a wake reason: $(cat "$out")"
+  [ ! -s "$state/.wake-queue" ] || fail "an absorbed pause recheck enqueued a durable wake record"
+  [ -e "$state/.paused-resurfaced-$key" ] || fail "the re-surface throttle was not advanced on a jev-absorbed recheck"
+  [ -s "$state/jev/absorbed.jsonl" ] || fail "the absorbed recheck was not recorded in the durable digest"
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  pass "a declared-pause recheck due to re-surface is absorbed by Jev, throttle advanced, recorded in the digest"
+}
+
+test_jev_never_absorbs_a_captain_held_recheck() {
+  local dir state fakebin out capture_file window key pane_hash sig pid back statusf
+  dir=$(make_case jev-absorb-captain-held); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-jev-held-captain"
+  printf 'idle, holding for the captain' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/held.meta"
+  statusf="$state/held.status"
+  printf 'captain-held: awaiting the captain'"'"'s decision\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle, holding for the captain")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE="state: paused · source: status-log · awaiting the captain's decision"
+  # Even with absorption on, override set and the classifier always answering
+  # absorbable, a captain-held transfer must always re-surface: it is a
+  # verified hold on a captain answer, never routine idling.
+  jev_absorb_enable "$dir" "$fakebin"
+  back=$(( $(date +%s) - 500 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
+  else touch -m -d "@$back" "$statusf"; fi
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+    watch_bg "$state" "$fakebin" "$out" FM_HOME="$dir" FM_PAUSE_RESURFACE_SECS=240
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "watcher did not re-surface a captain-held recheck despite Jev being enabled"
+  grep -F "stale: $window" "$out" >/dev/null || fail "captain-held recheck did not surface: $(cat "$out")"
+  grep -F "awaiting the captain" "$out" >/dev/null || fail "captain-held recheck lost its captain-held wording"
+  assert_absent "$state/jev/absorbed.jsonl" "a captain-held recheck was recorded as absorbed"
+  unset FM_FAKE_CREW_STATE
+  pass "a captain-held recheck always re-surfaces, never absorbed, even with Jev enabled and overridden"
+}
+
 test_signal_reason_is_actionable_classifier
 test_stale_is_terminal_classifier
 test_scan_captain_relevant_statuses_classifier
@@ -2946,3 +3092,7 @@ test_heartbeat_backstop_surfaces_unsurfaced_status
 test_beacon_stays_fresh_while_absorbing
 test_afk_present_reverts_watcher_to_one_shot
 test_afk_paused_changed_pane_hands_off_plain_stale
+test_jev_absorbs_a_routine_signal_the_provably_working_check_would_escalate
+test_jev_off_still_surfaces_the_same_signal
+test_jev_absorbs_a_declared_pause_recheck
+test_jev_never_absorbs_a_captain_held_recheck

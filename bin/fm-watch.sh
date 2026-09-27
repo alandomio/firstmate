@@ -14,7 +14,9 @@
 # on every wake. Printed reason lines:
 #   signal: <file>...      status/turn-end signals, surfaced when a listed status
 #                          has a captain-relevant verb OR a no-verb signal's crew
-#                          is not provably working, unless afk is active
+#                          is not provably working, unless afk is active or Jev
+#                          absorbs it (config/jev-absorb; off by default -
+#                          bin/fm-jev.sh's header owns the gate and every rule)
 #   stale: <window>        a provably-working stale is ALWAYS absorbed (with a wedge
 #                          timer) regardless of what the status log says - an active
 #                          run-step or busy pane outranks even a captain-relevant log
@@ -23,7 +25,10 @@
 #                          external-wait pause or verified captain-held transfer is
 #                          absorbed instead with its own long re-surface cadence,
 #                          never as a wedge, and that recheck reason names which
-#                          human the wait is on. Only when neither absorb class
+#                          human the wait is on; a due PAUSED (never captain-held)
+#                          recheck also offers Jev one more look before it
+#                          re-surfaces (config/jev-absorb; off by default). Only
+#                          when neither absorb class
 #                          applies does the log's last line decide:
 #                          terminal (captain-relevant) or non-terminal (no verb),
 #                          both surfaced at once. A provably-working stale past the
@@ -100,6 +105,11 @@ mkdir -p "$STATE"
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# Gated Jev absorption (config/jev-absorb; off by default; bin/fm-jev.sh owns
+# every eligibility rule and the go-live gate). fm_jev_absorb_try's own cheap
+# enabled check means a home that never opted in pays no fork at all here.
+# shellcheck source=bin/fm-jev-lib.sh
+. "$SCRIPT_DIR/fm-jev-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -447,6 +457,16 @@ busy_turn_over_age() {  # <task>
 # again only once PAUSE_REMIND_SECS pass since that surface, or the situation changes.
 # A recheck that finds the agent dead is never absorbed, so an exited worker keeps
 # surfacing on every PAUSE_RESURFACE_SECS recheck.
+# 0 when Jev absorbed a declared-pause recheck that was about to re-surface -
+# called ONLY for the "paused, awaiting external" case, never for a
+# captain-held transfer (that always re-surfaces regardless of any classifier,
+# since it is a verified hold on a captain answer, not routine idling).
+# bin/fm-jev.sh's cmd_absorb_try owns every eligibility rule and the go-live
+# gate.
+jev_stale_absorbed() {  # <task> <reason>
+  fm_jev_absorb_try "$FM_HOME" "$STATE" stale "$1" "$2"
+}
+
 handle_paused_stale() {  # <window> <task> <hash> <tail40>
   local win=$1 task=$2 h=$3 tail=$4 key statusf mtime age detail reason throttle surfaced now_sit prev_sit
   key=$(window_key "$win")
@@ -481,7 +501,14 @@ handle_paused_stale() {  # <window> <task> <hash> <tail40>
     elif [ -n "$prev_sit" ]; then
       reason="$reason; changed since the last recheck: $(paused_situation_change "$prev_sit" "$now_sit")"
     fi
-    resurface_absorbed "$win" "$throttle" "$age" "stale: $win ($reason)" "$surfaced" "$now_sit"
+    if [ "$detail" = "paused, awaiting external" ] \
+      && jev_stale_absorbed "$task" "stale: $win ($reason)"; then
+      date +%s > "$throttle"
+      printf '%s\n' "$now_sit" > "$surfaced"
+      triage_log "absorbed paused recheck via jev ($detail, age ${age}s): $win"
+    else
+      resurface_absorbed "$win" "$throttle" "$age" "stale: $win ($reason)" "$surfaced" "$now_sit"
+    fi
   fi
   triage_log "absorbed stale ($detail, age ${age}s): $win"
 }
@@ -663,6 +690,32 @@ scan_signals() {
     fi
   done
   return 0
+}
+
+# 0 when Jev absorbed this batch of routine working/paused signal files -
+# called ONLY for a non-afk, no-captain-verb signal whose crew is not provably
+# working (the one case bin/fm-jev.sh's absorb-try allowlists as "routine
+# working/paused signal lines"). Refuses outright (falls through to the
+# ordinary escalation) for anything but exactly one distinct task, so a batch
+# the signal grace period coalesced across more than one crew is never
+# silently absorbed. bin/fm-jev.sh's cmd_absorb_try owns every other
+# eligibility rule and the go-live gate.
+jev_signal_absorbed() {  # <reason> <file> ...
+  local reason=$1 f base t task=""
+  shift
+  for f in "$@"; do
+    base=${f##*/}
+    case "$base" in
+      *.status) t=${base%.status} ;;
+      *.turn-ended) t=${base%.turn-ended} ;;
+      *) continue ;;
+    esac
+    if [ -z "$task" ]; then task=$t
+    elif [ "$task" != "$t" ]; then return 1
+    fi
+  done
+  [ -n "$task" ] || return 1
+  fm_jev_absorb_try "$FM_HOME" "$STATE" signal "$task" "$reason"
 }
 
 # Deliver a durably queued process-event result to firstmate. Publication is
@@ -1197,7 +1250,25 @@ EOF
     # check is the only costly one (it may run a bounded no-mistakes call), so the ||
     # ordering evaluates it ONLY for a non-afk, no-captain-verb signal.
     # shellcheck disable=SC2086  # $files is a space-separated status-path list (ids carry no spaces)
-    if afk_present || signal_reason_is_actionable $files || ! signal_crew_provably_working $files; then
+    if afk_present || signal_reason_is_actionable $files; then
+      surface_signal=1
+    elif ! signal_crew_provably_working $files; then
+      # Not provably working is the ordinary trigger to escalate - but before
+      # doing that, give the gated Jev classifier (off by default) one more
+      # look: a working:/paused: note whose crew merely isn't PROVABLY working
+      # (nothing herdr or the run step can vouch for) is exactly the routine
+      # case config/jev-absorb allowlists. Any doubt there falls through to
+      # the unchanged escalation below.
+      # shellcheck disable=SC2086
+      if jev_signal_absorbed "$reason" $files; then
+        surface_signal=0
+      else
+        surface_signal=1
+      fi
+    else
+      surface_signal=0
+    fi
+    if [ "$surface_signal" -eq 1 ]; then
       while IFS=$(printf '\t') read -r sf sig f; do
         [ -n "$sf" ] || continue
         fm_wake_append signal "$(basename "$f")" "$reason" || exit 1
