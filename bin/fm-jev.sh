@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # fm-jev.sh - Jev (TypeSafe's decision model on OpenRouter, or a local
-# Jev-compatible server) as a SHADOW-ONLY, advisory classifier of supervision
+# Rizzo Flow server) as a SHADOW-ONLY, advisory classifier of supervision
 # wakes, plus the measurement that decides whether it may ever do more.
 #
 # Usage:
@@ -17,17 +17,20 @@
 # key is read from .env only at request time, handed to curl on stdin rather
 # than argv, and never printed, logged, or written anywhere. A home opts into
 # the LOCAL backend instead by carrying a base URL in its private, gitignored
-# config/jev-endpoint - a Jev-compatible server such as Rizzo Flow's
-# `rizzo serve` (POST /v1/systemone on 127.0.0.1:8017 by default). That file
-# takes priority when present: no key is read or required for it. A STATE
-# directory other than the home's own never uses either backend
-# (bin/fm-jev-lib.sh fm_jev_backend/fm_jev_enabled).
+# config/jev-endpoint - a Rizzo Flow server (`rizzo serve`), which must
+# expose Rizzo Flow's native typed-decision API (POST /v1/decisions, on
+# 127.0.0.1:8017 by default; see the rizzo-flow skill) - a server offering
+# only the Jev-compatible /v1/systemone answers every row as an api-error.
+# That file takes priority when present: no key is read or required for it. A STATE directory
+# other than the home's own never uses either backend (bin/fm-jev-lib.sh
+# fm_jev_backend/fm_jev_enabled).
 #
 # Loopback-only enforcement. config/jev-endpoint must resolve to
 # 127.0.0.1/localhost/::1 with no path (jev_local_url_ok); anything else is
 # refused outright rather than dialed, logged as a skipped "invalid-endpoint"
-# row, and pauses classification for the day exactly like any other error -
-# this file must never become a back door to a hosted API.
+# row, and pauses classification for the day - the one local-backend
+# condition that still does (see Limits) - this file must never become a
+# back door to a hosted API.
 #
 # Shadow contract. For every wake row a drain presents, this script asks Jev
 # one three-way choice - "firstmate" (needs firstmate), "absorbable", or
@@ -49,18 +52,33 @@
 # seconds; override with a positive number in config/jev-timeout, an invalid
 # value keeps the default and `status` says so) - warm local requests measured
 # well under a second, so the 5 second default still stops a stuck local
-# server hanging the classify loop. The OpenRouter backend also has a daily
-# spend cap (USD, default 1; override with a decimal number in
-# config/jev-daily-cap), summed from the usage.cost each response reports; a
-# missing cost is an API error there. The local backend has no per-request
-# cost - a missing usage.cost is expected, not an error - so it is instead
-# gated on machine load: a 1-minute load-average ceiling (default 8; override
-# with a decimal number in config/jev-max-load) checked before each request;
-# a wake presented at or above it is only skipped (why=load), so the next
-# reading below the ceiling classifies again. Either backend's timeout,
-# API/transport error, or (OpenRouter) reaching the spend cap pauses
-# classification until the next local calendar day (state/jev/disabled). The
-# wake itself is untouched in every case because shadow mode never held it.
+# server hanging the classify loop. The OpenRouter backend pauses
+# classification until the next local calendar day (state/jev/disabled) on
+# its timeout, an API/transport error, a response without a usage.cost, or
+# reaching its daily spend cap (USD, default 1; override with a decimal
+# number in config/jev-daily-cap), summed from the usage.cost each response
+# reports - unchanged. The local backend has no per-request cost and no
+# monotonic quota to protect, so none of its own failure reasons ever pauses
+# it for the day: a 1-minute load average at or above config/jev-max-load
+# (default 8; checked before each request), a timeout, or an API/transport
+# error each only skip that one row (why=load/timeout/api-error), and the
+# very next drain tries again. A timeout also skips the rest of that same
+# drain's rows (why=timeout) without dialing, so a stuck server costs one
+# timeout per drain rather than one per row, and the classify lock is never
+# held long enough for detached drains to pile up behind it. The sole exception is an invalid
+# config/jev-endpoint, which still pauses the local backend for the day
+# because that is a configuration mistake to surface, not a transient
+# condition to retry. The wake itself is untouched in every case because
+# shadow mode never held it.
+#
+# The local backend asks through Rizzo Flow's native /v1/decisions API (the
+# rizzo-flow skill's references/api.md) rather than the Jev-compatible
+# /v1/systemone the OpenRouter backend still uses, with allow_abstain and a
+# policy.min_top_probability of 0.6 (JEV_LOCAL_MIN_TOP_PROBABILITY, matching
+# `report`'s own --min-confidence default): a response the server itself
+# could not decide (status insufficient_evidence) or answered under that
+# confidence floor (status uncertain) carries no choice, which this script
+# logs as "doubt" exactly like a low-confidence OpenRouter answer.
 #
 # Private log: state/jev/shadow.jsonl, append-only, mode 0600, one JSON object
 # per line:
@@ -119,8 +137,8 @@ JEV_OR_MODEL=typesafe/jev-1.13
 JEV_OR_ENDPOINT=https://openrouter.ai/api/alpha/decisions
 JEV_DEFAULT_TIMEOUT=5
 JEV_DEFAULT_CAP=1
-JEV_LOCAL_MODEL=jev-latest
 JEV_DEFAULT_MAX_LOAD=8
+JEV_LOCAL_MIN_TOP_PROBABILITY=0.6
 
 # The single definition of what may leave the machine; `mask` exposes it.
 JEV_JQ_MASK='def fm_jev_mask:
@@ -264,28 +282,58 @@ jev_log_skip() {  # <id> <why> <detail> <reason> <status>
       reason: $reason, status: $status}')"
 }
 
-jev_request_body() {  # <reason> <status> <model>
-  jq -cn --arg model "$3" --arg r "$1" --arg s "$2" '{
-    model: $model,
-    state: ({wake_reason: $r} + (if $s == "" then {} else {worker_last_status: $s} end)),
-    questions: {
-      handling: {
-        type: "choice",
-        instructions: "A supervisor agent (firstmate) coordinates autonomous coding workers and reports to a human captain. This wake notification just arrived. How must it be handled?",
-        criteria: {
-          firstmate: "Firstmate must act: steer, answer, unblock or recover a worker, review or land its work, or otherwise do something beyond acknowledging.",
-          absorbable: "Routine, duplicate or informational progress with nothing to do: firstmate would only acknowledge it.",
-          captain: "The captain must hear about it now: a decision only the captain can make, work ready for review, a real failure, a needed credential or login, or anything destructive or security-sensitive."
+JEV_HANDLING_INSTRUCTIONS="A supervisor agent (firstmate) coordinates autonomous coding workers and reports to a human captain. This wake notification just arrived. How must it be handled?"
+JEV_HANDLING_FIRSTMATE_DESC="Firstmate must act: steer, answer, unblock or recover a worker, review or land its work, or otherwise do something beyond acknowledging."
+JEV_HANDLING_ABSORBABLE_DESC="Routine, duplicate or informational progress with nothing to do: firstmate would only acknowledge it."
+JEV_HANDLING_CAPTAIN_DESC="The captain must hear about it now: a decision only the captain can make, work ready for review, a real failure, a needed credential or login, or anything destructive or security-sensitive."
+
+# <reason> <status> <model> <backend> - OpenRouter/systemone (any backend but
+# "local") sends a top-level model and criteria object; the local backend's
+# native /v1/decisions has no model field and wants an options array plus a
+# policy asking it to abstain and flag low-confidence answers itself.
+jev_request_body() {
+  local reason=$1 status=$2 model=$3 backend=$4
+  if [ "$backend" = local ]; then
+    jq -cn --arg r "$reason" --arg s "$status" --argjson minp "$JEV_LOCAL_MIN_TOP_PROBABILITY" \
+      --arg instr "$JEV_HANDLING_INSTRUCTIONS" --arg fm "$JEV_HANDLING_FIRSTMATE_DESC" \
+      --arg ab "$JEV_HANDLING_ABSORBABLE_DESC" --arg cap "$JEV_HANDLING_CAPTAIN_DESC" '{
+      state: ({wake_reason: $r} + (if $s == "" then {} else {worker_last_status: $s} end)),
+      questions: {
+        handling: {
+          type: "choice",
+          instructions: $instr,
+          options: [
+            {id: "firstmate", description: $fm},
+            {id: "absorbable", description: $ab},
+            {id: "captain", description: $cap}
+          ],
+          policy: {allow_abstain: true, min_top_probability: $minp}
         }
       }
-    }
-  }'
+    }'
+  else
+    jq -cn --arg model "$model" --arg r "$reason" --arg s "$status" \
+      --arg instr "$JEV_HANDLING_INSTRUCTIONS" --arg fm "$JEV_HANDLING_FIRSTMATE_DESC" \
+      --arg ab "$JEV_HANDLING_ABSORBABLE_DESC" --arg cap "$JEV_HANDLING_CAPTAIN_DESC" '{
+      model: $model,
+      state: ({wake_reason: $r} + (if $s == "" then {} else {worker_last_status: $s} end)),
+      questions: {
+        handling: {
+          type: "choice",
+          instructions: $instr,
+          criteria: {firstmate: $fm, absorbable: $ab, captain: $cap}
+        }
+      }
+    }'
+  fi
 }
 
 # One request against either backend. Prints nothing; logs a classified or
-# skipped event and pauses for the day on timeout, API error, or (OpenRouter
-# only) a missing cost or the spend cap; the caller applies the local
-# backend's load-ceiling skip before ever calling this.
+# skipped event. Only the OpenRouter backend ever pauses for the day here
+# (timeout, API error, or a missing cost); the local backend only skips this
+# one row on any of those (a timeout also sets JEV_LOCAL_TIMED_OUT so the
+# caller skips the rest of this drain), and the caller applies its
+# load-ceiling skip before ever calling this.
 jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-before> <cap>
   local id=$1 reason=$2 status=$3 backend=$4 spend=$5 cap=$6
   local day key model endpoint timeout body resp code rc start ms cost event
@@ -293,7 +341,7 @@ jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-be
   timeout=$JEV_TIMEOUT
   if [ "$backend" = local ]; then
     key=
-    model=$JEV_LOCAL_MODEL
+    model=
     endpoint=$JEV_LOCAL_ENDPOINT
   else
     key=$(fmx_env_get OPENROUTER_API_KEY "$FM_HOME/.env")
@@ -310,7 +358,7 @@ jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-be
   fi
   body=$(umask 077 && mktemp "$JEV_DIR/.body.XXXXXX") || return 0
   resp=$(umask 077 && mktemp "$JEV_DIR/.resp.XXXXXX") || { rm -f "$body"; return 0; }
-  jev_request_body "$reason" "$status" "$model" > "$body" || { rm -f "$body" "$resp"; return 0; }
+  jev_request_body "$reason" "$status" "$model" "$backend" > "$body" || { rm -f "$body" "$resp"; return 0; }
   start=$(jev_now_ms)
   rc=0
   if [ -n "$key" ]; then
@@ -329,13 +377,17 @@ jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-be
   if [ "$rc" -eq 28 ]; then
     rm -f "$resp"
     jev_log_skip "$id" timeout "no answer within ${timeout}s" "$reason" "$status"
-    jev_pause "$day" timeout
+    if [ "$backend" = local ]; then
+      JEV_LOCAL_TIMED_OUT=1
+    else
+      jev_pause "$day" timeout
+    fi
     return 0
   fi
   if [ "$rc" -ne 0 ]; then
     rm -f "$resp"
     jev_log_skip "$id" api-error "transport error (curl exit $rc)" "$reason" "$status"
-    jev_pause "$day" api-error
+    [ "$backend" = local ] || jev_pause "$day" api-error
     return 0
   fi
   case "$code" in
@@ -343,7 +395,7 @@ jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-be
     *)
       rm -f "$resp"
       jev_log_skip "$id" api-error "HTTP $code" "$reason" "$status"
-      jev_pause "$day" api-error
+      [ "$backend" = local ] || jev_pause "$day" api-error
       return 0
       ;;
   esac
@@ -360,14 +412,20 @@ jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-be
     | {ev: "jev", t: $t, day: $day, id: $id, outcome: "classified",
        choice: (if ($a.choice | type) == "string" and (["firstmate", "absorbable", "captain"] | index($a.choice)) != null
                 then $a.choice else "doubt" end),
-       confidence: ($a.confidence | if type == "number" then . else null end),
+       confidence: (if ($a.confidence | type) == "number" then $a.confidence
+                    elif ($a.uncertainty.top_probability | type) == "number" then $a.uncertainty.top_probability
+                    else null end),
        probabilities: ($a.probabilities | if type == "object" then . else null end),
-       cost: .usage.cost, ms: $ms, model: (.model // null),
+       cost: .usage.cost, ms: $ms,
+       model: (if (.model | type) == "string" then .model
+               elif (.model | type) == "object"
+               then ((.model.source // "unknown") + "/" + (.model.weights // "unknown") + "/" + (.model.precision // "unknown"))
+               else null end),
        reason: $reason, status: $status}' "$resp" 2>/dev/null) || event=
   rm -f "$resp"
   if [ -z "$event" ]; then
     jev_log_skip "$id" api-error "unreadable response" "$reason" "$status"
-    jev_pause "$day" api-error
+    [ "$backend" = local ] || jev_pause "$day" api-error
     return 0
   fi
   _fm_jev_append "$STATE" "$event"
@@ -400,10 +458,11 @@ cmd_observe_drain() {  # <spool> <epoch>
   fm_lock_acquire_wait "$JEV_LOCK" || { rm -f "$spool"; exit 0; }
   day=$(date +%F)
   JEV_TIMEOUT=$(jev_timeout)
+  JEV_LOCAL_TIMED_OUT=
   if [ "$backend" = local ]; then
     base=$(tr -d '[:space:]' < "$FM_HOME/config/jev-endpoint" 2>/dev/null)
     if jev_local_url_ok "$base"; then
-      JEV_LOCAL_ENDPOINT="${base%/}/v1/systemone"
+      JEV_LOCAL_ENDPOINT="${base%/}/v1/decisions"
     else
       JEV_LOCAL_ENDPOINT=
     fi
@@ -432,6 +491,10 @@ cmd_observe_drain() {  # <spool> <epoch>
       if [ -z "$JEV_LOCAL_ENDPOINT" ]; then
         jev_log_skip "$id" invalid-endpoint "config/jev-endpoint must be a loopback URL with no path" "$reason" "$status"
         jev_pause "$day" invalid-endpoint
+        continue
+      fi
+      if [ -n "$JEV_LOCAL_TIMED_OUT" ]; then
+        jev_log_skip "$id" timeout "an earlier row in this drain got no answer within ${JEV_TIMEOUT}s" "$reason" "$status"
         continue
       fi
       load=$(jev_load_avg)
