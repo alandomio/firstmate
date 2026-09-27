@@ -263,7 +263,7 @@ print_status_presentation() {  # [<deduped-raw-rows>]
   fi
   if [ "$rc" -eq 0 ] && [ -n "$snapshot" ]; then print_status_sections "$snapshot" "$fully_presented" || rc=1; fi
   # Gated Jev absorption's own digest (config/jev-absorb; off by default):
-  # printed on every drain, whether the queue itself is empty or not, so an
+  # printed on every non-afk drain, whether the queue is empty or not, so an
   # absorbed wake surfaces with the very next real wake or heartbeat rather
   # than forcing a supervision wake of its own. Independent of the status
   # sections above and never gates on their outcome.

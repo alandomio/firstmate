@@ -610,7 +610,7 @@ See [verification/public-followup.md](verification/public-followup.md) for the c
 
 Jev is TypeSafe's decision model, reached through OpenRouter as `typesafe/jev-1.13`.
 Firstmate uses it only as an advisory, shadow-only classifier of supervision wakes: it asks one three-way question per presented wake (needs firstmate, absorbable, or urgent for the captain), logs the answer next to what firstmate actually did, and acts on nothing.
-It never delays, drops, reorders, absorbs, or alters a wake, and nothing reads its answer to decide a merge, a destructive or security-sensitive action, or a captain call.
+It never delays, drops, reorders, absorbs, or alters a wake, and nothing reads its answer to decide a merge, a destructive or security-sensitive action, or a captain call; the separately opted-in [gated wake absorption](#gated-wake-absorption-configjev-absorb--configjev-absorb-threshold) below is the only exception.
 
 One of two backends runs per home, config/jev-endpoint taking priority when present:
 
@@ -632,11 +632,11 @@ The OpenRouter backend also has a daily spend cap (USD, default 1; override with
 The local backend has no per-request cost and no monotonic quota to protect, so none of its own failure reasons ever pauses it for the day: a 1-minute load average at or above `config/jev-max-load` (default 8, checked before each request), a timeout, or an API/transport error each only skip that one row (logged with `why=load`/`timeout`/`api-error`), and the very next drain tries again.
 A timeout also skips the rest of that same drain's rows (logged with `why=timeout`) without dialing, so a stuck server costs one timeout per drain rather than one per row and detached drains never pile up behind it.
 The local backend asks through Rizzo Flow's native `/v1/decisions` API with `allow_abstain` and a `policy.min_top_probability` of 0.6 (matching `report`'s own `--min-confidence` default); a response the server itself could not decide, or answered under that confidence floor, carries no choice and is logged as `doubt`, exactly like a low-confidence OpenRouter answer.
-Every wake still surfaces exactly as it would without Jev, in every case.
+In shadow mode every wake still surfaces exactly as it would without Jev, in every case.
 
 `bin/fm-jev.sh status` reports the active backend (or that both are off), the OpenRouter spend or the local endpoint and load ceiling, and any pause.
 `bin/fm-jev.sh report` measures the shadow window: agreement between Jev and firstmate's actual handling, the count of wakes Jev would have absorbed that needed firstmate, and about twenty doubtful cases for the captain; each classified row records which model actually answered.
-The go-live criteria are zero wrongly absorbable wakes and at least 90% agreement over one week; activation is a separate change, and evaluating a local model's calibration against these criteria is a captain decision, not an assumption carried over from OpenRouter's defaults.
+The go-live criteria are zero wrongly absorbable wakes and at least 90% agreement over one week; activation is the separate opt-in below, and evaluating a local model's calibration against these criteria is a captain decision, not an assumption carried over from OpenRouter's defaults.
 The ground truth for "needed firstmate" (a steer, a decision, or a captain-facing final message in the handling turn) depends on the primary harness reporting its final message on turn end; Claude Code and Codex do, and other harnesses leave that part unknown.
 `bin/fm-jev.sh`'s header owns the log format, the attribution rules, and the exact limits.
 
@@ -655,6 +655,7 @@ Never eligible, regardless of the above: needs-decision, blocked, done, failed, 
 Any doubt anywhere in that chain - disabled, ineligible, an unmet gate, a classifier timeout, error, or low-confidence answer - falls through to today's unconditional behavior.
 Absorption adds no latency on the wake path beyond the existing per-request classify timeout, and only for a wake it might absorb; the go-live gate's own computation is cached for a few minutes rather than re-scanned on every wake.
 Nothing is lost: every absorbed wake is appended, masked, to `state/jev/absorbed.jsonl`, which `bin/fm-wake-drain.sh` prints - a count plus one line each - the next time any drain runs, whether that is a real wake or a heartbeat, so nothing absorbed can rot unseen and absorption itself never wakes the supervising session on its own.
+While away mode is active (`state/.afk`) the digest is held with its cursor untouched, because the away-mode sub-supervisor discards drain output other than queue rows; it surfaces in the first drain after away mode ends, such as `bin/fm-afk-return.sh`'s catch-up.
 `bin/fm-jev.sh status` reports whether absorption is requested, its threshold, and whether the gate is currently met; `bin/fm-jev.sh absorb-gate` reports the gate's own criteria in detail.
 `bin/fm-jev.sh`'s header owns absorb-try's exact eligibility rules.
 

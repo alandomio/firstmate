@@ -19,13 +19,15 @@
 #                                                      two allowlisted call sites
 #   fm_jev_absorb_digest_surface <state>              - printed by
 #                                                      bin/fm-wake-drain.sh on
-#                                                      every drain
+#                                                      every non-afk drain
 #
-# Every function is best effort and silent: it never prints, always returns 0
-# (except fm_jev_enabled's own answer), and costs one file test when the home
-# has not opted in. A Jev problem can therefore never change a caller's output,
-# exit status, ordering, or timing, and the classification itself always runs
-# detached from the caller.
+# Every shadow function is best effort and silent: it never prints, always
+# returns 0 (except fm_jev_enabled's own answer), and costs one file test when
+# the home has not opted in. A Jev problem can therefore never change a caller's
+# output, exit status, ordering, or timing, and the classification itself always
+# runs detached from the caller. The two absorption functions are the opted-in
+# exceptions: fm_jev_absorb_try answers synchronously and
+# fm_jev_absorb_digest_surface prints the digest.
 
 FM_JEV_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -105,8 +107,8 @@ fm_jev_absorb_try() {  # <home> <state> <signal|stale> <task> <reason>
 # Print an ABSORBED section for every digest line not yet surfaced, then
 # advance the cursor so it is never repeated. Called on every drain
 # (bin/fm-wake-drain.sh), so an absorbed wake surfaces with the very next real
-# wake or heartbeat - whichever comes first, because that is the next time a
-# drain runs at all - never forcing a supervision wake of its own. Silent
+# wake or heartbeat, never forcing a supervision wake of its own. Held while
+# state/.afk exists: the away-mode daemon discards drain output. Silent
 # (prints and touches nothing) when nothing is pending, which is the common
 # case and the case for a home that never enabled absorption.
 fm_jev_absorb_digest_surface() {  # <state>

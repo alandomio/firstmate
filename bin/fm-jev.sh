@@ -43,9 +43,9 @@
 # Nothing is lost: every absorbed wake is appended, masked, to
 # state/jev/absorbed.jsonl (bin/fm-jev-lib.sh's fm_jev_absorb_digest_surface),
 # which bin/fm-wake-drain.sh prints - count plus one line each - the next time
-# ANY drain runs, whether that is a real wake or a heartbeat, so nothing
-# absorbed can rot unseen and no absorption itself ever wakes the supervising
-# session on its own.
+# ANY drain runs, whether that is a real wake or a heartbeat (held while away
+# mode owns drains), so nothing absorbed can rot unseen and no absorption
+# itself ever wakes the supervising session on its own.
 #
 # Switch. Off by default, and only one backend runs per home. A home opts into
 # the OpenRouter backend by carrying a non-empty OPENROUTER_API_KEY in its
