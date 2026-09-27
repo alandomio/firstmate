@@ -502,6 +502,7 @@ handle_paused_stale() {  # <window> <task> <hash> <tail40>
       reason="$reason; changed since the last recheck: $(paused_situation_change "$prev_sit" "$now_sit")"
     fi
     if [ "$detail" = "paused, awaiting external" ] \
+      && case $now_sit in *' agent=dead '*) false ;; esac \
       && jev_stale_absorbed "$task" "stale: $win ($reason)"; then
       date +%s > "$throttle"
       printf '%s\n' "$now_sit" > "$surfaced"

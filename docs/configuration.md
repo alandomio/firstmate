@@ -648,7 +648,7 @@ It is off by default and requires ALL of the following, checked at the moment of
 - `config/jev-absorb`'s first non-blank line is exactly `on`.
 - The LOCAL backend specifically (never OpenRouter - absorption changes real behavior, so it never runs on a request that could leave the machine), with `config/jev-endpoint` a valid loopback URL.
 - `config/jev-absorb-threshold` (default 0.9) is a number no lower than 0.9; this floor must be calibrated against a home's own shadow report, never guessed low.
-- Either the go-live gate (`bin/fm-jev.sh absorb-gate`: zero wrongly absorbable, at least 90% agreement, and a minimum sample of 300 classified wakes over a recent window) is met, or `config/jev-absorb`'s second non-blank line is exactly `override` - a captain override that skips the measured gate but never the other requirements above.
+- Either the go-live gate (`bin/fm-jev.sh absorb-gate`: zero wrongly absorbable, at least 90% agreement, and a minimum sample of 300 scored wakes - classified wakes whose ground truth was measured - over a recent window) is met, or `config/jev-absorb`'s second non-blank line is exactly `override` - a captain override that skips the measured gate but never the other requirements above.
 - For this wake specifically: the Rizzo native answer's status is `ok`, its choice is `absorbable`, and its top probability is at or above the threshold.
 
 Never eligible, regardless of the above: needs-decision, blocked, done, failed, a merge/check result, a heartbeat, a captain inbox note, Relay, a process-event wake, a secondmate's routed-reply channel, or any task with an open decision.

@@ -110,7 +110,7 @@ fm_jev_absorb_try() {  # <home> <state> <signal|stale> <task> <reason>
 # (prints and touches nothing) when nothing is pending, which is the common
 # case and the case for a home that never enabled absorption.
 fm_jev_absorb_digest_surface() {  # <state>
-  local state=$1 digest cursor size offset have count line
+  local state=$1 digest cursor size offset have count
   digest="$state/jev/absorbed.jsonl"
   [ -f "$digest" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
@@ -124,17 +124,27 @@ fm_jev_absorb_digest_surface() {  # <state>
   if [ "$offset" -eq "$size" ]; then
     return 0
   fi
-  have=$(tail -c "+$((offset + 1))" "$digest" 2>/dev/null)
-  count=$(printf '%s\n' "$have" | grep -c '[^[:space:]]') || count=0
+  have=$(tail -c "+$((offset + 1))" "$digest" 2>/dev/null | head -c "$((size - offset))"; printf x)
+  have=${have%x}
+  case "$have" in
+    *$'\n') ;;
+    *$'\n'*) have="${have%$'\n'*}"$'\n' ;;
+    *) return 0 ;;
+  esac
+  size=$((offset + $(printf '%s' "$have" | wc -c | tr -d ' ')))
+  count=$(printf '%s' "$have" | grep -c '[^[:space:]]') || count=0
   if [ "$count" -eq 0 ]; then
     (umask 077 && printf '%s\n' "$size" > "$cursor") 2>/dev/null || true
     return 0
   fi
   printf 'ABSORBED (%d wake%s, absorbed by the local Jev classifier before reaching the queue - masked reason/status kept below):\n' \
     "$count" "$([ "$count" -eq 1 ] && printf '' || printf 's')"
-  printf '%s\n' "$have" | jq -r '
-    select(type == "object")
-    | "  \(.t | todate) \(.kind) task \(.task): choice \(.choice) (\(.confidence))\(if (.reason // "") != "" then " | wake: " + .reason else "" end)\(if (.status // "") != "" then " | worker: " + .status else "" end)"
+  printf '%s' "$have" | jq -Rr '
+    select(test("[^[:space:]]"))
+    | (fromjson? // null) as $e
+    | if ($e | type) == "object" then
+        "  \(($e.t | todate?) // "unknown time") \($e.kind) task \($e.task): choice \($e.choice) (\($e.confidence))\(if ($e.reason // "") != "" then " | wake: " + $e.reason else "" end)\(if ($e.status // "") != "" then " | worker: " + $e.status else "" end)"
+      else "  (unreadable digest entry)" end
   ' 2>/dev/null
   (umask 077 && printf '%s\n' "$size" > "$cursor") 2>/dev/null || true
 }

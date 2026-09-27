@@ -2960,7 +2960,7 @@ test_jev_absorbs_a_declared_pause_recheck() {
   out="$dir/watch.out"; capture_file="$dir/pane.txt"
   window="test:fm-jev-held"
   printf 'idle, holding for upstream' > "$capture_file"
-  printf 'window=%s\nkind=ship\n' "$window" > "$state/held.meta"
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/held.meta"
   statusf="$state/held.status"
   printf 'paused: holding for the upstream tool release\n' > "$statusf"
   sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
@@ -2968,6 +2968,7 @@ test_jev_absorbs_a_declared_pause_recheck() {
   pane_hash=$(hash_text "idle, holding for upstream")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
+  : > "$state/.paused-$key"
   export FM_FAKE_CREW_STATE='state: paused · source: status-log · holding for the upstream tool release'
   jev_absorb_enable "$dir" "$fakebin"
   # Age the pause past the re-surface threshold up front so this single run
@@ -2978,7 +2979,7 @@ test_jev_absorbs_a_declared_pause_recheck() {
   else touch -m -d "@$back" "$statusf"; fi
   sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
-    FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
     watch_bg "$state" "$fakebin" "$out" FM_HOME="$dir" FM_PAUSE_RESURFACE_SECS=240
   pid=$!
   if ! wait_poll_cycle "$state" "$pid"; then
@@ -2991,6 +2992,27 @@ test_jev_absorbs_a_declared_pause_recheck() {
   reap "$pid"
   unset FM_FAKE_CREW_STATE
   pass "a declared-pause recheck due to re-surface is absorbed by Jev, throttle advanced, recorded in the digest"
+}
+
+# A paused worker whose agent exited must surface on every recheck even when
+# Jev would answer absorbable with full confidence.
+test_jev_never_absorbs_a_dead_agent_pause_recheck() {
+  local dir state statusf window task key
+  dir=$(make_case jev-absorb-dead-agent); state="$dir/state"
+  window="test:fm-jev-dead"; task=dead; statusf="$state/$task.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf 'paused: waiting on upstream\n' > "$statusf"
+  backdate_file 500 "$statusf"
+  printf 'bare shell after agent exit\n' > "$dir/pane.txt"
+  : > "$state/.paused-$key"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  jev_absorb_enable "$dir" "$dir/fakebin"
+  paused_recheck_round "$dir" "$window" "$task" zsh surface "first dead-agent recheck" FM_HOME="$dir"
+  paused_recheck_round "$dir" "$window" "$task" zsh surface "unchanged dead-agent recheck" FM_HOME="$dir"
+  assert_absent "$state/jev/absorbed.jsonl" "a dead-agent pause recheck was recorded as absorbed"
+  pass "a dead-agent pause recheck always re-surfaces, never absorbed by Jev"
 }
 
 test_jev_never_absorbs_a_captain_held_recheck() {
@@ -3095,4 +3117,5 @@ test_afk_paused_changed_pane_hands_off_plain_stale
 test_jev_absorbs_a_routine_signal_the_provably_working_check_would_escalate
 test_jev_off_still_surfaces_the_same_signal
 test_jev_absorbs_a_declared_pause_recheck
+test_jev_never_absorbs_a_dead_agent_pause_recheck
 test_jev_never_absorbs_a_captain_held_recheck

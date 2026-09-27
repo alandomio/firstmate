@@ -784,6 +784,31 @@ test_absorb_gate_reports_met_and_not_met() {
   pass "absorb-gate reports classified/scored/agreement/wrongly-absorbable and the sample-gated go-live verdict"
 }
 
+test_absorb_digest_surfaces_every_entry_past_a_malformed_line_and_holds_a_partial_one() {
+  local home out1 out2 digest
+  home=$(jev_case absorb-digest-malformed)
+  mkdir -p "$home/state/jev"
+  digest="$home/state/jev/absorbed.jsonl"
+  {
+    printf '{"t":1790000000,"kind":"signal","task":"first","choice":"absorbable","confidence":0.95}\n'
+    printf '{"t":1790000001,"kind":"sig\n'
+    printf '{"t":1790000002,"kind":"stale","task":"third","choice":"absorbable","confidence":0.97}\n'
+    printf '{"t":1790000003,"kind":"signal","task":"partial"'
+  } > "$digest"
+  out1=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" 2>/dev/null) || fail "drain failed with a malformed digest"
+  assert_contains "$out1" 'ABSORBED (3 wakes' "the header did not count exactly the complete digest lines"
+  assert_contains "$out1" 'task first' "the entry before the malformed line was not surfaced"
+  assert_contains "$out1" 'unreadable digest entry' "the malformed line was dropped silently"
+  assert_contains "$out1" 'task third' "an entry after the malformed line was lost"
+  assert_not_contains "$out1" 'partial' "a partially written line was surfaced before it was complete"
+  printf ',"choice":"absorbable","confidence":0.96}\n' >> "$digest"
+  out2=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" 2>/dev/null) || fail "second drain failed"
+  assert_contains "$out2" 'ABSORBED (1 wake' "the completed line was not surfaced on the next drain"
+  assert_contains "$out2" 'task partial' "the completed partial line was lost"
+  assert_not_contains "$out2" 'task first' "an already-surfaced entry was printed again"
+  pass "a malformed digest line never hides later entries, and a partial line waits until complete"
+}
+
 test_absorb_digest_surfaces_once_with_the_next_drain_and_never_repeats() {
   local home out1 out2
   home=$(jev_case absorb-digest-surface)
@@ -833,3 +858,4 @@ test_absorb_never_a_secondmate_status_signal
 test_absorb_never_a_non_working_paused_verb
 test_absorb_gate_reports_met_and_not_met
 test_absorb_digest_surfaces_once_with_the_next_drain_and_never_repeats
+test_absorb_digest_surfaces_every_entry_past_a_malformed_line_and_holds_a_partial_one
