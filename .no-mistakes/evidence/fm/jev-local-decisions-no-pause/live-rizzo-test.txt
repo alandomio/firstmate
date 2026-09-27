@@ -1,0 +1,1 @@
+ok - classified live against http://127.0.0.1:8017 in 376ms: model=XHToken/Spark-X2.5-1.7B/flow/q8_0 choice=doubt cost=null

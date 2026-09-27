@@ -1,0 +1,63 @@
+=== 1. Real rizzo serve: native /v1/decisions, three wakes ===
+{"id":"1790000000:1","outcome":"classified","choice":"doubt","confidence":0.5298676058813676,"model":"XHToken/Spark-X2.5-1.7B/flow/q8_0","reason":"signal: w1.status: working: implementing the fix"}
+{"id":"1790000000:2","outcome":"classified","choice":"captain","confidence":0.9868675896073382,"model":"XHToken/Spark-X2.5-1.7B/flow/q8_0","reason":"signal: w2.status: blocked: need the captain to approve forc"}
+{"id":"1790000000:3","outcome":"classified","choice":"doubt","confidence":0.5429402625944475,"model":"XHToken/Spark-X2.5-1.7B/flow/q8_0","reason":"signal: w3.status: done: PR ready for review, all CI green"}
+state/jev/disabled: (absent - no day pause)
+--- request URL(s) the local backend dialed:
+http://127.0.0.1:8017/v1/decisions
+--- request body sent (first row):
+{"top_level_keys":["questions","state"],"options":["firstmate","absorbable","captain"],"policy":{"allow_abstain":true,"min_top_probability":0.6},"state":{"wake_reason":"signal: w1.status: working: implementing the fix","worker_last_status":"working: implementing the fix"}}
+--- raw rizzo /v1/decisions answer to that same body:
+{"model":{"source":"XHToken/Spark-X2.5-1.7B","requested_revision":"14d6e83c13c7add2b62a7c39b2131f4ed1cddcf8","gguf_source":"rizzoaiacademy/rizzo-flow-1.7b","gguf_revision":"532e1586cc60787375ec7d86a5a302deb9a1adec","source_files":{"spark-x2.5-1.7b-rizzo-flow-lora-q8_0.gguf":"685403da9c62e0745cb77817ee2d66418e3ce85002ef403cf2680481e22bf16d"},"precision":"q8_0","device":"gpu","backend":"mtl","runtime":"llama.cpp","llama_cpp_release":"b11081","llama_cpp_commit":"161755f29e415e2c33efe906e91843c068efd664","prompt_version":"spark-decisions-v3","weights":"flow","fingerprint":"b613c11f9fd888510dfb46e71ddd377919ff6dae45111cdc09ca07c383b2ccc9","device_name":"Apple M3 Pro","context_cells":10240,"load_seconds":4.604736209003022},"handling":{"type":"choice","status":"uncertain","choice":null,"top":0.5298676058813676}}
+
+=== 2. Hung loopback server (accepts, never answers), jev-timeout=2 ===
+drain+classify wall time: 5s (one timeout for the whole drain, not one per row)
+requests dialed: 1
+{"id":"1790000000:1","outcome":"skipped","why":"timeout","reason":"signal: w1.status: working: step 1"}
+{"id":"1790000000:2","outcome":"skipped","why":"timeout","reason":"signal: w2.status: working: step 2"}
+{"id":"1790000000:3","outcome":"skipped","why":"timeout","reason":"signal: w3.status: working: step 3"}
+state/jev/disabled: (absent - no day pause)
+--- very next drain, endpoint now pointed at the real server (same home):
+{"id":"1790000000:4","outcome":"classified","choice":"absorbable","confidence":0.7327654809645442,"model":"XHToken/Spark-X2.5-1.7B/flow/q8_0","reason":"signal: w4.status: working: step 4"}
+state/jev/disabled: (absent - no day pause)
+
+=== 3. Refused loopback port (nothing listening) ===
+requests dialed: 2 (each row tried)
+{"id":"1790000000:1","outcome":"skipped","why":"api-error","reason":"signal: w1.status: working: a"}
+{"id":"1790000000:2","outcome":"skipped","why":"api-error","reason":"signal: w2.status: working: b"}
+state/jev/disabled: (absent - no day pause)
+--- very next drain against the real server:
+{"id":"1790000000:3","outcome":"classified","choice":"absorbable","confidence":0.6889835856838491,"model":"XHToken/Spark-X2.5-1.7B/flow/q8_0","reason":"signal: w3.status: working: c"}
+state/jev/disabled: (absent - no day pause)
+
+=== 4. HTTP 500 from a stub loopback server ===
+requests dialed: 2
+{"id":"1790000000:1","outcome":"skipped","why":"api-error","reason":"signal: w1.status: working: a"}
+{"id":"1790000000:2","outcome":"skipped","why":"api-error","reason":"signal: w2.status: working: b"}
+state/jev/disabled: (absent - no day pause)
+
+=== 5. Load at/above ceiling (config/jev-max-load=0.01, real load reading) ===
+requests dialed: 0
+{"id":"1790000000:1","outcome":"skipped","why":"load","reason":"signal: w1.status: working: a"}
+state/jev/disabled: (absent - no day pause)
+--- very next drain with the ceiling back at 1000:
+{"id":"1790000000:2","outcome":"classified","choice":"absorbable","confidence":0.6174105806296936,"model":"XHToken/Spark-X2.5-1.7B/flow/q8_0","reason":"signal: w2.status: working: b"}
+state/jev/disabled: (absent - no day pause)
+
+=== 6. Invalid endpoint (non-loopback / path-carrying) - the sole day pause ===
+endpoint http://10.0.0.5:8017 -> requests dialed: 0
+{"id":"1790000000:1","outcome":"skipped","why":"invalid-endpoint","reason":"signal: w1.status: working: a"}
+{"why":"invalid-endpoint","reason":"null"}
+{"id":"1790000000:2","outcome":"skipped","why":"disabled","reason":"signal: w2.status: working: b"}
+state/jev/disabled: 2026-09-27	invalid-endpoint
+endpoint http://127.0.0.1:8017/v1 -> requests dialed: 0
+{"id":"1790000000:1","outcome":"skipped","why":"invalid-endpoint","reason":"signal: w1.status: working: a"}
+{"why":"invalid-endpoint","reason":"null"}
+{"id":"1790000000:2","outcome":"skipped","why":"disabled","reason":"signal: w2.status: working: b"}
+state/jev/disabled: 2026-09-27	invalid-endpoint
+
+=== status (local backend) ===
+Jev shadow triage: on, local backend (config/jev-endpoint = http://127.0.0.1:8017)
+load ceiling: 1000 (1-minute average)
+request timeout: 5s
+shadow log: /tmp/fm-jev-e2e.QuTlY2/real/state/jev/shadow.jsonl
