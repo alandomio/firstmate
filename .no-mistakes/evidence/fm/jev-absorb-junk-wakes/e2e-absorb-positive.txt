@@ -1,0 +1,47 @@
+
+$ bin/fm-jev.sh status
+Jev shadow triage: on, local backend (config/jev-endpoint = http://127.0.0.1:18918)
+load ceiling: 8 (1-minute average)
+request timeout: 5s
+shadow log: /tmp/fm-jev-absorb-pos.g0s5fB/state/jev/shadow.jsonl
+absorption: requested, threshold 0.9
+absorption: captain override set - the go-live gate is skipped
+[exit 0]
+
+$ bin/fm-jev.sh absorb-try --kind signal --task alpha --reason signal: /tmp/fm-jev-absorb-pos.g0s5fB/state/alpha.status
+[exit 0]
+
+$ bin/fm-jev.sh absorb-try --kind stale --task beta --reason stale: test:beta (paused, awaiting external)
+[exit 0]
+
+--- request the classifier received (masked, local only):
+{"wake_reason": "stale: test:beta (paused, awaiting external)", "worker_last_status": "paused: waiting on upstream release"}
+
+--- durable digest state/jev/absorbed.jsonl:
+{"t":1790552407,"kind":"signal","task":"alpha","reason":"signal: <path>","status":"working: compiling step 2 <url> <path>","choice":"absorbable","confidence":0.95}
+{"t":1790552407,"kind":"stale","task":"beta","reason":"stale: test:beta (paused, awaiting external)","status":"paused: waiting on upstream release","choice":"absorbable","confidence":0.95}
+
+=== away mode active (.afk): drain holds the digest
+
+$ bin/fm-wake-drain.sh
+[exit 0]
+
+=== next real drain (wake or heartbeat) surfaces it
+
+$ bin/fm-wake-drain.sh
+ABSORBED (2 wakes, absorbed by the local Jev classifier before reaching the queue - masked reason/status kept below):
+  2026-09-27T23:40:07Z signal task alpha: choice absorbable (0.95) | wake: signal: <path> | worker: working: compiling step 2 <url> <path>
+  2026-09-27T23:40:07Z stale task beta: choice absorbable (0.95) | wake: stale: test:beta (paused, awaiting external) | worker: paused: waiting on upstream release
+[exit 0]
+
+=== a later drain never repeats it
+
+$ bin/fm-wake-drain.sh
+[exit 0]
+
+=== hung classifier: accepts, never answers, config/jev-timeout=2
+
+$ bin/fm-jev.sh absorb-try --kind signal --task alpha --reason signal: x
+[exit 1]
+elapsed: 2.33s (per-request classify timeout 2s)
+digest lines still: 2

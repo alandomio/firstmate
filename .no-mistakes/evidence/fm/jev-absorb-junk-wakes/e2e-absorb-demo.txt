@@ -1,0 +1,123 @@
+=== 1. absorption off by default (config/jev-absorb absent)
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh status
+Jev shadow triage: on, local backend (config/jev-endpoint = http://127.0.0.1:8017)
+load ceiling: 8 (1-minute average)
+request timeout: 5s
+shadow log: /tmp/fm-jev-absorb-demo.b4TwNH/state/jev/shadow.jsonl
+absorption: off (config/jev-absorb is absent or not "on")
+[exit 0]
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh absorb-try --kind signal --task task --reason signal: /tmp/fm-jev-absorb-demo.b4TwNH/state/task.status
+[exit 1]
+(no digest written)
+
+=== 2. requested (config/jev-absorb=on), no override, no shadow data -> gate NOT met, refuses
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh status
+Jev shadow triage: on, local backend (config/jev-endpoint = http://127.0.0.1:8017)
+load ceiling: 8 (1-minute average)
+request timeout: 5s
+shadow log: /tmp/fm-jev-absorb-demo.b4TwNH/state/jev/shadow.jsonl
+absorption: requested, threshold 0.9
+absorption: go-live gate NOT met - inactive (see: bin/fm-jev.sh absorb-gate)
+[exit 0]
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh absorb-gate
+classified: 0
+scored: 0 (minimum 300)
+agreement: 0% (0 of 0)
+wrongly absorbable: 0
+go-live: NOT met
+[exit 1]
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh absorb-try --kind signal --task task --reason signal: /tmp/fm-jev-absorb-demo.b4TwNH/state/task.status
+[exit 1]
+
+=== 3. captain override -> gate skipped; real Rizzo Flow classifies; high threshold 0.9 floor applies
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh status
+Jev shadow triage: on, local backend (config/jev-endpoint = http://127.0.0.1:8017)
+load ceiling: 8 (1-minute average)
+request timeout: 5s
+shadow log: /tmp/fm-jev-absorb-demo.b4TwNH/state/jev/shadow.jsonl
+absorption: requested, threshold 0.9
+absorption: captain override set - the go-live gate is skipped
+[exit 0]
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh absorb-try --kind signal --task task --reason signal: /tmp/fm-jev-absorb-demo.b4TwNH/state/task.status
+[exit 1]
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh absorb-try --kind signal --task task --reason signal: /tmp/fm-jev-absorb-demo.b4TwNH/state/task.status
+[exit 1]
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh absorb-try --kind signal --task task --reason signal: /tmp/fm-jev-absorb-demo.b4TwNH/state/task.status
+[exit 1]
+--- digest (state/jev/absorbed.jsonl):
+(empty: real classifier did not answer absorbable >= 0.9)
+
+=== 4. next drain surfaces the digest once; a second drain does not repeat it
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-wake-drain.sh
+[exit 0]
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-wake-drain.sh
+[exit 0]
+
+=== 5. threshold below the 0.9 floor refuses outright
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh status
+Jev shadow triage: on, local backend (config/jev-endpoint = http://127.0.0.1:8017)
+load ceiling: 8 (1-minute average)
+request timeout: 5s
+shadow log: /tmp/fm-jev-absorb-demo.b4TwNH/state/jev/shadow.jsonl
+absorption: requested but refused - config/jev-absorb-threshold must be a number at or above 0.9
+[exit 0]
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh absorb-try --kind signal --task task --reason signal: /tmp/fm-jev-absorb-demo.b4TwNH/state/task.status
+[exit 1]
+
+=== 6. never-eligible status verbs (override on) -> refuse without dialing
+
+# status: done: shipped PR 12
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh absorb-try --kind signal --task task --reason signal: /tmp/fm-jev-absorb-demo.b4TwNH/state/task.status
+[exit 1]
+
+# status: needs-decision: pick base branch
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh absorb-try --kind signal --task task --reason signal: /tmp/fm-jev-absorb-demo.b4TwNH/state/task.status
+[exit 1]
+
+# status: blocked: waiting on creds
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh absorb-try --kind signal --task task --reason signal: /tmp/fm-jev-absorb-demo.b4TwNH/state/task.status
+[exit 1]
+
+# status: failed: build broke
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh absorb-try --kind signal --task task --reason signal: /tmp/fm-jev-absorb-demo.b4TwNH/state/task.status
+[exit 1]
+
+=== 7. OpenRouter backend (no jev-endpoint, key present) -> refused even with override
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh status
+Jev shadow triage: on, OpenRouter backend (OPENROUTER_API_KEY present in /tmp/fm-jev-absorb-demo.b4TwNH/.env)
+spend today: USD 0.000000 of a USD 1 daily cap
+request timeout: 5s
+shadow log: /tmp/fm-jev-absorb-demo.b4TwNH/state/jev/shadow.jsonl
+absorption: requested (config/jev-absorb) but refused - requires the local backend, not openrouter
+[exit 0]
+
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh absorb-try --kind signal --task task --reason signal: /tmp/fm-jev-absorb-demo.b4TwNH/state/task.status
+[exit 1]
+
+=== 8. classifier down / hung -> falls through within the per-request timeout
+
+# nothing listening on 127.0.0.1:1
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh absorb-try --kind signal --task task --reason signal: x
+[exit 1]
+elapsed: 0s
+
+# server accepts but never answers; config/jev-timeout=2
+$ /Users/a.domio/.no-mistakes/worktrees/38493c8a7325/01M3JJ086XBMN4XV9A8FMEMZSY/bin/fm-jev.sh absorb-try --kind signal --task task --reason signal: x
+[exit 1]
+elapsed: 3s
+/Users/a.domio/.no-mistakes/evidence/01M3JJ086XBMN4XV9A8FMEMZSY/e2e-absorb-demo.sh: line 71: /tmp/fm-jev-absorb-demo.b4TwNH/state/jev/absorbed.jsonl: No such file or directory
+--- digest line count after all refusals: 0
