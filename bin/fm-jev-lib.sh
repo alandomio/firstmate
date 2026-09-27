@@ -113,6 +113,7 @@ fm_jev_absorb_digest_surface() {  # <state>
   local state=$1 digest cursor size offset have count
   digest="$state/jev/absorbed.jsonl"
   [ -f "$digest" ] || return 0
+  [ ! -e "$state/.afk" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
   cursor="$state/jev/.absorbed-cursor"
   size=$(wc -c < "$digest" 2>/dev/null | tr -d ' ') || size=0

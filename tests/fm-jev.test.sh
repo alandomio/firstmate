@@ -809,6 +809,21 @@ test_absorb_digest_surfaces_every_entry_past_a_malformed_line_and_holds_a_partia
   pass "a malformed digest line never hides later entries, and a partial line waits until complete"
 }
 
+test_absorb_digest_is_held_while_away_mode_owns_the_drain() {
+  local home out1 out2
+  home=$(jev_case absorb-digest-afk)
+  mkdir -p "$home/state/jev"
+  printf '{"t":1790000000,"kind":"signal","task":"task","choice":"absorbable","confidence":0.95}\n' \
+    > "$home/state/jev/absorbed.jsonl"
+  : > "$home/state/.afk"
+  out1=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" 2>/dev/null) || fail "drain failed in away mode"
+  assert_not_contains "$out1" 'ABSORBED' "an away-mode drain consumed the digest the captain never reads"
+  rm -f "$home/state/.afk"
+  out2=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" 2>/dev/null) || fail "return drain failed"
+  assert_contains "$out2" 'ABSORBED (1 wake' "the held digest entry did not surface once away mode ended"
+  pass "the digest is held while away mode drains and surfaces with the first drain after return"
+}
+
 test_absorb_digest_surfaces_once_with_the_next_drain_and_never_repeats() {
   local home out1 out2
   home=$(jev_case absorb-digest-surface)
@@ -858,4 +873,5 @@ test_absorb_never_a_secondmate_status_signal
 test_absorb_never_a_non_working_paused_verb
 test_absorb_gate_reports_met_and_not_met
 test_absorb_digest_surfaces_once_with_the_next_drain_and_never_repeats
+test_absorb_digest_is_held_while_away_mode_owns_the_drain
 test_absorb_digest_surfaces_every_entry_past_a_malformed_line_and_holds_a_partial_one
