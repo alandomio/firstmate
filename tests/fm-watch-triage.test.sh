@@ -3194,6 +3194,32 @@ test_rule_never_absorbs_a_captain_held_recheck() {
   pass "a captain-held recheck always re-surfaces, never absorbed by the rule, even when enabled"
 }
 
+test_rule_surfaces_when_its_digest_entry_cannot_be_built() {
+  local dir state statusf window task key
+  dir=$(make_case rule-no-digest); state="$dir/state"
+  window="test:fm-rule-nodigest"; task=nodigest; statusf="$state/$task.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf 'paused: awaiting a colleague approval\n' > "$statusf"
+  backdate_file 500 "$statusf"
+  printf 'idle, awaiting approval\n' > "$dir/pane.txt"
+  : > "$state/.paused-$key"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  jev_absorb_enable_rule "$dir"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "baseline recheck" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  backdate_file 500 "$state/.paused-surfaced-$key"
+  # A jq that cannot produce the masked digest entry: absorbing now would lose the wake.
+  printf '#!/bin/sh\nexit 1\n' > "$dir/fakebin/jq"; chmod +x "$dir/fakebin/jq"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "unrecordable recheck surfaces instead" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  rm -f "$dir/fakebin/jq"
+  assert_not_contains "$(cat "$state/jev/absorbed.jsonl" 2>/dev/null)" "\"task\":\"$task\"" \
+    "a recheck with no buildable digest entry was recorded as rule-absorbed"
+  pass "the rule surfaces a recheck for real when it cannot record the digest entry"
+}
+
 test_rule_safety_valve_forces_a_real_surface_then_resets() {
   local dir state statusf window task key
   dir=$(make_case rule-safety-valve); state="$dir/state"
@@ -3296,4 +3322,5 @@ test_rule_absorbs_unchanged_pause_recheck
 test_rule_refuses_a_changed_situation_or_an_open_decision
 test_rule_never_absorbs_a_dead_agent_pause_recheck
 test_rule_never_absorbs_a_captain_held_recheck
+test_rule_surfaces_when_its_digest_entry_cannot_be_built
 test_rule_safety_valve_forces_a_real_surface_then_resets
