@@ -805,6 +805,19 @@ TRIPWIRE_WORKER_PID=
 assert_absent "$TRIPWIRE_STATE" "the reap sweep recreated the deleted worker state root behind an unowned worker"
 pass "a deleted state root fails the worker fast instead of being recreated by the reap sweep"
 
+# The live tripwire above only lands in the window between a successful
+# heartbeat and the sweep occasionally; pin that ordering deterministically.
+SWEEP_STATE="$TMP_ROOT/sweep-race-jobs"
+(
+  FM_REMOTE_JOB_STATE_ROOT="$SWEEP_STATE"
+  fm_remote_job_prepare_state "$ACCOUNT_HOME" || exit 2
+  mv -- "$SWEEP_STATE" "$TMP_ROOT/sweep-race-jobs.deleted"
+  fm_remote_job_reap_stale "$ACCOUNT_HOME" && exit 3
+  exit 0
+) || fail "the stale sweep did not fail on a state root deleted after preparation"
+assert_absent "$SWEEP_STATE" "the stale sweep recreated a state root deleted after the worker's heartbeat"
+pass "the stale sweep never recreates a state root deleted after the worker's heartbeat"
+
 # A prober reads worker.ready as fresh for FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS,
 # so a heartbeat cadence at or past that window would let a healthy worker read
 # as unready between writes. Settings validation refuses it before any state.

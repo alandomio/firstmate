@@ -1,13 +1,51 @@
 #!/usr/bin/env bash
 # fm-jev.sh - Jev (TypeSafe's decision model on OpenRouter, or a local
 # Rizzo Flow server) as a SHADOW-ONLY, advisory classifier of supervision
-# wakes, plus the measurement that decides whether it may ever do more.
+# wakes, plus the measurement that decides whether it may ever do more, plus
+# (config/jev-absorb) the gated absorption that measurement can eventually earn.
 #
 # Usage:
 #   fm-jev.sh status
 #   fm-jev.sh report [--log <file>] [--days <n>] [--min-confidence <p>] [--limit <n>] [--now <epoch>]
+#   fm-jev.sh absorb-gate [--log <file>] [--days <n>] [--min-confidence <p>] [--min-sample <n>] [--now <epoch>] [--json]
+#   fm-jev.sh absorb-try --kind signal|stale --task <id> --reason <text>
+#                                            (internal: called synchronously by bin/fm-watch.sh)
 #   fm-jev.sh mask                          (stdin -> the masked text that would leave the machine)
 #   fm-jev.sh observe-drain <spool> <epoch> (internal: called detached by bin/fm-jev-lib.sh)
+#
+# Absorption (config/jev-absorb). Off by default, and a wholly separate act
+# from the shadow measurement above: shadow mode only ever WATCHES and never
+# changes what a drain presents. Absorption lets bin/fm-watch.sh skip queuing
+# (and waking the supervising session for) a wake at exactly two allowlisted
+# call sites - a routine working/paused "signal" wake whose crew is not
+# provably working, and a declared-pause "stale" recheck - never a
+# needs-decision, blocked, done, failed, merge/check result, heartbeat,
+# captain inbox note, Relay or process-event wake, and never a task with any
+# open decision. It requires ALL of:
+#   - `config/jev-absorb`'s first non-blank line is exactly "on";
+#   - the LOCAL backend specifically (never OpenRouter - absorption changes
+#     real behavior, so it never runs on a request that could leave the
+#     machine), with config/jev-endpoint a valid loopback URL;
+#   - config/jev-absorb-threshold (default 0.9) is a number no lower than 0.9;
+#   - EITHER the go-live gate (absorb-gate above; see its own header for the
+#     exact criteria) is met, OR `config/jev-absorb`'s second non-blank line
+#     is exactly "override" - a captain override that skips the measured gate
+#     but never the other requirements above;
+#   - for THIS wake: the Rizzo native answer's status is "ok", its choice is
+#     "absorbable", and its top probability is at or above the threshold.
+# Any doubt anywhere in that chain - disabled, ineligible, an unmet gate, a
+# classifier timeout, error, or low-confidence answer - falls through to
+# today's unconditional behavior; absorb-try's own header owns the exact
+# rules. Absorption adds no latency beyond the existing per-request classify
+# timeout, and only for a wake it might absorb: the go-live gate's own
+# (separately bounded) computation is cached (state/jev/.absorb-gate-cache)
+# rather than re-scanned on every wake.
+# Nothing is lost: every absorbed wake is appended, masked, to
+# state/jev/absorbed.jsonl (bin/fm-jev-lib.sh's fm_jev_absorb_digest_surface),
+# which bin/fm-wake-drain.sh prints - count plus one line each - the next time
+# ANY drain runs, whether that is a real wake or a heartbeat (held while away
+# mode owns drains), so nothing absorbed can rot unseen and no absorption
+# itself ever wakes the supervising session on its own.
 #
 # Switch. Off by default, and only one backend runs per home. A home opts into
 # the OpenRouter backend by carrying a non-empty OPENROUTER_API_KEY in its
@@ -127,6 +165,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/fm-x-lib.sh"
 # shellcheck source=bin/fm-jev-lib.sh
 . "$SCRIPT_DIR/fm-jev-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"
 
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 JEV_DIR="$STATE/jev"
@@ -139,6 +181,11 @@ JEV_DEFAULT_TIMEOUT=5
 JEV_DEFAULT_CAP=1
 JEV_DEFAULT_MAX_LOAD=8
 JEV_LOCAL_MIN_TOP_PROBABILITY=0.6
+JEV_ABSORB_THRESHOLD_DEFAULT=0.9
+JEV_ABSORB_MIN_SAMPLE_DEFAULT=300
+JEV_ABSORB_GATE_DAYS_DEFAULT=30
+JEV_ABSORB_GATE_CACHE_TTL=300
+JEV_ABSORB_GATE_TIMEOUT=${FM_JEV_ABSORB_GATE_TIMEOUT:-10}
 
 # The single definition of what may leave the machine; `mask` exposes it.
 JEV_JQ_MASK='def fm_jev_mask:
@@ -147,7 +194,7 @@ JEV_JQ_MASK='def fm_jev_mask:
   | .[0:500];'
 
 usage() {
-  sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '6,13p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 die() {
@@ -221,6 +268,51 @@ jev_load_avg() {
 # so config/jev-endpoint can never become a back door to a hosted API.
 jev_local_url_ok() {  # <base-url>
   printf '%s' "$1" | grep -Eq '^https?://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]+)?/?$'
+}
+
+# 0 when config/jev-absorb's first non-blank line requests absorption. Absent,
+# empty, or any other content leaves absorption off - the safe default.
+jev_absorb_requested() {
+  local line
+  line=$(grep -v '^[[:space:]]*$' "$CONFIG/jev-absorb" 2>/dev/null | head -n1) || return 1
+  [ "$line" = on ]
+}
+
+# 0 when config/jev-absorb's second non-blank line is the literal captain
+# override that skips the measured go-live gate (never the other
+# requirements: still local backend, still a valid threshold, still this
+# wake's own classify answer).
+jev_absorb_override() {
+  local line
+  line=$(grep -v '^[[:space:]]*$' "$CONFIG/jev-absorb" 2>/dev/null | sed -n '2p') || return 1
+  [ "$line" = override ]
+}
+
+# Prints config/jev-absorb-threshold, or the default when absent.
+jev_absorb_threshold_raw() {
+  [ -f "$CONFIG/jev-absorb-threshold" ] && tr -d '[:space:]' < "$CONFIG/jev-absorb-threshold" 2>/dev/null
+  return 0
+}
+
+# 0 when <value> is a number no lower than 0.9 - the documented floor: this
+# threshold must be calibrated against a home's own shadow report before
+# activation, never guessed low.
+jev_absorb_threshold_valid() {  # <value>
+  [[ "$1" =~ ^[0-9]+(\.[0-9]+)?$ ]] && jev_ge "$1" "$JEV_ABSORB_THRESHOLD_DEFAULT"
+}
+
+# Prints the effective threshold, or nothing (exit 1) when config/jev-absorb-threshold
+# is present but invalid - a misconfiguration that must fail closed, never
+# silently fall back to the default.
+jev_absorb_threshold() {
+  local v
+  v=$(jev_absorb_threshold_raw)
+  if [ -z "$v" ]; then
+    printf '%s\n' "$JEV_ABSORB_THRESHOLD_DEFAULT"
+    return 0
+  fi
+  jev_absorb_threshold_valid "$v" || return 1
+  printf '%s\n' "$v"
 }
 
 jev_spend_today() {  # <day>
@@ -326,6 +418,48 @@ jev_request_body() {
       }
     }'
   fi
+}
+
+# One synchronous request against the LOCAL backend only, for absorb-try.
+# Deliberately separate from jev_classify_row below: this call must never touch
+# shadow.jsonl, the daily-pause state, or the id/day bookkeeping that owns the
+# report's ground-truth pairing, because it runs BEFORE a wake is ever queued
+# and so has no wake id to pair against. It shares jev_request_body (the one
+# owner of the wire format) and the same bounded timeout as every other Jev
+# request. Prints "<status>\t<choice>\t<confidence>" on any readable answer
+# (confidence -1 when the response carried none); prints nothing and returns 1
+# on a timeout, a transport error, a non-2xx response, or an unreadable body -
+# every one of those must fall through, never raise an error.
+jev_dial_local() {  # <reason-masked> <status-masked> <endpoint-base> <timeout>
+  local reason=$1 status=$2 base=$3 timeout=$4 endpoint body resp code rc event
+  endpoint="${base%/}/v1/decisions"
+  body=$(umask 077 && mktemp "$JEV_DIR/.body.XXXXXX") || return 1
+  resp=$(umask 077 && mktemp "$JEV_DIR/.resp.XXXXXX") || { rm -f "$body"; return 1; }
+  jev_request_body "$reason" "$status" "" local > "$body" || { rm -f "$body" "$resp"; return 1; }
+  rc=0
+  code=$(curl -q --noproxy '*' -sS --max-time "$timeout" --connect-timeout "$timeout" \
+      -H 'Content-Type: application/json' --data-binary "@$body" \
+      -o "$resp" -w '%{http_code}' "$endpoint" 2>/dev/null) || rc=$?
+  rm -f "$body"
+  if [ "$rc" -ne 0 ]; then
+    rm -f "$resp"
+    return 1
+  fi
+  case "$code" in
+    2??) ;;
+    *) rm -f "$resp"; return 1 ;;
+  esac
+  event=$(jq -r '
+    (.answers.handling // {}) as $a
+    | ($a.status // "error") as $st
+    | ($a.choice // "") as $ch
+    | (if ($a.confidence | type) == "number" then $a.confidence
+       elif ($a.uncertainty.top_probability | type) == "number" then $a.uncertainty.top_probability
+       else -1 end) as $conf
+    | "\($st)\t\($ch)\t\($conf)"' "$resp" 2>/dev/null) || event=
+  rm -f "$resp"
+  [ -n "$event" ] || return 1
+  printf '%s\n' "$event"
 }
 
 # One request against either backend. Prints nothing; logs a classified or
@@ -516,6 +650,82 @@ cmd_observe_drain() {  # <spool> <epoch>
   rm -f "$spool"
 }
 
+# The sole entry point for gated absorption (bin/fm-jev-lib.sh's
+# fm_jev_absorb_try, called synchronously ONLY from bin/fm-watch.sh's two
+# allowlisted call sites). Owns every eligibility rule and the go-live gate;
+# exit 0 means the caller must skip its own fm_wake_append + wake because this
+# wake was absorbed (and is already recorded in the durable digest); exit 1
+# means fall through to today's unconditional behavior, for ANY reason -
+# disabled, ineligible, an unmet gate, or a classifier problem. Never dies:
+# every failure path is a plain `return 1`, because a bug here must degrade to
+# "surface it" and never to "crash the watcher".
+cmd_absorb_try() {
+  local kind='' task='' reason=''
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --kind) kind=${2:-}; shift 2 ;;
+      --task) task=${2:-}; shift 2 ;;
+      --reason) reason=${2:-}; shift 2 ;;
+      *) return 1 ;;
+    esac
+  done
+  case "$kind" in signal|stale) ;; *) return 1 ;; esac
+  case "$task" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  command -v jq >/dev/null 2>&1 || return 1
+
+  local statusf="$STATE/$task.status" last verb
+  [ -f "$statusf" ] || return 1
+
+  # Never a secondmate's routed-reply channel: every append there is
+  # parent-directed content firstmate must read (mirrors
+  # signal_crew_provably_working's own secondmate exclusion in
+  # bin/fm-classify-lib.sh).
+  [ "$(grep '^kind=' "$STATE/$task.meta" 2>/dev/null | tail -1 | cut -d= -f2-)" != secondmate ] || return 1
+
+  # Never a task with any open decision (needs-decision/blocked).
+  [ -z "$(status_open_decisions "$statusf" 2>/dev/null)" ] || return 1
+
+  last=$(last_status_line "$statusf")
+  verb=$(status_line_verb "$last")
+  case "$verb" in
+    working) ;;
+    "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}") ;;
+    *) return 1 ;;
+  esac
+  # Belt and braces: never a captain-relevant line, whatever its verb.
+  status_is_captain_relevant "$last" && return 1
+
+  jev_absorb_requested || return 1
+  [ "$(fm_jev_backend "$FM_HOME" "$STATE" 2>/dev/null)" = local ] || return 1
+
+  local threshold
+  threshold=$(jev_absorb_threshold) || return 1
+
+  local base
+  base=$(tr -d '[:space:]' < "$FM_HOME/config/jev-endpoint" 2>/dev/null)
+  jev_local_url_ok "$base" || return 1
+
+  if ! jev_absorb_override; then
+    jev_absorb_gate_cached || return 1
+  fi
+
+  local masked_reason masked_status result rstatus rchoice rconf
+  masked_reason=$(printf '%s' "$reason" | jev_mask)
+  masked_status=$(printf '%s' "$last" | jev_mask)
+  [ -d "$JEV_DIR" ] || (umask 077 && mkdir -p "$JEV_DIR") 2>/dev/null || return 1
+  result=$(jev_dial_local "$masked_reason" "$masked_status" "$base" "$(jev_timeout)") || return 1
+  IFS=$(printf '\t') read -r rstatus rchoice rconf <<< "$result"
+  [ "$rstatus" = ok ] || return 1
+  [ "$rchoice" = absorbable ] || return 1
+  case "$rconf" in ''|*[!0-9.]*) return 1 ;; esac
+  jev_ge "$rconf" "$threshold" || return 1
+
+  _fm_jev_absorb_append "$STATE" "$(jq -cn --argjson t "$(date +%s)" --arg kind "$kind" --arg task "$task" \
+    --arg reason "$masked_reason" --arg status "$masked_status" --arg choice "$rchoice" --argjson conf "$rconf" \
+    '{t: $t, kind: $kind, task: $task, reason: $reason, status: $status, choice: $choice, confidence: $conf}')"
+  return 0
+}
+
 cmd_status() {
   local day cap spend backend base traw
   day=$(date +%F)
@@ -549,10 +759,38 @@ cmd_status() {
     printf 'paused until tomorrow: %s\n' "$(cut -f2 < "$JEV_DISABLED")"
   fi
   printf 'shadow log: %s\n' "$JEV_LOG"
+  if jev_absorb_requested; then
+    if [ "$backend" != local ]; then
+      printf 'absorption: requested (config/jev-absorb) but refused - requires the local backend, not %s\n' "${backend:-off}"
+    elif ! jev_local_url_ok "$(tr -d '[:space:]' < "$FM_HOME/config/jev-endpoint" 2>/dev/null)"; then
+      printf 'absorption: requested but refused - config/jev-endpoint is not a loopback URL\n'
+    else
+      local threshold
+      if ! threshold=$(jev_absorb_threshold); then
+        printf 'absorption: requested but refused - config/jev-absorb-threshold must be a number at or above %s\n' "$JEV_ABSORB_THRESHOLD_DEFAULT"
+      else
+        printf 'absorption: requested, threshold %s\n' "$threshold"
+        if jev_absorb_override; then
+          printf 'absorption: captain override set - the go-live gate is skipped\n'
+        elif jev_absorb_gate_cached; then
+          printf 'absorption: go-live gate met - active\n'
+        else
+          printf 'absorption: go-live gate NOT met - inactive (see: bin/fm-jev.sh absorb-gate)\n'
+        fi
+      fi
+    fi
+  else
+    printf 'absorption: off (config/jev-absorb is absent or not "on")\n'
+  fi
 }
 
 # shellcheck disable=SC2016 # a jq program; its $names are jq variables, not shell ones.
-JEV_JQ_REPORT='
+# The single owner of "$rows": one row per wake presented in the window, Jev's
+# label alongside the measured ground truth. cmd_report's text below and
+# cmd_absorb_gate's machine-readable go-live verdict both build on this same
+# array rather than each re-deriving it, so the two can never silently drift
+# apart on what counts as "scored", "agree", or "wrong".
+JEV_JQ_ROWS='
 def pct(a; b): if b == 0 then "n/a" else ((a * 1000 / b | round) / 10 | tostring) + "%" end;
 def iso: todate;
 def jev_label($minconf):
@@ -608,6 +846,10 @@ def jev_label($minconf):
                   elif .truth == "unknown" and .jev != "skipped" and .jev != "none" then 5
                   else 9 end)}
   ] as $rows
+'
+
+# shellcheck disable=SC2016 # a jq program; its $names are jq variables, not shell ones.
+JEV_JQ_REPORT="$JEV_JQ_ROWS"'
 | ($rows | map(select(.scored))) as $scored
 | ($scored | map(select(.agree)) | length) as $agree
 | ($rows | map(select(.wrong)) | length) as $wrong
@@ -634,6 +876,111 @@ def jev_label($minconf):
       end )
 ] | .[]
 '
+
+# The absorption go-live gate's machine-readable verdict, built on the same
+# $rows as the text report above (see JEV_JQ_ROWS's own header). "scored" is
+# the sample the gate measures against $minsample: the same rows whose
+# agreement the text report's "agreement" line reports, so a home cannot pass
+# the gate on rows the report itself would not count as measured.
+# shellcheck disable=SC2016 # a jq program; its $names are jq variables, not shell ones.
+JEV_JQ_ABSORB_GATE="$JEV_JQ_ROWS"'
+| ($rows | map(select(.scored))) as $scored
+| ($scored | map(select(.agree)) | length) as $agree
+| ($rows | map(select(.wrong)) | length) as $wrong
+| {
+    classified: ($rows | map(select(.jev | IN("absorbable", "firstmate", "captain", "doubt"))) | length),
+    scored: ($scored | length),
+    agree: $agree,
+    wrong: $wrong,
+    agreement_pct: (if ($scored | length) == 0 then 0 else (($agree * 1000 / ($scored | length) | round) / 10) end),
+    min_sample: $minsample,
+    sample_ok: (($scored | length) >= $minsample),
+    wrong_ok: ($wrong == 0),
+    agreement_ok: (($scored | length) > 0 and ($agree * 100 >= 90 * ($scored | length)))
+  }
+| . + {all_ok: (.sample_ok and .wrong_ok and .agreement_ok)}
+'
+
+# The empty/no-data verdict absorb-gate reports before any shadow log exists
+# at all, or on any read/compute failure: always a fail, never a guess.
+JEV_ABSORB_GATE_EMPTY='{"classified":0,"scored":0,"agree":0,"wrong":0,"agreement_pct":0,"min_sample":%s,"sample_ok":false,"wrong_ok":true,"agreement_ok":false,"all_ok":false}\n'
+
+# The absorption go-live gate: has the shadow measurement (bin/fm-jev.sh
+# report's own criteria, plus a minimum sample so a handful of lucky rows can
+# never pass it) earned activation? `--json` prints the JEV_JQ_ABSORB_GATE
+# object; otherwise a short human summary. Exit 0 when met, 1 when not (or on
+# any failure to compute it at all) - always fail closed, in both formats.
+cmd_absorb_gate() {
+  local log=$JEV_LOG days=$JEV_ABSORB_GATE_DAYS_DEFAULT minconf=0.6 minsample=$JEV_ABSORB_MIN_SAMPLE_DEFAULT
+  local now since fmt=text result
+  now=$(date +%s)
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --log) [ "$#" -ge 2 ] || die "--log needs a file"; log=$2; shift 2 ;;
+      --days) [ "$#" -ge 2 ] || die "--days needs a number"; days=$2; shift 2 ;;
+      --min-confidence) [ "$#" -ge 2 ] || die "--min-confidence needs a number"; minconf=$2; shift 2 ;;
+      --min-sample) [ "$#" -ge 2 ] || die "--min-sample needs a number"; minsample=$2; shift 2 ;;
+      --now) [ "$#" -ge 2 ] || die "--now needs an epoch"; now=$2; shift 2 ;;
+      --json) fmt=json; shift ;;
+      *) die "unknown absorb-gate option: $1" ;;
+    esac
+  done
+  case "$days" in ''|*[!0-9]*) die "--days must be a whole number" ;; esac
+  case "$minsample" in ''|*[!0-9]*) die "--min-sample must be a whole number" ;; esac
+  case "$now" in ''|*[!0-9]*) die "--now must be an epoch" ;; esac
+  [[ "$minconf" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "--min-confidence must be a number such as 0.6"
+  command -v jq >/dev/null 2>&1 || die "jq is required"
+  if [ ! -f "$log" ]; then
+    # shellcheck disable=SC2059 # $JEV_ABSORB_GATE_EMPTY is a fixed printf template
+    result=$(printf "$JEV_ABSORB_GATE_EMPTY" "$minsample")
+  else
+    since=$((now - days * 86400))
+    result=$(jq -c -n -R --argjson now "$now" --argjson since "$since" --argjson minconf "$minconf" \
+      --argjson minsample "$minsample" "[inputs | fromjson?] | $JEV_JQ_ABSORB_GATE" "$log") || result=
+    if [ -z "$result" ]; then
+      # shellcheck disable=SC2059
+      result=$(printf "$JEV_ABSORB_GATE_EMPTY" "$minsample")
+    fi
+  fi
+  if [ "$fmt" = json ]; then
+    printf '%s\n' "$result"
+  else
+    printf '%s\n' "$result" | jq -r '
+      "classified: \(.classified)",
+      "scored: \(.scored) (minimum \(.min_sample))",
+      "agreement: \(.agreement_pct)% (\(.agree) of \(.scored))",
+      "wrongly absorbable: \(.wrong)",
+      "go-live: \(if .all_ok then "met" else "NOT met" end)"'
+  fi
+  printf '%s\n' "$result" | jq -e '.all_ok' >/dev/null 2>&1
+}
+
+# Bounded, cached wrapper around cmd_absorb_gate so a home with absorption
+# requested pays that computation at most once per JEV_ABSORB_GATE_CACHE_TTL
+# seconds, never once per wake. Fails closed (0 == pass only on a verified
+# recent pass) on a stale/missing cache that a fresh, bounded recompute cannot
+# refresh in time - a hung or slow gate computation must never leave
+# absorption running on a stale verdict, and must never itself add unbounded
+# latency to the wake path.
+jev_absorb_gate_cached() {
+  local cache="$JEV_DIR/.absorb-gate-cache" now ts verdict result
+  now=$(date +%s)
+  if [ -f "$cache" ]; then
+    IFS=$(printf '\t') read -r ts verdict < "$cache" 2>/dev/null || ts=
+    case "$ts" in ''|*[!0-9]*) ts= ;; esac
+    if [ -n "$ts" ] && [ "$((now - ts))" -lt "$JEV_ABSORB_GATE_CACHE_TTL" ]; then
+      [ "$verdict" = pass ]
+      return
+    fi
+  fi
+  if result=$(fm_run_timed "$JEV_ABSORB_GATE_TIMEOUT" "$SCRIPT_DIR/fm-jev.sh" absorb-gate --json 2>/dev/null); then
+    verdict=pass
+  else
+    verdict=fail
+  fi
+  (umask 077 && printf '%s\t%s\n' "$now" "$verdict" > "$cache") 2>/dev/null || true
+  [ "$verdict" = pass ]
+}
 
 cmd_report() {
   local log=$JEV_LOG days=7 minconf=0.6 limit=20 now since
@@ -662,6 +1009,8 @@ cmd_report() {
 case "${1:-}" in
   status) shift; cmd_status "$@" ;;
   report) shift; cmd_report "$@" ;;
+  absorb-gate) shift; cmd_absorb_gate "$@" ;;
+  absorb-try) shift; cmd_absorb_try "$@" ;;
   mask) shift; command -v jq >/dev/null 2>&1 || die "jq is required"; jev_mask ;;
   observe-drain) shift; cmd_observe_drain "$@" ;;
   -h|--help|help) usage ;;

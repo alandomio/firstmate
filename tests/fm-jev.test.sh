@@ -611,6 +611,233 @@ test_report_keeps_unacknowledged_and_earlier_wakes_open() {
   pass "unacknowledged and pre-window wakes stay open, so their steers never spill onto unrelated wakes"
 }
 
+# --- gated absorption (config/jev-absorb) -----------------------------------
+# absorb_case: a local-backend home with a task whose last status line is
+# eligible ("working:" by default), plus the option to request absorption
+# and/or the captain override via `on` args ("on", "override").
+absorb_case() {  # <name> [on] [override]
+  local home task
+  home=$(jev_local_case "$1")
+  task="$home/state/task.status"
+  printf 'working: compiling step 2\n' > "$task"
+  if [ "${2:-}" = on ] || [ "${3:-}" = override ]; then
+    if [ "${3:-}" = override ]; then
+      printf 'on\noverride\n' > "$home/config/jev-absorb"
+    else
+      printf 'on\n' > "$home/config/jev-absorb"
+    fi
+  fi
+  printf '%s\n' "$home"
+}
+
+absorb_try() {  # <home> [reason]
+  in_home "$1" "$JEV" absorb-try --kind signal --task task --reason "${2:-signal:task.status}"
+}
+
+digest_lines() {  # <home>
+  wc -l < "$1/state/jev/absorbed.jsonl" 2>/dev/null | tr -d ' ' || printf '0\n'
+}
+
+test_absorb_off_by_default_never_dials_or_writes_a_digest() {
+  local home
+  home=$(absorb_case absorb-off)
+  export FAKE_CURL_MODE=localok FAKE_CHOICE=absorbable FAKE_CONF=0.95
+  absorb_try "$home" && fail "absorb-try succeeded with config/jev-absorb absent"
+  [ "$(calls "$home")" = 0 ] || fail "absorb-try dialed the network with absorption off"
+  assert_absent "$home/state/jev/absorbed.jsonl" "a digest was written with absorption off"
+  unset FAKE_CURL_MODE FAKE_CHOICE FAKE_CONF
+  pass "absorption off by default: no network call, no digest, absorb-try refuses"
+}
+
+test_absorb_requires_the_local_backend() {
+  local home
+  home=$(jev_case absorb-openrouter with-key)
+  printf 'on\noverride\n' > "$home/config/jev-absorb"
+  printf 'working: step\n' > "$home/state/task.status"
+  export FAKE_CURL_MODE=ok
+  absorb_try "$home" && fail "absorb-try succeeded on the OpenRouter backend"
+  [ "$(calls "$home")" = 0 ] || fail "absorb-try dialed the network on a non-local backend"
+  unset FAKE_CURL_MODE
+  pass "absorption refuses any backend but local, even when requested"
+}
+
+test_absorb_refuses_below_the_measured_gate_without_an_override() {
+  local home
+  home=$(absorb_case absorb-no-override on)
+  export FAKE_CURL_MODE=localok FAKE_CHOICE=absorbable FAKE_CONF=0.95
+  absorb_try "$home" && fail "absorb-try succeeded with no shadow data and no override"
+  [ "$(calls "$home")" = 0 ] || fail "absorb-try dialed the network before checking the gate"
+  unset FAKE_CURL_MODE FAKE_CHOICE FAKE_CONF
+  pass "requested absorption without a met gate or an override never dials the classifier"
+}
+
+test_absorb_override_skips_the_gate_and_records_a_masked_digest_entry() {
+  local home entry
+  home=$(absorb_case absorb-override on override)
+  export FAKE_CURL_MODE=localok FAKE_CHOICE=absorbable FAKE_CONF=0.95
+  absorb_try "$home" "signal:task.status https://internal.example/x /Users/me/wt/secret" \
+    || fail "absorb-try refused an eligible, overridden, high-confidence wake"
+  [ "$(calls "$home")" = 1 ] || fail "absorb-try did not dial the local classifier exactly once"
+  [ "$(digest_lines "$home")" = 1 ] || fail "absorb-try did not record exactly one digest entry"
+  entry=$(cat "$home/state/jev/absorbed.jsonl")
+  assert_contains "$entry" '"choice":"absorbable"' "digest entry missing its choice"
+  assert_contains "$entry" '"task":"task"' "digest entry missing its task"
+  assert_contains "$entry" '<url>' "digest entry did not mask a URL"
+  assert_contains "$entry" '<path>' "digest entry did not mask a path"
+  assert_not_contains "$entry" 'internal.example' "digest entry leaked an unmasked URL"
+  assert_not_contains "$entry" '/Users/me' "digest entry leaked an unmasked path"
+  unset FAKE_CURL_MODE FAKE_CHOICE FAKE_CONF
+  pass "a captain override skips the go-live gate and records a masked digest entry"
+}
+
+test_absorb_threshold_floor_is_enforced() {
+  local home
+  home=$(absorb_case absorb-threshold on override)
+  printf '0.5\n' > "$home/config/jev-absorb-threshold"
+  export FAKE_CURL_MODE=localok FAKE_CHOICE=absorbable FAKE_CONF=0.95
+  absorb_try "$home" && fail "absorb-try accepted a threshold below 0.9"
+  [ "$(calls "$home")" = 0 ] || fail "absorb-try dialed the network with an invalid threshold"
+  unset FAKE_CURL_MODE FAKE_CHOICE FAKE_CONF
+  pass "config/jev-absorb-threshold below 0.9 refuses absorption outright"
+}
+
+test_absorb_falls_through_on_low_confidence_or_doubt() {
+  local home
+  home=$(absorb_case absorb-doubt on override)
+  export FAKE_CURL_MODE=localok FAKE_CHOICE=absorbable FAKE_CONF=0.5
+  absorb_try "$home" && fail "absorb-try accepted a below-threshold confidence"
+  assert_absent "$home/state/jev/absorbed.jsonl" "a digest entry was written for a below-threshold answer"
+  FAKE_CURL_MODE=localdoubt absorb_try "$home" && fail "absorb-try accepted an uncertain native answer"
+  assert_absent "$home/state/jev/absorbed.jsonl" "a digest entry was written for a doubtful answer"
+  unset FAKE_CURL_MODE FAKE_CHOICE FAKE_CONF
+  pass "any doubt or below-threshold confidence falls through without a digest entry"
+}
+
+test_absorb_never_a_task_with_an_open_decision() {
+  local home
+  home=$(absorb_case absorb-open-decision on override)
+  printf 'needs-decision: pick a base branch\n' > "$home/state/task.status"
+  export FAKE_CURL_MODE=localok FAKE_CHOICE=absorbable FAKE_CONF=0.95
+  absorb_try "$home" && fail "absorb-try absorbed a task with an open decision"
+  [ "$(calls "$home")" = 0 ] || fail "absorb-try dialed the network for a task with an open decision"
+  unset FAKE_CURL_MODE FAKE_CHOICE FAKE_CONF
+  pass "a task with an open decision is never absorbed"
+}
+
+test_absorb_never_a_secondmate_status_signal() {
+  local home
+  home=$(absorb_case absorb-secondmate on override)
+  printf 'kind=secondmate\n' > "$home/state/task.meta"
+  export FAKE_CURL_MODE=localok FAKE_CHOICE=absorbable FAKE_CONF=0.95
+  absorb_try "$home" && fail "absorb-try absorbed a secondmate's routed-reply signal"
+  [ "$(calls "$home")" = 0 ] || fail "absorb-try dialed the network for a secondmate signal"
+  unset FAKE_CURL_MODE FAKE_CHOICE FAKE_CONF
+  pass "a secondmate's status signal is never absorbed"
+}
+
+test_absorb_never_a_non_working_paused_verb() {
+  local home
+  home=$(absorb_case absorb-verb on override)
+  printf 'done: finished\n' > "$home/state/task.status"
+  export FAKE_CURL_MODE=localok FAKE_CHOICE=absorbable FAKE_CONF=0.95
+  absorb_try "$home" && fail "absorb-try absorbed a captain-relevant done: line"
+  [ "$(calls "$home")" = 0 ] || fail "absorb-try dialed the network for a done: line"
+  unset FAKE_CURL_MODE FAKE_CHOICE FAKE_CONF
+  pass "only a working:/paused: verb is ever eligible for absorption"
+}
+
+test_absorb_gate_reports_met_and_not_met() {
+  local fixture out
+  fixture="$TMP_ROOT/gate-not-met.jsonl"
+  write_fixture "$fixture"
+  out=$("$JEV" absorb-gate --log "$fixture" --days 30 --min-sample 2 --now $((1790000000 + 9 * 86400))) \
+    && fail "absorb-gate passed a fixture with a wrongly absorbable wake"
+  assert_contains "$out" 'wrongly absorbable: 1' "absorb-gate did not report the wrongly absorbable count"
+  assert_contains "$out" 'go-live: NOT met' "absorb-gate did not report NOT met"
+  out=$("$JEV" absorb-gate --log "$fixture" --days 30 --min-sample 999 --now $((1790000000 + 9 * 86400)) --json) \
+    || true
+  assert_contains "$out" '"sample_ok":false' "absorb-gate --json did not report the sample as insufficient"
+
+  fixture="$TMP_ROOT/gate-met.jsonl"
+  {
+    printf '{"ev":"presented","t":1790000000,"id":"g:1","seq":1,"kind":"signal","task":"a","batch":"A"}\n'
+    printf '{"ev":"jev","t":1790000000,"id":"g:1","outcome":"classified","choice":"absorbable","confidence":0.95}\n'
+    printf '{"ev":"ack","t":1790000005,"through":1}\n'
+    printf '{"ev":"turn_end","t":1790000006,"outcome":"ack"}\n'
+    printf '{"ev":"presented","t":1790000010,"id":"g:2","seq":2,"kind":"signal","task":"b","batch":"B"}\n'
+    printf '{"ev":"jev","t":1790000010,"id":"g:2","outcome":"classified","choice":"absorbable","confidence":0.95}\n'
+    printf '{"ev":"ack","t":1790000015,"through":2}\n'
+    printf '{"ev":"turn_end","t":1790000016,"outcome":"ack"}\n'
+    printf '{"ev":"presented","t":1790000020,"id":"g:3","seq":3,"kind":"stale","task":"c","batch":"C"}\n'
+    printf '{"ev":"jev","t":1790000020,"id":"g:3","outcome":"classified","choice":"firstmate","confidence":0.9}\n'
+    printf '{"ev":"steer","t":1790000023,"task":"c"}\n'
+    printf '{"ev":"ack","t":1790000024,"through":3}\n'
+    printf '{"ev":"turn_end","t":1790000025,"outcome":"ack"}\n'
+  } > "$fixture"
+  out=$("$JEV" absorb-gate --log "$fixture" --days 30 --min-sample 3 --now 1790000100) \
+    || fail "absorb-gate failed a clean, fully-agreeing fixture: $out"
+  assert_contains "$out" 'agreement: 100% (3 of 3)' "absorb-gate did not compute 100% agreement"
+  assert_contains "$out" 'go-live: met' "absorb-gate did not report met on a clean fixture"
+  out=$("$JEV" absorb-gate --log "$fixture" --days 30 --min-sample 4 --now 1790000100) \
+    && fail "absorb-gate passed below its own minimum sample"
+  assert_contains "$out" 'go-live: NOT met' "a sample below --min-sample still reported met"
+  pass "absorb-gate reports classified/scored/agreement/wrongly-absorbable and the sample-gated go-live verdict"
+}
+
+test_absorb_digest_surfaces_every_entry_past_a_malformed_line_and_holds_a_partial_one() {
+  local home out1 out2 digest
+  home=$(jev_case absorb-digest-malformed)
+  mkdir -p "$home/state/jev"
+  digest="$home/state/jev/absorbed.jsonl"
+  {
+    printf '{"t":1790000000,"kind":"signal","task":"first","choice":"absorbable","confidence":0.95}\n'
+    printf '{"t":1790000001,"kind":"sig\n'
+    printf '{"t":1790000002,"kind":"stale","task":"third","choice":"absorbable","confidence":0.97}\n'
+    printf '{"t":1790000003,"kind":"signal","task":"partial"'
+  } > "$digest"
+  out1=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" 2>/dev/null) || fail "drain failed with a malformed digest"
+  assert_contains "$out1" 'ABSORBED (3 wakes' "the header did not count exactly the complete digest lines"
+  assert_contains "$out1" 'task first' "the entry before the malformed line was not surfaced"
+  assert_contains "$out1" 'unreadable digest entry' "the malformed line was dropped silently"
+  assert_contains "$out1" 'task third' "an entry after the malformed line was lost"
+  assert_not_contains "$out1" 'partial' "a partially written line was surfaced before it was complete"
+  printf ',"choice":"absorbable","confidence":0.96}\n' >> "$digest"
+  out2=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" 2>/dev/null) || fail "second drain failed"
+  assert_contains "$out2" 'ABSORBED (1 wake' "the completed line was not surfaced on the next drain"
+  assert_contains "$out2" 'task partial' "the completed partial line was lost"
+  assert_not_contains "$out2" 'task first' "an already-surfaced entry was printed again"
+  pass "a malformed digest line never hides later entries, and a partial line waits until complete"
+}
+
+test_absorb_digest_is_held_while_away_mode_owns_the_drain() {
+  local home out1 out2
+  home=$(jev_case absorb-digest-afk)
+  mkdir -p "$home/state/jev"
+  printf '{"t":1790000000,"kind":"signal","task":"task","choice":"absorbable","confidence":0.95}\n' \
+    > "$home/state/jev/absorbed.jsonl"
+  : > "$home/state/.afk"
+  out1=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" 2>/dev/null) || fail "drain failed in away mode"
+  assert_not_contains "$out1" 'ABSORBED' "an away-mode drain consumed the digest the captain never reads"
+  rm -f "$home/state/.afk"
+  out2=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" 2>/dev/null) || fail "return drain failed"
+  assert_contains "$out2" 'ABSORBED (1 wake' "the held digest entry did not surface once away mode ended"
+  pass "the digest is held while away mode drains and surfaces with the first drain after return"
+}
+
+test_absorb_digest_surfaces_once_with_the_next_drain_and_never_repeats() {
+  local home out1 out2
+  home=$(jev_case absorb-digest-surface)
+  mkdir -p "$home/state/jev"
+  printf '{"t":1790000000,"kind":"signal","task":"task","reason":"signal:task.status","status":"working: x","choice":"absorbable","confidence":0.95}\n' \
+    > "$home/state/jev/absorbed.jsonl"
+  out1=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" 2>/dev/null) || fail "drain failed with a pending digest"
+  assert_contains "$out1" 'ABSORBED (1 wake' "the drain did not surface the pending digest entry"
+  assert_contains "$out1" 'task task' "the surfaced digest line did not name its task"
+  out2=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" 2>/dev/null) || fail "second drain failed"
+  assert_not_contains "$out2" 'ABSORBED' "an already-surfaced digest entry was printed again"
+  pass "an absorbed wake surfaces exactly once with the next drain and never repeats"
+}
+
 test_off_by_default_and_not_enabled_by_the_environment
 test_foreign_state_dir_never_uses_the_key
 test_shadow_classifies_without_changing_the_presentation
@@ -635,3 +862,16 @@ test_automated_sends_record_no_steer
 test_report_attributes_actions_to_open_wakes_across_drains
 test_report_keeps_unacknowledged_and_earlier_wakes_open
 test_report_measures_agreement_and_lists_doubtful_cases
+test_absorb_off_by_default_never_dials_or_writes_a_digest
+test_absorb_requires_the_local_backend
+test_absorb_refuses_below_the_measured_gate_without_an_override
+test_absorb_override_skips_the_gate_and_records_a_masked_digest_entry
+test_absorb_threshold_floor_is_enforced
+test_absorb_falls_through_on_low_confidence_or_doubt
+test_absorb_never_a_task_with_an_open_decision
+test_absorb_never_a_secondmate_status_signal
+test_absorb_never_a_non_working_paused_verb
+test_absorb_gate_reports_met_and_not_met
+test_absorb_digest_surfaces_once_with_the_next_drain_and_never_repeats
+test_absorb_digest_is_held_while_away_mode_owns_the_drain
+test_absorb_digest_surfaces_every_entry_past_a_malformed_line_and_holds_a_partial_one

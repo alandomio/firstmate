@@ -13,12 +13,21 @@
 #   fm_jev_observe_ack <home> <state> <through-seq>
 #   fm_jev_observe_turn_end <home> <state> <hook-payload-json>
 #   fm_jev_observe_drain <home> <state> <deduped-raw-rows>
+#   fm_jev_absorb_try <home> <state> <signal|stale> <task> <reason>
+#                                                    - synchronous, bounded gate
+#                                                      check for bin/fm-watch.sh's
+#                                                      two allowlisted call sites
+#   fm_jev_absorb_digest_surface <state>              - printed by
+#                                                      bin/fm-wake-drain.sh on
+#                                                      every non-afk drain
 #
-# Every function is best effort and silent: it never prints, always returns 0
-# (except fm_jev_enabled's own answer), and costs one file test when the home
-# has not opted in. A Jev problem can therefore never change a caller's output,
-# exit status, ordering, or timing, and the classification itself always runs
-# detached from the caller.
+# Every shadow function is best effort and silent: it never prints, always
+# returns 0 (except fm_jev_enabled's own answer), and costs one file test when
+# the home has not opted in. A Jev problem can therefore never change a caller's
+# output, exit status, ordering, or timing, and the classification itself always
+# runs detached from the caller. The two absorption functions are the opted-in
+# exceptions: fm_jev_absorb_try answers synchronously and
+# fm_jev_absorb_digest_surface prints the digest.
 
 FM_JEV_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -56,6 +65,91 @@ _fm_jev_append() {  # <state> <json-line>
   fi
   (umask 077 && printf '%s\n' "$2" >> "$dir/shadow.jsonl") 2>/dev/null || true
   return 0
+}
+
+# The durable digest of absorption (bin/fm-jev.sh's absorb-try is the sole
+# writer): one JSON line per wake absorbed before it ever reached the wake
+# queue, so a captain reading the digest can always see what quiet cleaning
+# actually did, even though the wake itself never surfaced.
+_fm_jev_absorb_append() {  # <state> <json-line>
+  local dir="$1/jev"
+  if [ ! -d "$dir" ]; then
+    (umask 077 && mkdir -p "$dir") 2>/dev/null || return 0
+  fi
+  (umask 077 && printf '%s\n' "$2" >> "$dir/absorbed.jsonl") 2>/dev/null || true
+  return 0
+}
+
+# Ask bin/fm-jev.sh whether an eligible wake, about to be queued and to wake
+# the supervising session, should instead be absorbed: a synchronous, bounded
+# (the existing per-request classify timeout) call made ONLY from
+# bin/fm-watch.sh's two allowlisted call sites (a routine working/paused
+# "signal" wake, or a declared-pause "stale" recheck), never for anything
+# else - bin/fm-jev.sh's absorb-try owns every eligibility rule and the go-live
+# gate. 0 when absorbed: the caller must skip its own fm_wake_append + wake and
+# leave the durable digest above to carry the record. 1 for every other
+# outcome - off, ineligible, doubtful, or a classifier problem - so the caller
+# always falls through to today's unconditional behavior. The cheap
+# fm_jev_enabled test below means a home that never opted in pays no fork at
+# all on this hot path.
+fm_jev_absorb_try() {  # <home> <state> <signal|stale> <task> <reason>
+  local home=${1:-} state=${2:-} kind=${3:-} task=${4:-} reason=${5:-}
+  [ -n "$home" ] && [ -n "$state" ] || return 1
+  [ "$state" -ef "$home/state" ] || return 1
+  fm_jev_enabled "$home" "$state" || return 1
+  case "$kind" in signal|stale) ;; *) return 1 ;; esac
+  [ -n "$task" ] || return 1
+  FM_HOME="$home" FM_STATE_OVERRIDE="$state" \
+    "$FM_JEV_LIB_DIR/fm-jev.sh" absorb-try --kind "$kind" --task "$task" --reason "$reason" \
+    </dev/null >/dev/null 2>&1
+}
+
+# Print an ABSORBED section for every digest line not yet surfaced, then
+# advance the cursor so it is never repeated. Called on every drain
+# (bin/fm-wake-drain.sh), so an absorbed wake surfaces with the very next real
+# wake or heartbeat, never forcing a supervision wake of its own. Held while
+# state/.afk exists: the away-mode daemon discards drain output. Silent
+# (prints and touches nothing) when nothing is pending, which is the common
+# case and the case for a home that never enabled absorption.
+fm_jev_absorb_digest_surface() {  # <state>
+  local state=$1 digest cursor size offset have count
+  digest="$state/jev/absorbed.jsonl"
+  [ -f "$digest" ] || return 0
+  [ ! -e "$state/.afk" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  cursor="$state/jev/.absorbed-cursor"
+  size=$(wc -c < "$digest" 2>/dev/null | tr -d ' ') || size=0
+  case "$size" in ''|*[!0-9]*) size=0 ;; esac
+  offset=0
+  [ -f "$cursor" ] && offset=$(cat "$cursor" 2>/dev/null)
+  case "$offset" in ''|*[!0-9]*) offset=0 ;; esac
+  [ "$offset" -le "$size" ] || offset=0
+  if [ "$offset" -eq "$size" ]; then
+    return 0
+  fi
+  have=$(tail -c "+$((offset + 1))" "$digest" 2>/dev/null | head -c "$((size - offset))"; printf x)
+  have=${have%x}
+  case "$have" in
+    *$'\n') ;;
+    *$'\n'*) have="${have%$'\n'*}"$'\n' ;;
+    *) return 0 ;;
+  esac
+  size=$((offset + $(printf '%s' "$have" | wc -c | tr -d ' ')))
+  count=$(printf '%s' "$have" | grep -c '[^[:space:]]') || count=0
+  if [ "$count" -eq 0 ]; then
+    (umask 077 && printf '%s\n' "$size" > "$cursor") 2>/dev/null || true
+    return 0
+  fi
+  printf 'ABSORBED (%d wake%s, absorbed by the local Jev classifier before reaching the queue - masked reason/status kept below):\n' \
+    "$count" "$([ "$count" -eq 1 ] && printf '' || printf 's')"
+  printf '%s' "$have" | jq -Rr '
+    select(test("[^[:space:]]"))
+    | (fromjson? // null) as $e
+    | if ($e | type) == "object" then
+        "  \(($e.t | todate?) // "unknown time") \($e.kind) task \($e.task): choice \($e.choice) (\($e.confidence))\(if ($e.reason // "") != "" then " | wake: " + $e.reason else "" end)\(if ($e.status // "") != "" then " | worker: " + $e.status else "" end)"
+      else "  (unreadable digest entry)" end
+  ' 2>/dev/null
+  (umask 077 && printf '%s\n' "$size" > "$cursor") 2>/dev/null || true
 }
 
 # Ground truth counts only what firstmate itself does in a handling turn, so a
