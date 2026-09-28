@@ -601,7 +601,9 @@ fm_remote_job_path_mtime() { # <path>
 
 fm_remote_job_reap_stale() { # <account-home>
   local account_home=$1 job id state mtime now
-  fm_remote_job_prepare_state "$account_home" || return 1
+  # Sweep only the tree the caller already prepared: re-preparing here would
+  # recreate a state root deleted after the worker's last heartbeat.
+  [ -n "${FM_REMOTE_JOB_JOBS:-}" ] && [ -d "$FM_REMOTE_JOB_JOBS" ] && [ ! -L "$FM_REMOTE_JOB_JOBS" ] || return 1
   now=$(date +%s)
   for job in "$FM_REMOTE_JOB_JOBS"/job-*; do
     [ -d "$job" ] && [ ! -L "$job" ] || continue

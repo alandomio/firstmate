@@ -726,9 +726,9 @@ main() {
       fi
     fi
     if [ "$SECONDS" -ge "$next_reap" ]; then
-      # The sweep re-prepares the state tree, so refresh first: a deleted state
-      # root must fail this write and stop the worker for its supervisor rather
-      # than be silently recreated behind an owner that holds no lock.
+      # Refresh first: a deleted state root must fail this write and stop the
+      # worker for its supervisor rather than be silently recreated behind an
+      # owner that holds no lock. The sweep itself never recreates the tree.
       worker_refresh_heartbeat
       fm_remote_job_reap_stale "$account_home" || true
       next_reap=$((SECONDS + FM_REMOTE_JOB_REAP_INTERVAL_SECONDS))
