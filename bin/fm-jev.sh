@@ -187,11 +187,8 @@ JEV_ABSORB_GATE_DAYS_DEFAULT=30
 JEV_ABSORB_GATE_CACHE_TTL=300
 JEV_ABSORB_GATE_TIMEOUT=${FM_JEV_ABSORB_GATE_TIMEOUT:-10}
 
-# The single definition of what may leave the machine; `mask` exposes it.
-JEV_JQ_MASK='def fm_jev_mask:
-  gsub("[A-Za-z][A-Za-z0-9+.-]*://[^\\s]+"; "<url>")
-  | gsub("[^\\s]*[/\\\\][^\\s]*"; "<path>")
-  | .[0:500];'
+# JEV_JQ_MASK/jev_mask now live in bin/fm-jev-lib.sh (one owner), shared with
+# bin/fm-watch.sh's deterministic unchanged-pause rule.
 
 usage() {
   sed -n '6,13p' "$0" | sed 's/^# \{0,1\}//'
@@ -337,10 +334,6 @@ jev_pause() {  # <day> <why>
   (umask 077 && printf '%s\t%s\n' "$1" "$2" > "$JEV_DISABLED") 2>/dev/null || true
   _fm_jev_append "$STATE" "$(jq -cn --argjson t "$(date +%s)" --arg day "$1" --arg why "$2" \
     '{ev: "disabled", t: $t, day: $day, why: $why}')"
-}
-
-jev_mask() {
-  jq -R -r "$JEV_JQ_MASK"' fm_jev_mask'
 }
 
 # The task a wake row is about, when this home can name it: the status or
@@ -722,7 +715,7 @@ cmd_absorb_try() {
 
   _fm_jev_absorb_append "$STATE" "$(jq -cn --argjson t "$(date +%s)" --arg kind "$kind" --arg task "$task" \
     --arg reason "$masked_reason" --arg status "$masked_status" --arg choice "$rchoice" --argjson conf "$rconf" \
-    '{t: $t, kind: $kind, task: $task, reason: $reason, status: $status, choice: $choice, confidence: $conf}')"
+    '{t: $t, kind: $kind, task: $task, reason: $reason, status: $status, choice: $choice, confidence: $conf, source: "jev"}')"
   return 0
 }
 

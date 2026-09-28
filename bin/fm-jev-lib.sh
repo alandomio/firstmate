@@ -4,7 +4,8 @@
 # bin/fm-jev.sh owns the contract: what is enabled, what leaves the machine,
 # the limits, the private log, and how ground truth is measured. This file is
 # sourced by the production scripts that feed that log and holds only the
-# cheap enabled test plus the event appends they call inline:
+# cheap enabled test, the shared jev_mask filter, plus the event appends they
+# call inline:
 #   fm_jev_enabled <home> <state>                    - 0 when this home opted into either backend
 #   fm_jev_backend <home> <state>                    - prints "local" or "openrouter"; exit 1 when off
 #   fm_jev_observe <home> <state> <steer|decision> [task]
@@ -30,6 +31,18 @@
 # fm_jev_absorb_digest_surface prints the digest.
 
 FM_JEV_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The single definition of what may leave the machine; bin/fm-jev.sh's `mask`
+# exposes it, and both bin/fm-jev.sh and bin/fm-watch.sh's deterministic
+# unchanged-pause rule mask digest text through jev_mask.
+JEV_JQ_MASK='def fm_jev_mask:
+  gsub("[A-Za-z][A-Za-z0-9+.-]*://[^\\s]+"; "<url>")
+  | gsub("[^\\s]*[/\\\\][^\\s]*"; "<path>")
+  | .[0:500];'
+
+jev_mask() {
+  jq -R -r "$JEV_JQ_MASK"' fm_jev_mask'
+}
 
 # Opt-in is either a non-empty config/jev-endpoint (local backend, no secret to
 # gate on) or a non-empty OPENROUTER_API_KEY in this home's private .env
@@ -74,10 +87,9 @@ _fm_jev_append() {  # <state> <json-line>
 _fm_jev_absorb_append() {  # <state> <json-line>
   local dir="$1/jev"
   if [ ! -d "$dir" ]; then
-    (umask 077 && mkdir -p "$dir") 2>/dev/null || return 0
+    (umask 077 && mkdir -p "$dir") 2>/dev/null || return 1
   fi
-  (umask 077 && printf '%s\n' "$2" >> "$dir/absorbed.jsonl") 2>/dev/null || true
-  return 0
+  (umask 077 && printf '%s\n' "$2" >> "$dir/absorbed.jsonl") 2>/dev/null
 }
 
 # Ask bin/fm-jev.sh whether an eligible wake, about to be queued and to wake
@@ -140,13 +152,13 @@ fm_jev_absorb_digest_surface() {  # <state>
     (umask 077 && printf '%s\n' "$size" > "$cursor") 2>/dev/null || true
     return 0
   fi
-  printf 'ABSORBED (%d wake%s, absorbed by the local Jev classifier before reaching the queue - masked reason/status kept below):\n' \
+  printf 'ABSORBED (%d wake%s absorbed before reaching the queue - masked reason/status kept below):\n' \
     "$count" "$([ "$count" -eq 1 ] && printf '' || printf 's')"
   printf '%s' "$have" | jq -Rr '
     select(test("[^[:space:]]"))
     | (fromjson? // null) as $e
     | if ($e | type) == "object" then
-        "  \(($e.t | todate?) // "unknown time") \($e.kind) task \($e.task): choice \($e.choice) (\($e.confidence))\(if ($e.reason // "") != "" then " | wake: " + $e.reason else "" end)\(if ($e.status // "") != "" then " | worker: " + $e.status else "" end)"
+        "  \(($e.t | todate?) // "unknown time") \($e.kind) task \($e.task) via \($e.source // "jev"): choice \($e.choice)\(if ($e.confidence | type) == "number" then " (" + ($e.confidence | tostring) + ")" else "" end)\(if ($e.reason // "") != "" then " | wake: " + $e.reason else "" end)\(if ($e.status // "") != "" then " | worker: " + $e.status else "" end)"
       else "  (unreadable digest entry)" end
   ' 2>/dev/null
   (umask 077 && printf '%s\n' "$size" > "$cursor") 2>/dev/null || true

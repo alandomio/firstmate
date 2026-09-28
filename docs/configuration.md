@@ -654,10 +654,19 @@ It is off by default and requires ALL of the following, checked at the moment of
 Never eligible, regardless of the above: needs-decision, blocked, done, failed, a merge/check result, a heartbeat, a captain inbox note, Relay, a process-event wake, a secondmate's routed-reply channel, or any task with an open decision.
 Any doubt anywhere in that chain - disabled, ineligible, an unmet gate, a classifier timeout, error, or low-confidence answer - falls through to today's unconditional behavior.
 Absorption adds no latency on the wake path beyond the existing per-request classify timeout, and only for a wake it might absorb; the go-live gate's own computation is cached for a few minutes rather than re-scanned on every wake.
-Nothing is lost: every absorbed wake is appended, masked, to `state/jev/absorbed.jsonl`, which `bin/fm-wake-drain.sh` prints - a count plus one line each - the next time any drain runs, whether that is a real wake or a heartbeat, so nothing absorbed can rot unseen and absorption itself never wakes the supervising session on its own.
+Nothing is lost: every absorbed wake is appended, masked, to `state/jev/absorbed.jsonl` with `source: "jev"`, which `bin/fm-wake-drain.sh` prints - a count plus one line each - the next time any drain runs, whether that is a real wake or a heartbeat, so nothing absorbed can rot unseen and absorption itself never wakes the supervising session on its own.
 While away mode is active (`state/.afk`) the digest is held with its cursor untouched, because the away-mode sub-supervisor discards drain output other than queue rows; it surfaces in the first drain after away mode ends, such as `bin/fm-afk-return.sh`'s catch-up.
 `bin/fm-jev.sh status` reports whether absorption is requested, its threshold, and whether the gate is currently met; `bin/fm-jev.sh absorb-gate` reports the gate's own criteria in detail.
 `bin/fm-jev.sh`'s header owns absorb-try's exact eligibility rules.
+
+### Deterministic unchanged-pause absorption (config/absorb-unchanged-pause)
+
+A second, independent absorption path needs no model and no go-live gate, because it targets one fixed, well-understood shape the Jev classifier reliably struggles with: a declared-pause "stale" recheck (never a captain-held transfer) that the watcher's own comparison already found unchanged since the previous recheck.
+Off by default; `config/absorb-unchanged-pause`'s first non-blank line must be exactly `on`.
+When on, this rule is tried first, before Jev, at the same recheck point, requiring: the situation is unchanged (the same structured comparison `bin/fm-watch.sh` already uses, never a regex on the reason text), the task's latest status line is a `paused` verb that is not captain-relevant, the task is not a secondmate, it has no open decision, its agent is not dead, `jq` is available, and its masked digest entry was actually written.
+Any of those failing falls through to Jev, then to a real surface, exactly as if the rule were off.
+Safety valve: each recheck window (`state/.rule-absorbed-since-<key>`) tracks how long the rule has continuously absorbed that task; once that reaches `FM_PAUSE_REMIND_SECS` (the same default as the existing daily reminder, one day), the rule refuses so the task still gets one real, human-visible surface, and the marker then resets.
+Same digest contract as Jev absorption, tagged `source: "rule"` so `bin/fm-jev.sh report` keeps measuring the model only on what this rule did not already take.
 
 ## Process-to-event sources (state/procevent)
 

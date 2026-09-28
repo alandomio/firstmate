@@ -3050,6 +3050,229 @@ test_jev_never_absorbs_a_captain_held_recheck() {
   pass "a captain-held recheck always re-surfaces, never absorbed, even with Jev enabled and overridden"
 }
 
+# --- the deterministic (no-model) unchanged-pause rule -----------------------
+# config/absorb-unchanged-pause; bin/fm-watch.sh's rule_absorb_unchanged_pause.
+# Calls no classifier, so no fakebin/curl is needed here.
+
+jev_absorb_enable_rule() {  # <dir>
+  mkdir -p "$1/config"
+  printf 'on\n' > "$1/config/absorb-unchanged-pause"
+}
+
+test_rule_absorbs_unchanged_pause_recheck() {
+  local dir state statusf window task key
+  dir=$(make_case rule-absorb-unchanged); state="$dir/state"
+  window="test:fm-rule"; task=ruled; statusf="$state/$task.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf 'paused: awaiting a colleague approval\n' > "$statusf"
+  backdate_file 500 "$statusf"
+  printf 'idle, awaiting approval\n' > "$dir/pane.txt"
+  : > "$state/.paused-$key"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  jev_absorb_enable_rule "$dir"
+  # The first recheck has no prior situation to compare against, so it always
+  # surfaces (matches the pre-existing baseline behavior); only the SECOND,
+  # now genuinely unchanged, recheck is eligible for the rule.
+  paused_recheck_round "$dir" "$window" "$task" claude surface "baseline recheck establishes the situation" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  # Past the legacy (decision-blind, digest-blind) reminder ceiling too, so
+  # this recheck reaches the rule's own decision rather than that older absorb.
+  backdate_file 500 "$state/.paused-surfaced-$key"
+  paused_recheck_round "$dir" "$window" "$task" claude absorb "unchanged recheck absorbed by the rule" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  [ -s "$state/jev/absorbed.jsonl" ] || fail "rule absorption did not write a digest entry"
+  grep -F '"source":"rule"' "$state/jev/absorbed.jsonl" >/dev/null \
+    || fail "digest entry was not tagged source=rule: $(cat "$state/jev/absorbed.jsonl")"
+  [ -e "$state/.rule-absorbed-since-$key" ] || fail "the rule's own safety-valve marker was not recorded"
+  # paused_recheck_round's own ack_stopped_cycle already drained (and so
+  # surfaced-and-consumed) this digest entry; tests/fm-jev.test.sh covers the
+  # drain's "via rule" print format directly against a synthetic entry.
+  pass "the deterministic rule absorbs a fresh unchanged declared-pause recheck and records it in the digest as source=rule"
+}
+
+test_rule_refuses_a_changed_situation_or_an_open_decision() {
+  local dir state statusf window task key
+  dir=$(make_case rule-refuses); state="$dir/state"
+  window="test:fm-rule-refuse"; task=refused; statusf="$state/$task.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf 'paused: awaiting a colleague approval\n' > "$statusf"
+  backdate_file 500 "$statusf"
+  printf 'idle, awaiting approval\n' > "$dir/pane.txt"
+  : > "$state/.paused-$key"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  jev_absorb_enable_rule "$dir"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "baseline recheck" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  backdate_file 500 "$state/.paused-surfaced-$key"
+  paused_recheck_round "$dir" "$window" "$task" claude absorb "unchanged recheck absorbed" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  grep -F '"source":"rule"' "$state/jev/absorbed.jsonl" >/dev/null \
+    || fail "the unchanged recheck was not absorbed by the rule: $(cat "$state/jev/absorbed.jsonl" 2>/dev/null)"
+  # The pane text changed: the rule never absorbs a changed situation.
+  printf 'idle, awaiting approval (v2)\n' > "$dir/pane.txt"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "changed situation surfaces" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  grep -qF "changed since the last recheck" "$dir/watch.out" \
+    || fail "a changed situation was not surfaced as changed: $(cat "$dir/watch.out")"
+
+  # A task whose situation is genuinely unchanged, but with an open decision:
+  # never rule-absorbed - it keeps surfacing on every recheck.
+  local task2=held2 statusf2 key2 window2
+  window2="test:fm-rule-held"; statusf2="$state/$task2.status"
+  key2=$(printf '%s' "$window2" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window2" > "$state/$task2.meta"
+  {
+    printf 'needs-decision: pick a base branch\n'
+    printf 'paused: awaiting a colleague approval\n'
+  } > "$statusf2"
+  backdate_file 500 "$statusf2"
+  printf 'idle, awaiting approval\n' > "$dir/pane2.txt"
+  : > "$state/.paused-$key2"
+  printf '%s' "$(hash_text "$(cat "$dir/pane2.txt")")" > "$state/.hash-$key2"
+  printf '1\n' > "$state/.count-$key2"
+  paused_recheck_round "$dir" "$window2" "$task2" claude surface "open-decision baseline recheck" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  # Past the legacy reminder ceiling too (backdated), so this recheck reaches
+  # the rule's own decision instead of the older, decision-blind silent absorb.
+  backdate_file 500 "$state/.paused-surfaced-$key2"
+  paused_recheck_round "$dir" "$window2" "$task2" claude surface "open-decision unchanged recheck still surfaces" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  assert_not_contains "$(cat "$state/jev/absorbed.jsonl" 2>/dev/null)" "\"task\":\"$task2\"" \
+    "a task with an open decision was recorded as rule-absorbed"
+  pass "the rule refuses a changed situation and a task with an open decision, surfacing both for real"
+}
+
+test_rule_never_absorbs_a_dead_agent_pause_recheck() {
+  local dir state statusf window task key
+  dir=$(make_case rule-dead-agent); state="$dir/state"
+  window="test:fm-rule-dead"; task=deadruled; statusf="$state/$task.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf 'paused: waiting on upstream\n' > "$statusf"
+  backdate_file 500 "$statusf"
+  printf 'bare shell after agent exit\n' > "$dir/pane.txt"
+  : > "$state/.paused-$key"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  jev_absorb_enable_rule "$dir"
+  paused_recheck_round "$dir" "$window" "$task" zsh surface "dead-agent recheck" FM_HOME="$dir"
+  assert_absent "$state/jev/absorbed.jsonl" "a dead-agent pause recheck was recorded as rule-absorbed"
+  pass "a dead-agent pause recheck always re-surfaces, never absorbed by the rule"
+}
+
+test_rule_never_absorbs_a_captain_held_recheck() {
+  local dir state fakebin out capture_file window key pid back statusf
+  dir=$(make_case rule-captain-held); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-rule-held-captain"
+  printf 'idle, holding for the captain' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/held.meta"
+  statusf="$state/held.status"
+  printf 'captain-held: awaiting the captain'"'"'s decision\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf '%s' "$(hash_text "idle, holding for the captain")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE="state: paused · source: status-log · awaiting the captain's decision"
+  jev_absorb_enable_rule "$dir"
+  back=$(( $(date +%s) - 500 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
+  else touch -m -d "@$back" "$statusf"; fi
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+    watch_bg "$state" "$fakebin" "$out" FM_HOME="$dir" FM_PAUSE_RESURFACE_SECS=240
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "watcher did not re-surface a captain-held recheck despite the rule being enabled"
+  grep -F "stale: $window" "$out" >/dev/null || fail "captain-held recheck did not surface: $(cat "$out")"
+  assert_absent "$state/jev/absorbed.jsonl" "a captain-held recheck was recorded as rule-absorbed"
+  unset FM_FAKE_CREW_STATE
+  pass "a captain-held recheck always re-surfaces, never absorbed by the rule, even when enabled"
+}
+
+test_rule_surfaces_when_its_digest_entry_cannot_be_built() {
+  local dir state statusf window task key
+  dir=$(make_case rule-no-digest); state="$dir/state"
+  window="test:fm-rule-nodigest"; task=nodigest; statusf="$state/$task.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf 'paused: awaiting a colleague approval\n' > "$statusf"
+  backdate_file 500 "$statusf"
+  printf 'idle, awaiting approval\n' > "$dir/pane.txt"
+  : > "$state/.paused-$key"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  jev_absorb_enable_rule "$dir"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "baseline recheck" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  backdate_file 500 "$state/.paused-surfaced-$key"
+  # A jq that cannot produce the masked digest entry: absorbing now would lose the wake.
+  printf '#!/bin/sh\nexit 1\n' > "$dir/fakebin/jq"; chmod +x "$dir/fakebin/jq"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "unrecordable recheck surfaces instead" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  rm -f "$dir/fakebin/jq"
+  assert_not_contains "$(cat "$state/jev/absorbed.jsonl" 2>/dev/null)" "\"task\":\"$task\"" \
+    "a recheck with no buildable digest entry was recorded as rule-absorbed"
+  pass "the rule surfaces a recheck for real when it cannot record the digest entry"
+}
+
+test_rule_surfaces_when_its_digest_entry_cannot_be_written() {
+  local dir state statusf window task key
+  dir=$(make_case rule-unwritable-digest); state="$dir/state"
+  window="test:fm-rule-nowrite"; task=nowrite; statusf="$state/$task.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf 'paused: awaiting a colleague approval\n' > "$statusf"
+  backdate_file 500 "$statusf"
+  printf 'idle, awaiting approval\n' > "$dir/pane.txt"
+  : > "$state/.paused-$key"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  jev_absorb_enable_rule "$dir"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "baseline recheck" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  backdate_file 500 "$state/.paused-surfaced-$key"
+  # A plain file where the digest directory belongs: the entry can be built but never written.
+  rm -rf "$state/jev"; : > "$state/jev"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "unwritable digest surfaces instead" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  [ ! -e "$state/.rule-absorbed-since-$key" ] || fail "the rule kept its since-marker after a real surface"
+  pass "the rule surfaces a recheck for real when it cannot write the digest entry"
+}
+
+test_rule_safety_valve_forces_a_real_surface_then_resets() {
+  local dir state statusf window task key
+  dir=$(make_case rule-safety-valve); state="$dir/state"
+  window="test:fm-rule-valve"; task=valved; statusf="$state/$task.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf 'paused: awaiting a colleague approval\n' > "$statusf"
+  backdate_file 500 "$statusf"
+  printf 'idle, awaiting approval\n' > "$dir/pane.txt"
+  : > "$state/.paused-$key"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  jev_absorb_enable_rule "$dir"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "baseline recheck" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  backdate_file 500 "$state/.paused-surfaced-$key"
+  paused_recheck_round "$dir" "$window" "$task" claude absorb "unchanged recheck absorbed by the rule" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  [ -e "$state/.rule-absorbed-since-$key" ] || fail "the safety-valve marker was not created on first absorb"
+  # Simulate many days of continuous rule absorption: age both the legacy
+  # ceiling anchor and the rule's own marker well past a short reminder bound.
+  backdate_file 500 "$state/.paused-surfaced-$key"
+  backdate_file 500 "$state/.rule-absorbed-since-$key"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "safety valve forces a real surface" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  [ ! -e "$state/.rule-absorbed-since-$key" ] || fail "the safety-valve marker was not cleared on the forced real surface"
+  pass "the rule's own safety valve forces one real surface after continuous absorption, then resets its marker"
+}
+
 test_signal_reason_is_actionable_classifier
 test_stale_is_terminal_classifier
 test_scan_captain_relevant_statuses_classifier
@@ -3119,3 +3342,10 @@ test_jev_off_still_surfaces_the_same_signal
 test_jev_absorbs_a_declared_pause_recheck
 test_jev_never_absorbs_a_dead_agent_pause_recheck
 test_jev_never_absorbs_a_captain_held_recheck
+test_rule_absorbs_unchanged_pause_recheck
+test_rule_refuses_a_changed_situation_or_an_open_decision
+test_rule_never_absorbs_a_dead_agent_pause_recheck
+test_rule_never_absorbs_a_captain_held_recheck
+test_rule_surfaces_when_its_digest_entry_cannot_be_built
+test_rule_surfaces_when_its_digest_entry_cannot_be_written
+test_rule_safety_valve_forces_a_real_surface_then_resets

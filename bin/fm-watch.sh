@@ -26,8 +26,10 @@
 #                          absorbed instead with its own long re-surface cadence,
 #                          never as a wedge, and that recheck reason names which
 #                          human the wait is on; a due PAUSED (never captain-held)
-#                          recheck also offers Jev one more look before it
-#                          re-surfaces (config/jev-absorb; off by default). Only
+#                          recheck first offers the deterministic unchanged-pause
+#                          rule (config/absorb-unchanged-pause), then Jev
+#                          (config/jev-absorb), one more look before it
+#                          re-surfaces - both off by default. Only
 #                          when neither absorb class
 #                          applies does the log's last line decide:
 #                          terminal (captain-relevant) or non-terminal (no verb),
@@ -467,8 +469,48 @@ jev_stale_absorbed() {  # <task> <reason>
   fm_jev_absorb_try "$FM_HOME" "$STATE" stale "$1" "$2"
 }
 
+# 0 when config/absorb-unchanged-pause's first non-blank line is "on".
+rule_absorb_requested() {
+  local line
+  line=$(grep -v '^[[:space:]]*$' "$FM_HOME/config/absorb-unchanged-pause" 2>/dev/null | head -n1) || return 1
+  [ "$line" = on ]
+}
+
+# The deterministic (no-model) twin of jev_stale_absorbed: no classifier, same
+# unchanged/open-decision eligibility. <key>'s since-marker is its own safety
+# valve, bounded by FM_PAUSE_REMIND_SECS, so one real surface still lands.
+rule_absorb_unchanged_pause() {  # <task> <key> <now-situation> <prev-situation>
+  local task=$1 key=$2 now_sit=$3 prev_sit=$4 statusf="$STATE/$1.status" last marker
+  rule_absorb_requested || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  [ "$now_sit" = "$prev_sit" ] || return 1
+  [ -f "$statusf" ] || return 1
+  [ "$(grep '^kind=' "$STATE/$task.meta" 2>/dev/null | tail -1 | cut -d= -f2-)" != secondmate ] || return 1
+  [ -z "$(status_open_decisions "$statusf" 2>/dev/null)" ] || return 1
+  last=$(last_status_line "$statusf")
+  [ "$(status_line_verb "$last")" = "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}" ] || return 1
+  status_is_captain_relevant "$last" && return 1
+  marker="$STATE/.rule-absorbed-since-$key"
+  [ -e "$marker" ] || date +%s > "$marker"
+  [ "$(age_of "$marker")" -lt "$PAUSE_REMIND_SECS" ]
+}
+
+# Appends one masked digest entry for a rule-absorbed recheck, source=rule so
+# bin/fm-jev.sh report keeps model agreement separate from this fixed rule.
+# Nonzero, recording nothing, when the entry could not be built.
+rule_absorb_record() {  # <task> <reason> <status>
+  local task=$1 reason masked_status line
+  reason=$(printf '%s' "$2" | jev_mask) || return 1
+  masked_status=$(printf '%s' "$3" | jev_mask) || return 1
+  line=$(jq -cn --argjson t "$(date +%s)" --arg task "$task" \
+    --arg reason "$reason" --arg status "$masked_status" \
+    '{t: $t, kind: "stale", task: $task, reason: $reason, status: $status, choice: "absorbable", confidence: null, source: "rule"}') || return 1
+  [ -n "$line" ] || return 1
+  _fm_jev_absorb_append "$STATE" "$line"
+}
+
 handle_paused_stale() {  # <window> <task> <hash> <tail40>
-  local win=$1 task=$2 h=$3 tail=$4 key statusf mtime age detail reason throttle surfaced now_sit prev_sit
+  local win=$1 task=$2 h=$3 tail=$4 key statusf mtime age detail reason throttle surfaced now_sit prev_sit dead_agent
   key=$(window_key "$win")
   printf '%s' "$h" > "$STATE/.stale-$key"
   : > "$STATE/.paused-$key"
@@ -490,8 +532,10 @@ handle_paused_stale() {  # <window> <task> <hash> <tail40>
   if resurface_due "$age" "$throttle"; then
     now_sit=$(paused_situation "$win" "$task" "$tail")
     prev_sit=$(cat "$surfaced" 2>/dev/null || true)
+    dead_agent=1
+    case $now_sit in *' agent=dead '*) dead_agent=0 ;; esac
     if [ "$now_sit" = "$prev_sit" ] && [ "$(age_of "$surfaced")" -lt "$PAUSE_REMIND_SECS" ] \
-      && case $now_sit in *' agent=dead '*) false ;; esac; then
+      && [ "$dead_agent" -ne 0 ]; then
       date +%s > "$throttle"
       triage_log "absorbed paused recheck ($detail, unchanged since its last surface $(age_of "$surfaced")s ago): $win"
       return 0
@@ -501,13 +545,19 @@ handle_paused_stale() {  # <window> <task> <hash> <tail40>
     elif [ -n "$prev_sit" ]; then
       reason="$reason; changed since the last recheck: $(paused_situation_change "$prev_sit" "$now_sit")"
     fi
-    if [ "$detail" = "paused, awaiting external" ] \
-      && case $now_sit in *' agent=dead '*) false ;; esac \
+    if [ "$detail" = "paused, awaiting external" ] && [ "$dead_agent" -ne 0 ] \
+      && rule_absorb_unchanged_pause "$task" "$key" "$now_sit" "$prev_sit" \
+      && rule_absorb_record "$task" "stale: $win ($reason)" "$(last_status_line "$statusf")"; then
+      date +%s > "$throttle"
+      printf '%s\n' "$now_sit" > "$surfaced"
+      triage_log "absorbed paused recheck via rule ($detail, age ${age}s): $win"
+    elif [ "$detail" = "paused, awaiting external" ] && [ "$dead_agent" -ne 0 ] \
       && jev_stale_absorbed "$task" "stale: $win ($reason)"; then
       date +%s > "$throttle"
       printf '%s\n' "$now_sit" > "$surfaced"
       triage_log "absorbed paused recheck via jev ($detail, age ${age}s): $win"
     else
+      rm -f "$STATE/.rule-absorbed-since-$key"
       resurface_absorbed "$win" "$throttle" "$age" "stale: $win ($reason)" "$surfaced" "$now_sit"
     fi
   fi
@@ -580,7 +630,8 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
 
 clear_pause_state() {  # <window-key>
   local key=$1
-  rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
+  rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key" \
+    "$STATE/.rule-absorbed-since-$key"
 }
 
 clear_pause_tracking() {  # <window-key>
