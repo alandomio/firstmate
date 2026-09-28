@@ -1,0 +1,33 @@
+== scenario: config/absorb-unchanged-pause = off ==
+$ cat state/mrwait.status
+    paused: MR !812 awaiting merge by reviewer, see https://gitlab.example/x/-/merge_requests/812
+[recheck 1 (baseline)] watcher EXITED (woke the supervisor) with:
+    stale: test:fm-mr-await (paused 501s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+[recheck 2 (unchanged)] watcher EXITED (woke the supervisor) with:
+    stale: test:fm-mr-await (paused 505s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 502s ago)
+$ grep 'paused recheck' state/.watch-triage.log
+grep: /var/folders/tc/hhm5872n2ql638k7y8nh5nd40000gn/T//fm-watch-triage-tests.sLuKmq/demo-off/state/.watch-triage.log: No such file or directory
+$ cat state/jev/absorbed.jsonl
+    (absent)
+$ bin/fm-wake-drain.sh   # next real wake or heartbeat drain
+    1790585326	2	stale	test:fm-mr-await	stale: test:fm-mr-await (paused 505s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 502s ago)
+$ bin/fm-wake-drain.sh   # again: unacked queue rows persist until acked, digest rows never repeat
+    1790585326	2	stale	test:fm-mr-await	stale: test:fm-mr-await (paused 505s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 502s ago)
+    (end)
+
+== scenario: config/absorb-unchanged-pause = on ==
+$ cat state/mrwait.status
+    paused: MR !812 awaiting merge by reviewer, see https://gitlab.example/x/-/merge_requests/812
+[recheck 1 (baseline)] watcher EXITED (woke the supervisor) with:
+    stale: test:fm-mr-await (paused 502s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+[recheck 2 (unchanged)] watcher still polling after a full cycle: NO wake printed (stdout bytes: 0)
+$ grep 'paused recheck' state/.watch-triage.log
+    [2026-09-28T10:48:53+0200] absorbed paused recheck via rule (paused, awaiting external, age 505s): test:fm-mr-await
+$ cat state/jev/absorbed.jsonl
+    {"t":1790585333,"kind":"stale","task":"mrwait","reason":"stale: test:fm-mr-await (paused 505s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 501s ago)","status":"paused: MR !812 awaiting merge by reviewer, see <url>","choice":"absorbable","confidence":null,"source":"rule"}
+$ bin/fm-wake-drain.sh   # next real wake or heartbeat drain
+    ABSORBED (1 wake absorbed before reaching the queue - masked reason/status kept below):
+      2026-09-28T08:48:53Z stale task mrwait via rule: choice absorbable | wake: stale: test:fm-mr-await (paused 505s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 501s ago) | worker: paused: MR !812 awaiting merge by reviewer, see <url>
+$ bin/fm-wake-drain.sh   # again: unacked queue rows persist until acked, digest rows never repeat
+    (end)
+
