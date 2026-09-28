@@ -87,6 +87,7 @@ config/jev-endpoint  optional loopback base URL selecting Jev shadow wake triage
 config/jev-max-load  optional 1-minute load-average ceiling for that local backend (default 8); LOCAL, gitignored, NOT inherited
 config/jev-absorb    optional gate for Jev to absorb (not just watch) a routine working/paused signal or declared-pause recheck before it wakes the supervising session; off unless its first line is "on", and refuses to activate until its go-live gate is met or its second line is "override"; LOCAL, gitignored, NOT inherited; see docs/configuration.md "Gated wake absorption (config/jev-absorb / config/jev-absorb-threshold)"
 config/jev-absorb-threshold  optional per-wake absorption confidence floor (default 0.9, never accepted below it); LOCAL, gitignored, NOT inherited
+config/absorb-unchanged-pause  optional, model-free gate absorbing an unchanged declared-pause recheck (never captain-held); off unless its first line is "on"; safety valve re-surfaces once per FM_PAUSE_REMIND_SECS; LOCAL, gitignored, NOT inherited; see docs/configuration.md "Deterministic unchanged-pause absorption (config/absorb-unchanged-pause)"
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
@@ -143,7 +144,7 @@ state/               runtime records and signals; gitignored
   .watch.lock .wake-queue.lock watcher singleton and queue serialization locks
   .claude-autoarm.lock .claude-autoarm-epoch .claude-autoarm-failure-notified .claude-autoarm-failure-alarmed .turnend-claude-blocks .turnend-claude-blocks.lock   Claude Stop auto-arm single-flight, epoch, failure-episode, attended-alarm, guard-budget, and budget-lock records; never touch
   .cursor-park-owner .cursor-park-owner.lock .turnend-cursor-blocks   Cursor stop-hook owner record, publication and commit lock, and bounded repair-nag budget; never touch
-  .hash-* .count-* .stale-* .stale-since-* .paused-* .wedge-escalations-* .writing-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak   watcher internals; never touch
+  .hash-* .count-* .stale-* .stale-since-* .paused-* .wedge-escalations-* .writing-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak .rule-absorbed-since-*   watcher internals; never touch
   .watch-triage.log  watcher's absorbed-wake debug log (size-capped); never relied on, safe to delete
   .last-watcher-beat watcher liveness beacon, touched every poll (including while absorbing benign wakes); guard scripts read it
   .subsuper-* .supervise-daemon.*   sub-supervisor internals; never touch

@@ -838,6 +838,22 @@ test_absorb_digest_surfaces_once_with_the_next_drain_and_never_repeats() {
   pass "an absorbed wake surfaces exactly once with the next drain and never repeats"
 }
 
+test_absorb_digest_tags_its_source_jev_or_rule() {
+  local home out
+  home=$(jev_case absorb-digest-source)
+  mkdir -p "$home/state/jev"
+  {
+    printf '{"t":1790000000,"kind":"signal","task":"modeled","reason":"signal:x","status":"","choice":"absorbable","confidence":0.95,"source":"jev"}\n'
+    printf '{"t":1790000001,"kind":"stale","task":"ruled","reason":"stale:y","status":"","choice":"absorbable","confidence":null,"source":"rule"}\n'
+    printf '{"t":1790000002,"kind":"signal","task":"legacy","reason":"signal:z","status":"","choice":"absorbable","confidence":0.9}\n'
+  } > "$home/state/jev/absorbed.jsonl"
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$DRAIN" 2>/dev/null) || fail "drain failed with a mixed-source digest"
+  assert_contains "$out" 'task modeled via jev' "a jev-sourced entry was not tagged via jev"
+  assert_contains "$out" 'task ruled via rule' "a rule-sourced entry was not tagged via rule"
+  assert_contains "$out" 'task legacy via jev' "an entry with no source field did not default to via jev"
+  pass "the drain tags each digest entry via jev or via rule, defaulting to jev when the field is absent"
+}
+
 test_off_by_default_and_not_enabled_by_the_environment
 test_foreign_state_dir_never_uses_the_key
 test_shadow_classifies_without_changing_the_presentation
@@ -873,5 +889,6 @@ test_absorb_never_a_secondmate_status_signal
 test_absorb_never_a_non_working_paused_verb
 test_absorb_gate_reports_met_and_not_met
 test_absorb_digest_surfaces_once_with_the_next_drain_and_never_repeats
+test_absorb_digest_tags_its_source_jev_or_rule
 test_absorb_digest_is_held_while_away_mode_owns_the_drain
 test_absorb_digest_surfaces_every_entry_past_a_malformed_line_and_holds_a_partial_one
