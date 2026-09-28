@@ -4,7 +4,8 @@
 # bin/fm-jev.sh owns the contract: what is enabled, what leaves the machine,
 # the limits, the private log, and how ground truth is measured. This file is
 # sourced by the production scripts that feed that log and holds only the
-# cheap enabled test plus the event appends they call inline:
+# cheap enabled test, the shared jev_mask filter, plus the event appends they
+# call inline:
 #   fm_jev_enabled <home> <state>                    - 0 when this home opted into either backend
 #   fm_jev_backend <home> <state>                    - prints "local" or "openrouter"; exit 1 when off
 #   fm_jev_observe <home> <state> <steer|decision> [task]
