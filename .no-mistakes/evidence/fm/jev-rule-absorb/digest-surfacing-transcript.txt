@@ -1,0 +1,11 @@
+$ cat state/jev/absorbed.jsonl
+{"t":1790000000,"kind":"stale","task":"slack-gw","reason":"paused 86400s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds","status":"paused: waiting on MR <url> merge","choice":"absorbable","confidence":null,"source":"rule"}
+{"t":1790000100,"kind":"signal","task":"tool-install","reason":"status changed","status":"working: installing","choice":"absorbable","confidence":0.97,"source":"jev"}
+
+$ fm_jev_absorb_digest_surface state   # next real wake / heartbeat
+ABSORBED (2 wakes absorbed before reaching the queue - masked reason/status kept below):
+  2026-09-21T14:13:20Z stale task slack-gw via rule: choice absorbable | wake: paused 86400s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds | worker: paused: waiting on MR <url> merge
+  2026-09-21T14:15:00Z signal task tool-install via jev: choice absorbable (0.97) | wake: status changed | worker: working: installing
+
+$ fm_jev_absorb_digest_surface state   # second drain: nothing repeats
+(exit 0, no output)
