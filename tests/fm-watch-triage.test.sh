@@ -3220,6 +3220,30 @@ test_rule_surfaces_when_its_digest_entry_cannot_be_built() {
   pass "the rule surfaces a recheck for real when it cannot record the digest entry"
 }
 
+test_rule_surfaces_when_its_digest_entry_cannot_be_written() {
+  local dir state statusf window task key
+  dir=$(make_case rule-unwritable-digest); state="$dir/state"
+  window="test:fm-rule-nowrite"; task=nowrite; statusf="$state/$task.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf 'paused: awaiting a colleague approval\n' > "$statusf"
+  backdate_file 500 "$statusf"
+  printf 'idle, awaiting approval\n' > "$dir/pane.txt"
+  : > "$state/.paused-$key"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  jev_absorb_enable_rule "$dir"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "baseline recheck" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  backdate_file 500 "$state/.paused-surfaced-$key"
+  # A plain file where the digest directory belongs: the entry can be built but never written.
+  rm -rf "$state/jev"; : > "$state/jev"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "unwritable digest surfaces instead" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  [ ! -e "$state/.rule-absorbed-since-$key" ] || fail "the rule kept its since-marker after a real surface"
+  pass "the rule surfaces a recheck for real when it cannot write the digest entry"
+}
+
 test_rule_safety_valve_forces_a_real_surface_then_resets() {
   local dir state statusf window task key
   dir=$(make_case rule-safety-valve); state="$dir/state"
@@ -3323,4 +3347,5 @@ test_rule_refuses_a_changed_situation_or_an_open_decision
 test_rule_never_absorbs_a_dead_agent_pause_recheck
 test_rule_never_absorbs_a_captain_held_recheck
 test_rule_surfaces_when_its_digest_entry_cannot_be_built
+test_rule_surfaces_when_its_digest_entry_cannot_be_written
 test_rule_safety_valve_forces_a_real_surface_then_resets

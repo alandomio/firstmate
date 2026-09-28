@@ -86,10 +86,9 @@ _fm_jev_append() {  # <state> <json-line>
 _fm_jev_absorb_append() {  # <state> <json-line>
   local dir="$1/jev"
   if [ ! -d "$dir" ]; then
-    (umask 077 && mkdir -p "$dir") 2>/dev/null || return 0
+    (umask 077 && mkdir -p "$dir") 2>/dev/null || return 1
   fi
-  (umask 077 && printf '%s\n' "$2" >> "$dir/absorbed.jsonl") 2>/dev/null || true
-  return 0
+  (umask 077 && printf '%s\n' "$2" >> "$dir/absorbed.jsonl") 2>/dev/null
 }
 
 # Ask bin/fm-jev.sh whether an eligible wake, about to be queued and to wake
