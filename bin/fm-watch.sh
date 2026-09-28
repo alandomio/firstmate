@@ -476,11 +476,9 @@ rule_absorb_requested() {
   [ "$line" = on ]
 }
 
-# The deterministic (no-model) twin of jev_stale_absorbed: absorbs a declared-
-# pause recheck the watcher itself already found unchanged, with no open
-# decision, calling no classifier. <key>'s own since-marker is its safety
-# valve: once it has stood in for FM_PAUSE_REMIND_SECS, this refuses so the
-# task still gets one real, human-visible surface, then the marker resets.
+# The deterministic (no-model) twin of jev_stale_absorbed: no classifier, same
+# unchanged/open-decision eligibility. <key>'s since-marker is its own safety
+# valve, bounded by FM_PAUSE_REMIND_SECS, so one real surface still lands.
 rule_absorb_unchanged_pause() {  # <task> <key> <now-situation> <prev-situation>
   local task=$1 key=$2 now_sit=$3 prev_sit=$4 statusf="$STATE/$1.status" last marker
   rule_absorb_requested || return 1
