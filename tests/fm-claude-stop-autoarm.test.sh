@@ -189,6 +189,7 @@ test_inert_in_child_worktree() {
   expect_code 0 "$status" "hook must stay inert in a child task worktree"
   [ ! -e "$dir/state/arm-ran" ] || fail "hook armed inside a child worktree"
   [ ! -e "$dir/state/.claude-autoarm-epoch" ] || fail "hook wrote an epoch inside a child worktree"
+  if ls "$dir"/state/.claude-autoarm-starting.* >/dev/null 2>&1; then fail "hook announced itself inside a child worktree"; fi
   pass "auto-arm: inert in a linked child worktree even when in-flight"
 }
 
@@ -344,6 +345,7 @@ test_actionable_close_rewakes_with_reason() {
   [ "$(epoch_outcome "$dir")" = rewake ] || fail "epoch must record outcome=rewake, got: $(epoch_outcome "$dir")"
   [ ! -e "$dir/state/.claude-autoarm.lock" ] || fail "owner lock must be released after the cycle"
   [ -e "$dir/state/arm-ran" ] || fail "hook never foregrounded the arm wrapper"
+  if ls "$dir"/state/.claude-autoarm-starting.* >/dev/null 2>&1; then fail "hook left its starting marker behind after the cycle"; fi
   pass "auto-arm: actionable close translates to exactly one exit-2 rewake with reason"
 }
 
@@ -532,6 +534,50 @@ test_single_flight_admits_exactly_one_owner() {
   { [ "$rc1" = 2 ] && [ "$rc2" = 0 ]; } || { [ "$rc1" = 0 ] && [ "$rc2" = 2 ]; } \
     || fail "exactly one firing must translate the close (rc 2) and the other must no-op (rc 0), got rc1=$rc1 rc2=$rc2"
   pass "auto-arm: concurrent firings admit one owner and one rewake translation"
+}
+
+# The guard's claim window is short and the claim happens after slow ancestry
+# resolution, so the hook must announce that it is starting BEFORE that work and
+# retract the announcement once its claim role is the proof (docs/turnend-guard.md).
+test_starting_marker_spans_pre_claim_work_and_retracts_at_claim() {
+  local dir real seen_marker=0 seen_role=0 marker_after_role=1
+  dir=$(make_primary_dir "$TMP_ROOT/starting-marker")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" slow-actionable
+  real=$(command -v ps)
+  mkdir -p "$dir/slowps"
+  printf '#!/usr/bin/env bash\nsleep 0.3\nexec %s "$@"\n' "$real" > "$dir/slowps/ps"
+  chmod +x "$dir/slowps/ps"
+  printf '%s\n' '{"session_id":"sess-autoarm","stop_hook_active":false}' \
+    | PATH="$dir/slowps:$PATH" FM_HOME="$dir" "$FAKE_CLAUDE" -c '
+        printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+        "$FM_HOME/bin/fm-claude-stop-autoarm.sh"
+      ' >/dev/null 2>&1 &
+  for _ in $(seq 1 300); do
+    if ls "$dir"/state/.claude-autoarm-starting.* >/dev/null 2>&1; then
+      seen_marker=1
+      [ ! -e "$dir/state/.claude-autoarm.lock/role" ] || fail "starting marker appeared only after the claim role was published"
+      break
+    fi
+    sleep 0.05
+  done
+  [ "$seen_marker" -eq 1 ] || fail "hook never announced it was starting"
+  for _ in $(seq 1 400); do
+    if [ "$(cat "$dir/state/.claude-autoarm.lock/role" 2>/dev/null)" = autoarm ]; then
+      seen_role=1
+      break
+    fi
+    sleep 0.05
+  done
+  [ "$seen_role" -eq 1 ] || fail "hook never published its autoarm claim role"
+  # The marker is removed after the role is published; allow it a moment.
+  for _ in $(seq 1 40); do
+    if ! ls "$dir"/state/.claude-autoarm-starting.* >/dev/null 2>&1; then marker_after_role=0; break; fi
+    sleep 0.05
+  done
+  [ "$marker_after_role" -eq 0 ] || fail "starting marker outlived the claim it announced"
+  wait
+  pass "auto-arm: announces starting before the slow pre-claim work and retracts it at the claim"
 }
 
 # --- abandoned single-flight claim recovery -----------------------------------
@@ -804,6 +850,7 @@ test_benign_cycle_end_with_live_watcher_is_silent
 test_positive_recovery_budget_contention_preserves_episode
 test_arms_for_x_mode_poll_need_without_inflight
 test_single_flight_admits_exactly_one_owner
+test_starting_marker_spans_pre_claim_work_and_retracts_at_claim
 test_abandoned_owner_claim_is_reclaimed_and_rearms
 test_arming_claim_is_never_reclaimed
 test_claim_not_named_by_the_ledger_is_never_reclaimed

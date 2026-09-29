@@ -1686,6 +1686,131 @@ test_hook_claude_mode_waits_for_late_claim() {
   pass "fm-turnend-guard --claude: bounded claim wait avoids a token-consuming forced continuation"
 }
 
+# Claude Code starts both Stop hooks at once, so the auto-arm's slow pre-claim
+# work (harness ancestry resolution is a chain of ps forks that took seconds on a
+# loaded machine) races the guard's short claim window. The guard must recognise
+# an auto-arm that is provably starting and wait for its decision instead of
+# raising a false blind-turn alarm while recovery is already under way.
+install_slow_ps() {
+  local dir=$1 real
+  real=$(command -v ps)
+  mkdir -p "$dir/slowps"
+  # shellcheck disable=SC2016 # the stub expands its own arguments when it runs.
+  printf '#!/usr/bin/env bash\nsleep 0.4\nexec %s "$@"\n' "$real" > "$dir/slowps/ps"
+  chmod +x "$dir/slowps/ps"
+}
+
+write_integrated_slow_arm() {
+  local dir=$1
+  cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+sleep 1
+printf 'check: fixture wake\n'
+exit 0
+SH
+  chmod +x "$dir/bin/fm-watch-arm.sh"
+}
+
+# Same launch shape as run_integrated_autoarm, but its ps calls are slow and it
+# is started in the background so the guard can race it. $2 names the pid the
+# fixture writes into state/.lock: "self" for the owning session, or a file
+# holding some other live harness pid so the auto-arm stands down.
+start_slow_integrated_autoarm() {
+  local dir=$1 lock_from=${2:-self} home
+  home=$(cd "$dir" && pwd)
+  # shellcheck disable=SC2016 # the fake harness expands FM_HOME and LOCK_FROM inside its child shell.
+  printf '{"session_id":"sess-claude-mode","stop_hook_active":false}\n' \
+    | PATH="$home/slowps:$PATH" FM_HOME="$home" LOCK_FROM="$lock_from" "$dir/fake-claude" -c '
+        if [ "$LOCK_FROM" = self ]; then printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+        else cp "$LOCK_FROM" "$FM_HOME/state/.lock"; fi
+        "$FM_HOME/bin/fm-claude-stop-autoarm.sh"
+      ' > "$dir/autoarm.out" 2>&1 &
+}
+
+test_hook_claude_mode_waits_for_slow_starting_autoarm() {
+  local dir out status arm
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-slow-start")
+  : > "$dir/state/task1.meta"
+  install_integrated_autoarm "$dir"
+  install_slow_ps "$dir"
+  write_integrated_slow_arm "$dir"
+  start_slow_integrated_autoarm "$dir"
+  arm=$!
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=300 run_hook_claude "$dir" false); status=$?
+  wait "$arm" 2>/dev/null || true
+  expect_code 0 "$status" "--claude must not raise a blind-turn alarm while a slow auto-arm is still starting"
+  assert_not_contains "$out" "TURN WOULD END BLIND" "false blind-turn alarm while the auto-arm was starting"
+  assert_contains "$(cat "$dir/autoarm.out")" "fixture wake" "the racing auto-arm never delivered its rewake, so the race was not exercised"
+  if ls "$dir"/state/.claude-autoarm-starting.* >/dev/null 2>&1; then fail "auto-arm left its starting marker behind"; fi
+  pass "fm-turnend-guard --claude: a slow-starting auto-arm is recognised, no false blind-turn alarm (race regression)"
+}
+
+test_hook_claude_mode_blocks_when_starting_autoarm_turns_inert() {
+  local dir out status arm other
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-inert-start")
+  : > "$dir/state/task1.meta"
+  install_integrated_autoarm "$dir"
+  install_slow_ps "$dir"
+  write_integrated_slow_arm "$dir"
+  # The auto-arm starts, then finds another live session holds the home lock and
+  # stands down: no recovery is under way, so the guard must still block once it
+  # is gone.
+  ln -s /bin/bash "$dir/other-claude"
+  "$dir/other-claude" -c 'sleep 60' &
+  other=$!
+  printf '%s\n' "$other" > "$dir/other.pid"
+  start_slow_integrated_autoarm "$dir" "$dir/other.pid"
+  arm=$!
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=300 run_hook_claude "$dir" false); status=$?
+  wait "$arm" 2>/dev/null || true
+  kill "$other" 2>/dev/null || true
+  wait "$other" 2>/dev/null || true
+  expect_code 2 "$status" "--claude must still block when the starting auto-arm stood down without claiming"
+  assert_contains "$out" "TURN WOULD END BLIND" "inert auto-arm start must end in the blind-turn banner"
+  if ls "$dir"/state/.claude-autoarm-starting.* >/dev/null 2>&1; then fail "inert auto-arm left its starting marker behind"; fi
+  pass "fm-turnend-guard --claude: an auto-arm that starts and stands down does not mask a blind turn"
+}
+
+test_hook_claude_mode_ignores_dead_or_expired_starting_markers() {
+  local dir out status pid
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-stale-start")
+  : > "$dir/state/task1.meta"
+  # A marker whose pid is gone must never hold the guard.
+  : > "$dir/state/.claude-autoarm-starting.999999"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" false); status=$?
+  expect_code 2 "$status" "--claude must ignore a starting marker whose pid is dead"
+  rm -f "$dir/state/.claude-autoarm-starting.999999" "$dir/state/.turnend-claude-blocks"
+  # A live-pid marker older than the start window is expired, not proof.
+  sleep 60 &
+  pid=$!
+  : > "$dir/state/.claude-autoarm-starting.$pid"
+  touch -t 202001010000 "$dir/state/.claude-autoarm-starting.$pid"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" false); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "--claude must ignore a starting marker older than the start window"
+  assert_contains "$out" "TURN WOULD END BLIND" "expired starting marker must not mask a blind turn"
+  pass "fm-turnend-guard --claude: dead or expired starting markers are not recovery proof"
+}
+
+test_hook_claude_mode_start_wait_is_bounded() {
+  local dir out status pid started elapsed
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-start-bound")
+  : > "$dir/state/task1.meta"
+  # A live, fresh marker whose owner never claims: the guard waits, then blocks.
+  sleep 60 &
+  pid=$!
+  : > "$dir/state/.claude-autoarm-starting.$pid"
+  started=$(date +%s)
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 FM_CLAUDE_AUTOARM_START_WAIT=2 run_hook_claude "$dir" false); status=$?
+  elapsed=$(( $(date +%s) - started ))
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "--claude must block once the starting window expires without a claim"
+  [ "$elapsed" -le 8 ] || fail "starting-window wait was not bounded: ${elapsed}s"
+  pass "fm-turnend-guard --claude: the starting-auto-arm wait is bounded and then blocks"
+}
+
 test_hook_claude_mode_secondmate_reblocks_like_primary() {
   local dir pid out status
   dir=$(make_secondmate_dir "$TMP_ROOT/hook-claude-sm-reblock")
@@ -1770,4 +1895,8 @@ test_hook_claude_mode_fail_open_requires_notice_and_failure_epoch
 test_hook_claude_mode_away_mode_never_uses_stop_autoarm_fail_open
 test_hook_claude_mode_allow_resets_budget
 test_hook_claude_mode_waits_for_late_claim
+test_hook_claude_mode_waits_for_slow_starting_autoarm
+test_hook_claude_mode_blocks_when_starting_autoarm_turns_inert
+test_hook_claude_mode_ignores_dead_or_expired_starting_markers
+test_hook_claude_mode_start_wait_is_bounded
 test_hook_claude_mode_secondmate_reblocks_like_primary
