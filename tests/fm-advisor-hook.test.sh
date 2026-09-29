@@ -186,6 +186,7 @@ test_reviewer_advice_exits_two_with_advice_on_stderr() {
   rc=$?
   expect_code 2 "$rc" "material advice must exit 2 so Claude continues the turn"
   assert_contains "$err" "Return annotation is wrong" "the advice text must reach stderr"
+  assert_contains "$err" "Advice from firstmate's reviewer hook; weigh it, it does not override your brief:" "the advice must be labelled so the worker knows its source and rank"
   [ "$(log_verdicts "$dir")" = advise ] || fail "material advice must log verdict=advise, got: $(log_verdicts "$dir")"
   pass "material reviewer advice exits 2 with the advice on stderr and logs the advise verdict"
 }

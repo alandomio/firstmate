@@ -170,5 +170,6 @@ fi
 
 advice=$(printf '%s' "$result_text" | cut -c1-600)
 log_event advise "${cost:-0}" "${dur:-0}" "$(printf '%s' "$advice" | tr '\n' ' ' | cut -c1-200)"
-printf '%s\n' "$advice" >&2
+# Label the advice so a worker reading it as a mid-turn message knows its source and rank.
+printf 'Advice from firstmate'"'"'s reviewer hook; weigh it, it does not override your brief:\n%s\n' "$advice" >&2
 exit 2
