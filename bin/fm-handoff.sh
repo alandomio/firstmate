@@ -96,10 +96,15 @@
 #
 # Environment:
 #   FM_HANDOFF_AWS              aws CLI command (default aws; tests stub it)
-#   FM_HANDOFF_TIMEOUT          seconds per small S3 call (default 15)
+#   FM_HANDOFF_TIMEOUT          seconds per small S3 call (default 15; `check` gives the
+#                               lease read up to half of FM_CHECK_TIMEOUT)
 #   FM_HANDOFF_SYNC_TIMEOUT     seconds per data/ sync (default 120; `check` caps
 #                               it to fit FM_CHECK_TIMEOUT)
 #   FM_HANDOFF_BACKUP_INTERVAL  seconds between periodic backups (default 900)
+#   FM_HANDOFF_ALARM_FAILURES   consecutive failed backup checks before `check`
+#                               reports a failure (default 3)
+#   FM_HANDOFF_ALARM_AGE        seconds since the last successful upload after
+#                               which `check` reports a failure at once (default 3600)
 #   FM_HANDOFF_SSM_TIMEOUT      seconds to wait for one SSM command (default 600)
 #   FM_HANDOFF_BACKUPS_KEEP     local pre-download copies kept (default 5)
 set -u
@@ -118,6 +123,7 @@ REFUSED="$STATE/.handoff-refused"
 MANIFEST="$STATE/.handoff-manifest"
 LAST_UPLOAD_EPOCH="$STATE/.handoff-last-upload"
 REPORTED="$STATE/.handoff-backup-report"
+FAILURES="$STATE/.handoff-backup-failures"
 OP_LOCK="$STATE/.handoff.lock"
 BACKUPS="$STATE/handoff-backups"
 CHECK_ID=handoff-backup
@@ -131,6 +137,8 @@ SYNC_TIMEOUT=${FM_HANDOFF_SYNC_TIMEOUT:-120}
 BACKUP_INTERVAL=${FM_HANDOFF_BACKUP_INTERVAL:-900}
 SSM_TIMEOUT=${FM_HANDOFF_SSM_TIMEOUT:-600}
 BACKUPS_KEEP=${FM_HANDOFF_BACKUPS_KEEP:-5}
+ALARM_FAILURES=${FM_HANDOFF_ALARM_FAILURES:-3}
+ALARM_AGE=${FM_HANDOFF_ALARM_AGE:-3600}
 
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
@@ -148,6 +156,8 @@ positive_int() {  # <name> <value>
 positive_int FM_HANDOFF_TIMEOUT "$SMALL_TIMEOUT"
 positive_int FM_HANDOFF_SYNC_TIMEOUT "$SYNC_TIMEOUT"
 positive_int FM_HANDOFF_BACKUP_INTERVAL "$BACKUP_INTERVAL"
+positive_int FM_HANDOFF_ALARM_FAILURES "$ALARM_FAILURES"
+positive_int FM_HANDOFF_ALARM_AGE "$ALARM_AGE"
 positive_int FM_HANDOFF_SSM_TIMEOUT "$SSM_TIMEOUT"
 positive_int FM_HANDOFF_BACKUPS_KEEP "$BACKUPS_KEEP"
 
@@ -448,7 +458,7 @@ upload() {
   s3_write last-upload "$(printf 'fm-handoff-upload-v1\nid=%s\nmachine=%s\nat=%s\nkind=%s' "$id" "$CFG_MACHINE" "$at" "$kind")" || return 1
   record_manifest "$id" || return 1
   now_epoch > "$LAST_UPLOAD_EPOCH"
-  rm -f "$REPORTED"
+  rm -f "$REPORTED" "$FAILURES"
   UPLOADED_ID=$id
 }
 
@@ -842,8 +852,25 @@ report_once() {  # <message>: print only when it differs from the last report.
   fi
 }
 
+# A backup check that failed (bucket slow or unreachable, upload failed) counts
+# toward one alarm; it reports only after ALARM_FAILURES consecutive failures or
+# when the last successful upload is older than ALARM_AGE, so one transient
+# timeout stays silent.
+backup_failed() {  # <message> <last-upload-epoch>
+  local n age
+  n=$(cat "$FAILURES" 2>/dev/null || printf 0)
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  n=$((n + 1))
+  printf '%s\n' "$n" > "$FAILURES"
+  age=0
+  [ "$2" -le 0 ] || age=$(( $(now_epoch) - $2 ))
+  if [ "$n" -ge "$ALARM_FAILURES" ] || [ "$age" -ge "$ALARM_AGE" ]; then
+    report_once "$1"
+  fi
+}
+
 action_check() {
-  local changes elapsed last t budget start
+  local changes elapsed last t budget start lease_timeout
   start=$(now_epoch)
   enabled || return 0
   (load_config) >/dev/null 2>&1 || { report_once "handoff backup: config/handoff-s3 is invalid - run bin/fm-handoff.sh status"; return 0; }
@@ -854,8 +881,13 @@ action_check() {
   # last-upload write together.
   budget=${FM_CHECK_TIMEOUT:-30}
   case "$budget" in ''|*[!0-9]*) budget=30 ;; esac
-  [ "$SMALL_TIMEOUT" -le $((budget / 6)) ] || SMALL_TIMEOUT=$((budget / 6))
-  [ "$SMALL_TIMEOUT" -ge 1 ] || SMALL_TIMEOUT=1
+  # The lease read gets the largest share (up to half the budget, so a slow but
+  # working link never false-fails); the last-upload write gets a fifth and the
+  # sync takes the remainder.
+  lease_timeout=$SMALL_TIMEOUT
+  [ "$lease_timeout" -le $((budget / 2)) ] || lease_timeout=$((budget / 2))
+  [ "$lease_timeout" -ge 1 ] || lease_timeout=1
+  SMALL_TIMEOUT=$lease_timeout
   changes=$(local_changes)
   [ -n "$changes" ] || return 0
   last=$(cat "$LAST_UPLOAD_EPOCH" 2>/dev/null || printf 0)
@@ -865,9 +897,11 @@ action_check() {
     return 0
   fi
   read_lease
+  SMALL_TIMEOUT=$((budget / 5))
+  [ "$SMALL_TIMEOUT" -ge 1 ] || SMALL_TIMEOUT=1
   case "$LEASE_STATE" in
     ours) ;;
-    unknown) report_once "handoff backup: the bucket is unreachable ($LEASE_ERR); data/ is not backed up"; return 0 ;;
+    unknown) backup_failed "handoff backup: the bucket is unreachable ($LEASE_ERR); data/ is not backed up" "$last"; return 0 ;;
     *)
       write_held lost "$(held_field nonce)" || true
       write_refused "HANDOFF: this machine ($CFG_MACHINE) lost the lease to ${LEASE_MACHINE:-nobody} - operate read-only. See bin/fm-handoff.sh status." || true
@@ -878,7 +912,7 @@ action_check() {
   t=$(( budget - ($(now_epoch) - start) - SMALL_TIMEOUT - 3 ))
   [ "$t" -le "$SYNC_TIMEOUT" ] || t=$SYNC_TIMEOUT
   [ "$t" -ge 1 ] || t=1
-  upload backup "$t" || report_once "handoff backup: uploading data/ failed; it will be retried"
+  upload backup "$t" || backup_failed "handoff backup: uploading data/ failed; it will be retried" "$last"
   return 0
 }
 

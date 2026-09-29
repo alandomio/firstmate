@@ -488,6 +488,8 @@ The periodic backup is a registered watcher check, `state/handoff-backup.check.s
 It uploads, without releasing the lease, when `data/` changed since the last sync and either `data/backlog.md` changed or `FM_HANDOFF_BACKUP_INTERVAL` (default 900 seconds) has passed, so a backlog update is uploaded within one watcher check interval and other changes about every 15 minutes.
 A registered check was chosen over an operating-system timer because it runs inside the supervision loop that already owns this home's wakes on every supervised platform, needs no per-platform scheduler, and turns a lost lease or a failing upload into an ordinary wake.
 The tradeoff is that it runs only while a watcher runs, because arming it does not make supervision required; with no work under way nothing uploads until the next supervised period or `consegna`, and `bin/fm-handoff.sh backup` uploads on demand.
+The check fits the watcher's `FM_CHECK_TIMEOUT` (default 30 seconds) by giving the lease read up to half of it (never more than `FM_HANDOFF_TIMEOUT`, default 15 seconds), so a slow but working link to a distant region does not false-fail, the last-upload write a fifth, and the sync the remainder.
+One failed check stays silent: an unreachable bucket or failed upload is reported only after `FM_HANDOFF_ALARM_FAILURES` (default 3) consecutive failed checks, or at once when the last successful upload is older than `FM_HANDOFF_ALARM_AGE` (default 3600 seconds); a successful upload clears the count.
 Before each upload it checks the lease, and a machine that finds the lease gone stops uploading, refuses future lock claims, and wakes firstmate once.
 
 The EC2 side calls two commands.
