@@ -1756,7 +1756,9 @@ test_hook_claude_mode_blocks_when_starting_autoarm_turns_inert() {
   # stands down: no recovery is under way, so the guard must still block once it
   # is gone.
   ln -s /bin/bash "$dir/other-claude"
-  "$dir/other-claude" -c 'sleep 60' &
+  # The trailing ':' keeps bash from exec'ing sleep, so the lock pid stays a
+  # harness-named process rather than one that reads as a stale owner.
+  "$dir/other-claude" -c 'sleep 60; :' &
   other=$!
   printf '%s\n' "$other" > "$dir/other.pid"
   start_slow_integrated_autoarm "$dir" "$dir/other.pid"
