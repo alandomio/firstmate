@@ -1,0 +1,10 @@
+ok - the loop guard skips the continuation its own exit-2 caused, with no reviewer call
+ok - a turn that only appended a status line is skipped with no reviewer call spent
+ok - the per-worktree call cap skips further reviews once exhausted, with no reviewer call spent
+ok - an empty Stop-hook payload exits silently before any logging or reviewer call
+ok - a missing or empty transcript path exits silently with no log entry
+ok - a reviewer verdict of OK exits 0 and logs the ok verdict
+ok - material reviewer advice exits 2 with the advice on stderr and logs the advise verdict
+ok - a failed reviewer call fails open rather than blocking the crewmate's turn
+ok - a missing jq dependency fails open before any reviewer call, exactly like every other failure mode
+# all fm-advisor-hook tests passed

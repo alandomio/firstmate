@@ -1,0 +1,19 @@
+ok - best tier takes each tool's top catalog model by its own ranking and skips non-Google models on agy
+ok - pro tier adds the economy seat from the catalog description and skips an unavailable optional tool
+ok - a required seat whose catalog cannot be read stops creation
+ok - quota-axi exhaustion excludes a seat and reports it
+ok - a quota exclusion that leaves one provider needs the captain's word, an explicit one-voice list does not
+ok - a single-provider council needs the captain's word, and explicit participants keep their personas
+ok - default budget, budget bounds, and the estimate refusal
+ok - the send gate refuses a clear name or a credential, and launch refuses before any spawn
+ok - launch builds gated scout briefs and spawns every worker
+ok - the round barrier waits for [STATUS] lines and records a late voice as late
+ok - delta packets carry only the others' new turns, the summary, and the dossier, pseudonymised per recipient
+ok - a council whose spend passes its budget cannot open another round
+ok - the synthesis gate, internal tagged knowledge payloads, and their pseudonymisation
+ok - cleanup waits for the completion gate, then cleans up every worker
+ok - a follow-up council inherits the earlier synthesis and composition
+ok - a sensitive council keeps only its pseudonymised form after the purge
+ok - a voice that cannot be reached is recorded as lost, never spoken for
+ok - a failed spawn is recorded, the council runs on, and a cancel still cleans up what started
+all fm-pal-council tests passed
