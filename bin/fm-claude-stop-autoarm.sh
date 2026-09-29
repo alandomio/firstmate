@@ -100,6 +100,26 @@ fm_hook_payload_is_foreign_host "$PAYLOAD" && exit 0
 # --- scope: genuine primary checkout only -----------------------------------
 fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
 
+# --- starting marker: publish "an auto-arm is deciding" before the slow part ---
+# Claude starts this hook and the synchronous guard together. Everything below
+# (harness ancestry resolution is a chain of ps forks) can take longer than the
+# guard's short claim window, and the claim only happens at the end of it. Until
+# the claim publishes the autoarm role, the guard would read a home whose
+# recovery is already under way as one with none and raise a false blind-turn
+# alarm. This per-pid marker is the guard's bounded proof that a live auto-arm
+# is between "started" and "claimed or stood down". It is removed the moment the
+# claim's role is published (the lock is the proof from then on) and on every
+# earlier exit, so a marker never outlives the decision it announces.
+STARTING="$STATE/.claude-autoarm-starting.$$"
+for stale in "$STATE"/.claude-autoarm-starting.*; do
+  [ -e "$stale" ] || continue
+  fm_pid_alive "${stale##*.}" || rm -f "$stale" 2>/dev/null || true
+done
+: > "$STARTING" 2>/dev/null || STARTING=
+if [ -n "$STARTING" ]; then
+  trap 'rm -f "$STARTING" 2>/dev/null || true' EXIT
+fi
+
 # --- identity: only the lock-owning session's hooks may arm ------------------
 # A prior session may have died after leaving its numeric harness pid in .lock.
 # Use the shared liveness predicate to recognize only that stale-owner case.
@@ -160,7 +180,9 @@ if ! fm_lock_set_role "$OWNER_LOCK" autoarm; then
   fm_lock_release "$OWNER_LOCK"
   exit 0
 fi
-trap 'fm_lock_release "$OWNER_LOCK"' EXIT
+trap 'fm_lock_release "$OWNER_LOCK"; [ -z "$STARTING" ] || rm -f "$STARTING" 2>/dev/null || true' EXIT
+# The published autoarm role is now the ownership proof the guard reads.
+[ -z "$STARTING" ] || rm -f "$STARTING" 2>/dev/null || true
 
 write_epoch() {  # <outcome>
   local outcome=$1 seq tmp

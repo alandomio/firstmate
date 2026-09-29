@@ -53,7 +53,10 @@
 #   2. otherwise wait briefly (FM_CLAUDE_AUTOARM_SYNC_WAIT_MS, default 800ms)
 #      for the auto-arm to claim this home (state/.claude-autoarm.lock owner
 #      alive, with a supervision decision still open rather than a claim its own
-#      ledger entry or recorded pid-identity already settles as finished) or to
+#      ledger entry or recorded pid-identity already settles as finished; while a
+#      live auto-arm's fresh starting marker shows its slower pre-claim work is
+#      still deciding, keep waiting up to FM_CLAUDE_AUTOARM_START_WAIT seconds,
+#      default 15) or to
 #      record a fresh actionable exit-2 outcome
 #      (state/.claude-autoarm-epoch) for this event epoch - either proof allows
 #      without consuming a continuation, so one event epoch yields exactly one recovery turn;
@@ -78,9 +81,11 @@ CURSOR_MODE=0
 SYNC_WAIT_MS=${FM_CLAUDE_AUTOARM_SYNC_WAIT_MS:-800}
 EPOCH_FRESH=${FM_CLAUDE_AUTOARM_EPOCH_FRESH:-15}
 BLOCK_BUDGET=${FM_CLAUDE_TURNEND_BLOCK_BUDGET:-3}
+START_WAIT=${FM_CLAUDE_AUTOARM_START_WAIT:-15}
 case "$SYNC_WAIT_MS" in ''|*[!0-9]*) SYNC_WAIT_MS=800 ;; esac
 case "$EPOCH_FRESH" in ''|*[!0-9]*|0) EPOCH_FRESH=15 ;; esac
 case "$BLOCK_BUDGET" in ''|*[!0-9]*|0) BLOCK_BUDGET=3 ;; esac
+case "$START_WAIT" in ''|*[!0-9]*|0) START_WAIT=15 ;; esac
 
 for arg in "$@"; do
   case "$arg" in
@@ -382,14 +387,35 @@ failure_episode_verified() {
   esac
 }
 
+# A live auto-arm that announced itself (state/.claude-autoarm-starting.<pid>) but
+# has not yet claimed the home or stood down is still deciding: its pre-claim work
+# routinely outlasts the short claim window, so it earns a longer wait bounded by
+# the marker's own age. A dead pid or an expired marker is not proof of anything.
+autoarm_starting() {
+  local marker age
+  for marker in "$STATE"/.claude-autoarm-starting.*; do
+    [ -e "$marker" ] || continue
+    fm_pid_alive "${marker##*.}" || continue
+    age=$(fm_path_age "$marker")
+    [ "$age" -lt "$START_WAIT" ] && return 0
+  done
+  return 1
+}
+
+# Sample the marker BEFORE the ownership check: the auto-arm publishes its role
+# and only then removes the marker, so a marker seen here means the role is
+# visible to the check that follows, and no marker means the decision is settled.
 i=0
-while [ "$i" -lt $((SYNC_WAIT_MS / 100)) ]; do
+while :; do
+  starting=1
+  autoarm_starting || starting=0
   if autoarm_owns_recovery; then
     if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
       fm_failure_episode_reset "$STATE" || exit 2
     fi
     exit 0
   fi
+  [ "$i" -ge $((SYNC_WAIT_MS / 100)) ] && [ "$starting" -eq 0 ] && break
   sleep 0.1
   i=$((i + 1))
 done
