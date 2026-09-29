@@ -1369,6 +1369,61 @@ stale_is_terminal() {  # <window> <state>
   [ -n "$last" ] && status_is_captain_relevant "$last"
 }
 
+# The ONE deterministic veto every absorber consults before it may swallow a wake:
+# the Jev classifier's absorb-try, the unchanged-pause rule, and the
+# already-presented-stale rule. It runs ahead of any model or rule-specific
+# eligibility, so a classifier answer can never override it. Prints the veto cause
+# (kind, reason, status, open-decision, or unread) and returns 0 when the wake must
+# NOT be absorbed; prints nothing and returns 1 when nothing here forbids it, which
+# is not permission - each absorber still owns its own rules.
+# Vetoed, whatever the caller believes:
+#   - kind: a heartbeat or check wake (its payload is the drain's OPEN DECISIONS and
+#     UNREAD STATUS sections, never the reason text);
+#   - reason: one that names a heartbeat, a check, a merge, or an inactive terminal
+#     outcome - a substring match, so over-vetoing is the only failure direction;
+#   - status: the task's latest status line leads with done, needs-decision,
+#     blocked, failed, or resolved, an outcome the captain may not have seen yet;
+#   - open-decision: the task has any decision still open;
+#   - unread: the task has an unread informational line past the presentation cursor,
+#     or the cursor cannot be read (unknown is vetoed, never assumed presented).
+# <mode> "presented" is the already-presented-stale rule's proof mode: it alone may
+# absorb a terminal-status or open-decision task, because it has itself verified that
+# exact status was already surfaced and nothing changed since, so the status and
+# open-decision checks are skipped and every other check still applies.
+absorb_vetoed() {  # <state> <task> <kind> <reason> [presented]
+  local state=$1 task=$2 kind=$3 reason=$4 mode=${5:-} statusf last verb lines line
+  case "$kind" in
+    heartbeat|check) printf 'kind'; return 0 ;;
+  esac
+  case $(printf '%s' "$reason" | tr '[:upper:]' '[:lower:]') in
+    heartbeat*|check:*|*"inactive terminal outcome"*|*merged*) printf 'reason'; return 0 ;;
+  esac
+  statusf="$state/$task.status"
+  if [ -f "$statusf" ]; then
+    if [ "$mode" != presented ]; then
+      last=$(last_status_line "$statusf")
+      verb=$(status_line_verb "$last")
+      case "$verb" in
+        done|needs-decision|blocked|failed|"${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}")
+          printf 'status'; return 0 ;;
+      esac
+      if [ -n "$(status_open_decisions "$statusf" 2>/dev/null)" ]; then
+        printf 'open-decision'; return 0
+      fi
+    fi
+    if ! lines=$(status_new_lines_since_cursor "$statusf" 2>/dev/null); then
+      printf 'unread'; return 0
+    fi
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      if status_line_is_unread_surface "$line"; then printf 'unread'; return 0; fi
+    done <<EOF
+$lines
+EOF
+  fi
+  return 1
+}
+
 # Print "<file>\t<task>\t<last-line>" for every state/*.status whose last line is
 # captain-relevant. This is the cheap fleet-scan both supervisors run as a
 # catch-all backstop for a captain-relevant status the per-wake path might miss.

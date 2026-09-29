@@ -19,9 +19,12 @@
 # (and waking the supervising session for) a wake at exactly two allowlisted
 # call sites - a routine working/paused "signal" wake whose crew is not
 # provably working, and a declared-pause "stale" recheck - never a
-# needs-decision, blocked, done, failed, merge/check result, heartbeat,
+# needs-decision, blocked, done, failed, resolved, merge/check result, heartbeat,
 # captain inbox note, Relay or process-event wake, and never a task with any
-# open decision. It requires ALL of:
+# open decision or unread note. The first thing absorb-try asks, before any
+# other rule and before any model call, is bin/fm-classify-lib.sh's
+# absorb_vetoed - the single owner of that deterministic veto, shared with the
+# other absorbers. It requires ALL of:
 #   - `config/jev-absorb`'s first non-blank line is exactly "on";
 #   - the LOCAL backend specifically (never OpenRouter - absorption changes
 #     real behavior, so it never runs on a request that could leave the
@@ -668,6 +671,10 @@ cmd_absorb_try() {
 
   local statusf="$STATE/$task.status" last verb
   [ -f "$statusf" ] || return 1
+
+  # The deterministic veto (bin/fm-classify-lib.sh's absorb_vetoed, its one
+  # owner) is asked first, ahead of every rule below and of any model call.
+  absorb_vetoed "$STATE" "$task" "$kind" "$reason" >/dev/null && return 1
 
   # Never a secondmate's routed-reply channel: every append there is
   # parent-directed content firstmate must read (mirrors

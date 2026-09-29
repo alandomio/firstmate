@@ -3273,6 +3273,270 @@ test_rule_safety_valve_forces_a_real_surface_then_resets() {
   pass "the rule's own safety valve forces one real surface after continuous absorption, then resets its marker"
 }
 
+# --- the deterministic veto (bin/fm-classify-lib.sh's absorb_vetoed) ---------
+# The one veto every absorber consults before any model or rule of its own.
+
+test_absorb_vetoed_classifier() {
+  local dir state cause line
+  dir=$(make_case absorb-veto-unit); state="$dir/state"
+  # A working task with nothing unread and a routine reason is not vetoed.
+  printf 'working: compiling step 2\n' > "$state/t.status"
+  absorb_vetoed "$state" t signal "signal: $state/t.status" >/dev/null \
+    && fail "a routine working signal was vetoed"
+  absorb_vetoed "$state" t stale "stale: test:fm-t (paused 90s)" >/dev/null \
+    && fail "a routine stale recheck was vetoed"
+  # Every terminal-outcome prefix is vetoed, however the caller reached it.
+  for line in 'done: PR https://example.test/pr/1 checks green' 'needs-decision: pick a base' \
+    'blocked: no credentials' 'failed: build broke' 'resolved: the base is main' \
+    'done [key=k]: keyed line'; do
+    printf '%s\n' "$line" > "$state/t.status"
+    cause=$(absorb_vetoed "$state" t signal "signal: x") \
+      || fail "a status starting '$line' was not vetoed"
+    [ "$cause" = status ] || fail "status veto reported '$cause' for '$line'"
+  done
+  # A verb merely mentioned later in a working line is not a prefix.
+  printf 'working: I will report done: soon\n' > "$state/t.status"
+  absorb_vetoed "$state" t signal "signal: x" >/dev/null \
+    && fail "a working line mentioning done: was vetoed as a done line"
+  # An open decision hidden under a later routine line still vetoes.
+  { printf 'needs-decision: pick a base\n'; printf 'working: idling\n'; } > "$state/t.status"
+  cause=$(absorb_vetoed "$state" t signal "signal: x") || fail "an open decision was not vetoed"
+  [ "$cause" = open-decision ] || fail "open-decision veto reported '$cause'"
+  # Reason and kind markers.
+  printf 'working: ok\n' > "$state/t.status"
+  for line in 'heartbeat' 'check: startup-network finished' 'stale: x inactive terminal outcome awaiting captain presentation' \
+    'check: /a/b merged' 'signal: MERGED upstream'; do
+    cause=$(absorb_vetoed "$state" t stale "$line") || fail "reason '$line' was not vetoed"
+    [ "$cause" = reason ] || fail "reason veto reported '$cause' for '$line'"
+  done
+  cause=$(absorb_vetoed "$state" t heartbeat "signal: x") || fail "a heartbeat kind was not vetoed"
+  [ "$cause" = kind ] || fail "kind veto reported '$cause'"
+  cause=$(absorb_vetoed "$state" t check "signal: x") || fail "a check kind was not vetoed"
+  # An unread informational note vetoes; a routine unread line does not.
+  { printf 'note: the answer you asked for\n'; printf 'working: on it\n'; } > "$state/t.status"
+  cause=$(absorb_vetoed "$state" t signal "signal: x") || fail "an unread note was not vetoed"
+  [ "$cause" = unread ] || fail "unread veto reported '$cause'"
+  # An unreadable presentation cursor is unknown, so it vetoes too.
+  printf 'working: on it\n' > "$state/t.status"
+  printf 'garbage without tabs\n' > "$state/.status-presentation-cursor"
+  cause=$(absorb_vetoed "$state" t signal "signal: x") || fail "a corrupt presentation cursor did not veto"
+  [ "$cause" = unread ] || fail "corrupt-cursor veto reported '$cause'"
+  rm -f "$state/.status-presentation-cursor"
+  # The already-presented proof mode skips only the status and open-decision checks.
+  printf 'done: PR https://example.test/pr/1\n' > "$state/t.status"
+  absorb_vetoed "$state" t stale "stale: test:fm-t" presented >/dev/null \
+    && fail "presented mode vetoed a plain terminal status"
+  printf 'note: unread answer\ndone: PR https://example.test/pr/1\n' > "$state/t.status"
+  absorb_vetoed "$state" t stale "stale: test:fm-t" presented >/dev/null \
+    || fail "presented mode did not still veto an unread note"
+  absorb_vetoed "$state" t stale "check: something merged" presented >/dev/null \
+    || fail "presented mode did not still veto a merge reason"
+  pass "absorb_vetoed vetoes terminal-status prefixes, open decisions, unread notes, check/heartbeat/merge reasons, and only presented mode relaxes status"
+}
+
+# The unchanged-pause rule sits behind the same veto: the identical unchanged recheck
+# test_rule_absorbs_unchanged_pause_recheck absorbs is surfaced instead when the task's
+# log holds an unread note, with the situation itself unchanged between the two rechecks.
+test_rule_unchanged_pause_is_behind_the_veto() {
+  local dir state statusf window task key
+  dir=$(make_case rule-veto); state="$dir/state"
+  window="test:fm-rule-veto"; task=vetoed; statusf="$state/$task.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf 'note: an answer nobody has read\npaused: awaiting a colleague approval\n' > "$statusf"
+  backdate_file 500 "$statusf"
+  printf 'idle, awaiting approval\n' > "$dir/pane.txt"
+  : > "$state/.paused-$key"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  jev_absorb_enable_rule "$dir"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "baseline recheck" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  backdate_file 500 "$state/.paused-surfaced-$key"
+  # The baseline round's drain presented the note; rewind the presentation cursor so it
+  # is unread again while the log itself, and so the recheck's situation, stays unchanged.
+  rm -f "$state/.status-presentation-cursor" "$state/.$task.open-decisions-cursor"
+  paused_recheck_round "$dir" "$window" "$task" claude surface "an unread note keeps an unchanged recheck surfacing" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  assert_absent "$state/jev/absorbed.jsonl" "a recheck behind an unread note was recorded as rule-absorbed"
+  pass "the unchanged-pause rule is behind the shared veto"
+}
+
+# --- the already-presented stale rule (config/absorb-presented-stale) --------
+# bin/fm-watch.sh's rule_absorb_presented_stale. A worker parked on a terminal status
+# that firstmate already surfaced re-surfaces as a stale wake every time its pane
+# settles at a new hash; with nothing appended to its status log since, the opt-in
+# rule absorbs that, bounded by FM_PAUSE_REMIND_SECS.
+
+presented_enable() {  # <dir>
+  mkdir -p "$1/config"
+  printf 'on\n' > "$1/config/absorb-presented-stale"
+}
+
+# A parked worker: <status-text> as its whole log, an idle pane, a stable stale hash, and
+# the surfaced record a real surface leaves behind (the line and the log's signature).
+presented_fixture() {  # <dir> <window> <task> <status-text>
+  local dir=$1 window=$2 task=$3 text=$4 state key statusf
+  state="$dir/state"; statusf="$state/$task.status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf '%s\n' "$text" > "$statusf"
+  backdate_file 500 "$statusf"
+  printf 'idle, awaiting the captain\n' > "$dir/pane.txt"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  # A fixture re-run starts from a pane not yet classified at this hash.
+  rm -f "$state/.stale-$key" "$state/.stale-since-$key" "$state/.presented-absorbed-since-$key"
+  printf '%s' "$(seen_sig "$statusf")" > "$state/.seen-${task}_status"
+  printf '%s' "$(tail -n1 "$statusf")" > "$state/.hb-surfaced-$task"
+  printf '%s' "$(seen_sig "$statusf")" > "$state/.hb-surfaced-$task.sig"
+}
+
+# One watcher round on that fixture. <expect> is "surface" or "absorb".
+presented_round() {  # <dir> <window> <expect> <label> [extra env...]
+  local dir=$1 window=$2 expect=$3 label=$4 state out pid
+  shift 4
+  state="$dir/state"; out="$dir/watch.out"
+  : > "$out"
+  env PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=claude \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$@" "$WATCH" > "$out" &
+  pid=$!
+  if [ "$expect" = surface ]; then
+    wait_for_exit "$pid" 100 || fail "$label: the stale re-surface did not surface"
+    grep -Fx "stale: $window" "$out" >/dev/null || fail "$label: surfaced without the stale wake: $(cat "$out")"
+  else
+    if ! wait_poll_cycle "$state" "$pid"; then
+      reap "$pid"; fail "$label: an already-presented stale surfaced again: $(cat "$out")"
+    fi
+    reap "$pid"
+    [ ! -s "$out" ] || fail "$label: printed a wake reason while absorbed: $(cat "$out")"
+  fi
+  ack_stopped_cycle "$state" || fail "$label: could not acknowledge the round"
+}
+
+test_presented_stale_absorbed_when_unchanged() {
+  local dir state window key
+  dir=$(make_case presented-absorb); state="$dir/state"
+  window="test:fm-presented"; key=$(printf '%s' "$window" | tr ':/.' '___')
+  presented_fixture "$dir" "$window" parked 'done: PR https://example.test/pr/9 checks green'
+  presented_enable "$dir"
+  presented_round "$dir" "$window" absorb "presented done: absorbed" FM_HOME="$dir"
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$(hash_text "$(cat "$dir/pane.txt")")" ] \
+    || fail "the stale suppressor was not advanced by the absorb"
+  [ -e "$state/.presented-absorbed-since-$key" ] || fail "the rule's own safety-valve marker was not recorded"
+  [ ! -e "$state/.stale-since-$key" ] || fail "an idle-by-declaration crew was given a wedge timer"
+  [ ! -s "$state/.wake-queue" ] || fail "an absorbed stale was queued"
+  jq -e 'select(.source == "rule" and .task == "parked" and .kind == "stale")' "$state/jev/absorbed.jsonl" >/dev/null \
+    || fail "the absorbed stale did not land in the digest as source=rule: $(cat "$state/jev/absorbed.jsonl" 2>/dev/null)"
+  grep -qF "absorbed stale via rule (terminal status already presented" "$state/.watch-triage.log" \
+    || fail "the absorb was not logged in the triage log"
+  pass "an already-presented terminal status with nothing appended is absorbed and recorded as source=rule"
+}
+
+test_presented_stale_open_decision_kinds() {
+  local dir state window
+  dir=$(make_case presented-open-decision); state="$dir/state"
+  window="test:fm-presented-decision"
+  presented_fixture "$dir" "$window" asking 'needs-decision: pick a base branch - https://example.test/report'
+  presented_enable "$dir"
+  presented_round "$dir" "$window" absorb "presented still-open needs-decision: absorbed" FM_HOME="$dir"
+  pass "a still-open needs-decision the captain was already shown is absorbed"
+}
+
+test_presented_stale_off_by_default() {
+  local dir window
+  dir=$(make_case presented-off)
+  window="test:fm-presented-off"
+  presented_fixture "$dir" "$window" parked 'done: PR https://example.test/pr/9 checks green'
+  presented_round "$dir" "$window" surface "rule off: surfaces exactly as before" FM_HOME="$dir"
+  assert_absent "$dir/state/jev/absorbed.jsonl" "a stale was rule-absorbed with the rule off"
+  pass "the presented-stale rule is off by default: the same stale surfaces"
+}
+
+test_presented_stale_needs_proof_of_presentation() {
+  local dir state window
+  dir=$(make_case presented-no-proof); state="$dir/state"
+  window="test:fm-presented-noproof"
+  presented_fixture "$dir" "$window" parked 'done: PR https://example.test/pr/9 checks green'
+  presented_enable "$dir"
+  rm -f "$state/.hb-surfaced-parked"
+  presented_round "$dir" "$window" surface "never surfaced: surfaces" FM_HOME="$dir"
+  presented_fixture "$dir" "$window" parked 'done: PR https://example.test/pr/9 checks green'
+  rm -f "$state/.hb-surfaced-parked.sig"
+  presented_round "$dir" "$window" surface "no surfaced-signature record (legacy marker): surfaces" FM_HOME="$dir"
+  presented_fixture "$dir" "$window" parked 'done: PR https://example.test/pr/9 checks green'
+  printf '%s' 'done: an older, different line' > "$state/.hb-surfaced-parked"
+  presented_round "$dir" "$window" surface "a different line was the one surfaced: surfaces" FM_HOME="$dir"
+  assert_absent "$state/jev/absorbed.jsonl" "a stale without proof of presentation was rule-absorbed"
+  pass "the rule never absorbs without a matching, signed surfaced record"
+}
+
+test_presented_stale_never_when_the_log_gained_a_line() {
+  local dir state window statusf
+  dir=$(make_case presented-new-line); state="$dir/state"
+  window="test:fm-presented-newline"; statusf="$state/parked.status"
+  presented_fixture "$dir" "$window" parked 'done: PR https://example.test/pr/9 checks green'
+  presented_enable "$dir"
+  # The very same text appended again is still a NEW line: it changes the log's signature.
+  printf 'done: PR https://example.test/pr/9 checks green\n' >> "$statusf"
+  backdate_file 400 "$statusf"
+  printf '%s' "$(seen_sig "$statusf")" > "$state/.seen-parked_status"
+  presented_round "$dir" "$window" surface "a repeated identical line surfaces" FM_HOME="$dir"
+  presented_fixture "$dir" "$window" parked 'done: PR https://example.test/pr/9 checks green'
+  printf 'working: picked the review comments up\n' >> "$statusf"
+  backdate_file 400 "$statusf"
+  printf '%s' "$(seen_sig "$statusf")" > "$state/.seen-parked_status"
+  presented_round "$dir" "$window" surface "a later working line is not a terminal status: surfaces" FM_HOME="$dir"
+  assert_absent "$state/jev/absorbed.jsonl" "a stale over a changed log was rule-absorbed"
+  pass "any line appended since the presentation defeats the rule, even a repeat of the same text"
+}
+
+test_presented_stale_refuses_unread_notes_and_secondmates() {
+  local dir state window
+  dir=$(make_case presented-unread); state="$dir/state"
+  window="test:fm-presented-unread"
+  presented_fixture "$dir" "$window" parked 'done: PR https://example.test/pr/9 checks green'
+  presented_enable "$dir"
+  printf 'note: CANDIDATE - a finding nobody has read\ndone: PR https://example.test/pr/9 checks green\n' > "$state/parked.status"
+  backdate_file 500 "$state/parked.status"
+  printf '%s' "$(seen_sig "$state/parked.status")" > "$state/.seen-parked_status"
+  printf '%s' "$(seen_sig "$state/parked.status")" > "$state/.hb-surfaced-parked.sig"
+  presented_round "$dir" "$window" surface "an unread note keeps the wake surfacing" FM_HOME="$dir"
+  # jq is the digest's writer; a task the rule cannot record is never absorbed.
+  presented_fixture "$dir" "$window" parked 'done: PR https://example.test/pr/9 checks green'
+  printf '#!/bin/sh\nexit 1\n' > "$dir/fakebin/jq"; chmod +x "$dir/fakebin/jq"
+  presented_round "$dir" "$window" surface "an unrecordable absorb surfaces instead" FM_HOME="$dir"
+  rm -f "$dir/fakebin/jq"
+  assert_absent "$state/jev/absorbed.jsonl" "an unreadable or unrecordable stale was rule-absorbed"
+  pass "an unread note or an unbuildable digest entry keeps the presented stale surfacing"
+}
+
+test_presented_stale_safety_valve_forces_a_real_surface_then_resets() {
+  local dir state window key
+  dir=$(make_case presented-valve); state="$dir/state"
+  window="test:fm-presented-valve"; key=$(printf '%s' "$window" | tr ':/.' '___')
+  presented_fixture "$dir" "$window" parked 'done: PR https://example.test/pr/9 checks green'
+  presented_enable "$dir"
+  presented_round "$dir" "$window" absorb "first presented stale absorbed" FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  [ -e "$state/.presented-absorbed-since-$key" ] || fail "the safety-valve marker was not created on first absorb"
+  # A fresh stale hash inside the bound is absorbed again, without restarting the bound.
+  printf 'idle, awaiting the captain (v2)\n' > "$dir/pane.txt"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  presented_round "$dir" "$window" absorb "a second stale inside the bound absorbed" FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  # Simulate the bound lapsing: the next stale surfaces for real and the marker resets.
+  backdate_file 500 "$state/.presented-absorbed-since-$key"
+  printf 'idle, awaiting the captain (v3)\n' > "$dir/pane.txt"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  presented_round "$dir" "$window" surface "the safety valve forces a real surface" FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  [ ! -e "$state/.presented-absorbed-since-$key" ] || fail "the safety-valve marker was not cleared on the forced real surface"
+  pass "the rule's own safety valve forces one real surface after the bound, then resets its marker"
+}
+
 test_signal_reason_is_actionable_classifier
 test_stale_is_terminal_classifier
 test_scan_captain_relevant_statuses_classifier
@@ -3349,3 +3613,12 @@ test_rule_never_absorbs_a_captain_held_recheck
 test_rule_surfaces_when_its_digest_entry_cannot_be_built
 test_rule_surfaces_when_its_digest_entry_cannot_be_written
 test_rule_safety_valve_forces_a_real_surface_then_resets
+test_absorb_vetoed_classifier
+test_rule_unchanged_pause_is_behind_the_veto
+test_presented_stale_absorbed_when_unchanged
+test_presented_stale_open_decision_kinds
+test_presented_stale_off_by_default
+test_presented_stale_needs_proof_of_presentation
+test_presented_stale_never_when_the_log_gained_a_line
+test_presented_stale_refuses_unread_notes_and_secondmates
+test_presented_stale_safety_valve_forces_a_real_surface_then_resets

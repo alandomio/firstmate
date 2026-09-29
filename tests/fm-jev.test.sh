@@ -746,6 +746,32 @@ test_absorb_never_a_non_working_paused_verb() {
   pass "only a working:/paused: verb is ever eligible for absorption"
 }
 
+test_absorb_veto_runs_ahead_of_the_model() {
+  local home line reason
+  home=$(absorb_case absorb-veto on override)
+  export FAKE_CURL_MODE=localok FAKE_CHOICE=absorbable FAKE_CONF=0.99
+  for line in 'done: PR https://example.test/pr/1 checks green' 'needs-decision: pick a base' \
+    'blocked: no credentials' 'failed: build broke' 'resolved: the base is main'; do
+    printf '%s\n' "$line" > "$home/state/task.status"
+    absorb_try "$home" && fail "absorb-try absorbed a task whose latest status is '$line'"
+  done
+  printf 'working: compiling step 2\n' > "$home/state/task.status"
+  for reason in 'heartbeat' 'check: startup-network finished' 'signal:task.status merged' \
+    'stale: w inactive terminal outcome awaiting captain presentation'; do
+    absorb_try "$home" "$reason" && fail "absorb-try absorbed a wake whose reason is '$reason'"
+  done
+  printf 'note: an answer nobody has read\nworking: compiling step 2\n' > "$home/state/task.status"
+  absorb_try "$home" && fail "absorb-try absorbed a task with an unread note"
+  [ "$(calls "$home")" = 0 ] || fail "the veto let a vetoed wake reach the classifier"
+  assert_absent "$home/state/jev/absorbed.jsonl" "a vetoed wake wrote a digest entry"
+  # Control: the same home absorbs the plain working wake once nothing vetoes it.
+  printf 'working: compiling step 2\n' > "$home/state/task.status"
+  absorb_try "$home" || fail "absorb-try refused the control wake no veto applies to"
+  [ "$(calls "$home")" = 1 ] || fail "the control wake did not reach the classifier exactly once"
+  unset FAKE_CURL_MODE FAKE_CHOICE FAKE_CONF
+  pass "the deterministic veto refuses terminal statuses, check/heartbeat/merge reasons, and unread notes before any model call"
+}
+
 test_absorb_gate_reports_met_and_not_met() {
   local fixture out
   fixture="$TMP_ROOT/gate-not-met.jsonl"
@@ -887,6 +913,7 @@ test_absorb_falls_through_on_low_confidence_or_doubt
 test_absorb_never_a_task_with_an_open_decision
 test_absorb_never_a_secondmate_status_signal
 test_absorb_never_a_non_working_paused_verb
+test_absorb_veto_runs_ahead_of_the_model
 test_absorb_gate_reports_met_and_not_met
 test_absorb_digest_surfaces_once_with_the_next_drain_and_never_repeats
 test_absorb_digest_tags_its_source_jev_or_rule

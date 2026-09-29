@@ -262,8 +262,8 @@ print_status_presentation() {  # [<deduped-raw-rows>]
     fi
   fi
   if [ "$rc" -eq 0 ] && [ -n "$snapshot" ]; then print_status_sections "$snapshot" "$fully_presented" || rc=1; fi
-  # The absorption digest (config/jev-absorb, config/absorb-unchanged-pause;
-  # both off by default):
+  # The absorption digest (config/jev-absorb, config/absorb-unchanged-pause,
+  # config/absorb-presented-stale; all off by default):
   # printed on every non-afk drain, whether the queue is empty or not, so an
   # absorbed wake surfaces with the very next real wake or heartbeat rather
   # than forcing a supervision wake of its own. Independent of the status
