@@ -1,0 +1,1 @@
+not ok - a slow but working link must not report a failure: handoff backup: the bucket is unreachable (timed out after 3s); data/ is not backed up

@@ -1,0 +1,1 @@
+ok - the backup check gives the lease read a real share of the budget and reports only repeated or stale failures
