@@ -38,6 +38,7 @@ if [ -e "$root/.offline" ]; then
   echo 'Could not connect to the endpoint URL: "https://example.invalid/"' >&2
   exit 255
 fi
+[ ! -s "$root/.slow" ] || sleep "$(cat "$root/.slow")"
 local_of() { printf '%s/%s\n' "$root" "${1#s3://}"; }
 service=$1 op=$2
 shift 2
@@ -353,6 +354,40 @@ test_unreachable_bucket_allows_only_the_last_holder() {
   pass "an unreachable bucket allows only the last holder, and a bad config refuses"
 }
 
+test_backup_check_tolerates_slow_links_and_transient_failures() {
+  local laptop out
+  reset_bucket
+  laptop=$(new_home slow-laptop laptop)
+  hf "$laptop" prendi >/dev/null 2>&1 || fail "prendi"
+  printf 'x\n' > "$laptop/data/backlog.md"
+  printf '3\n' > "$S3ROOT/.slow"
+  out=$(FM_CHECK_TIMEOUT=20 FM_HOME="$laptop" "$HANDOFF" check 2>&1)
+  rm -f "$S3ROOT/.slow"
+  [ -z "$out" ] || fail "a slow but working link must not report a failure: $out"
+  assert_grep "x" "$S3ROOT/fm-test-bucket/firstmate/data/backlog.md"
+  printf 'y\n' > "$laptop/data/backlog.md"
+  : > "$S3ROOT/.offline"
+  out=$(hf "$laptop" check 2>&1)
+  [ -z "$out" ] || fail "the first failed check should stay silent: $out"
+  out=$(hf "$laptop" check 2>&1)
+  [ -z "$out" ] || fail "the second failed check should stay silent: $out"
+  out=$(hf "$laptop" check 2>&1)
+  assert_contains "$out" "bucket is unreachable" "the third consecutive failure should report"
+  rm -f "$S3ROOT/.offline"
+  out=$(hf "$laptop" check 2>&1)
+  [ -z "$out" ] || fail "recovery should be silent: $out"
+  [ ! -e "$laptop/state/.handoff-backup-failures" ] || fail "a successful upload should clear the failure count"
+  printf 'z\n' > "$laptop/data/backlog.md"
+  : > "$S3ROOT/.offline"
+  out=$(FM_HANDOFF_ALARM_AGE=4 FM_HOME="$laptop" "$HANDOFF" check 2>&1)
+  [ -z "$out" ] || fail "a fresh last upload keeps one failure silent: $out"
+  sleep 5
+  out=$(FM_HANDOFF_ALARM_AGE=4 FM_HOME="$laptop" "$HANDOFF" check 2>&1)
+  assert_contains "$out" "bucket is unreachable" "a stale last upload should report at once"
+  rm -f "$S3ROOT/.offline"
+  pass "the backup check gives the lease read a real share of the budget and reports only repeated or stale failures"
+}
+
 test_unfinished_prendi_never_uploads() {
   local laptop ec2 out
   reset_bucket
@@ -505,6 +540,7 @@ test_consegna_refuses_in_flight_unless_leave_and_records_backlog
 test_forced_takeover_records_it_and_returning_machine_keeps_its_changes
 test_backup_check_uploads_when_due_and_detects_lost_lease
 test_unreachable_bucket_allows_only_the_last_holder
+test_backup_check_tolerates_slow_links_and_transient_failures
 test_unfinished_prendi_never_uploads
 test_forced_takeover_of_an_empty_bucket_is_recorded
 test_idle_probe
