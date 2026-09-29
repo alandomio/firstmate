@@ -1123,7 +1123,7 @@ SCAFFOLD_EDITS = (
      "In this council you are read-only: read freely, but change nothing here or anywhere else except your own council files."),
     (r"The report is the only thing that survives, [^\n]*",
      "Your files in the council folder are the only thing that survives."),
-    (r"2\. Stay inside this worktree; the only files you may write outside it are the report and the status file below\.",
+    (r"2\. Stay inside this worktree; the only files you may write outside it are [^\n]*",
      "2. Change nothing inside this worktree; the only files you may write are your own council files named below and the status file below."),
 )
 
