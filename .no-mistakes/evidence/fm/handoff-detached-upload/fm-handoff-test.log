@@ -1,0 +1,17 @@
+ok - without config/handoff-s3 nothing changes and aws is never called
+ok - first prendi seeds an empty bucket, then gate and lock allow this machine
+ok - consegna and prendi move data/, and a foreign lease keeps the other machine read-only
+ok - consegna refuses with tasks in flight, and --leave records where each one stays
+ok - a forced takeover is recorded and the returning machine's changes are never overwritten silently
+ok - the backup check uploads after backlog changes or the interval, and stops on a lost lease
+ok - an unreachable bucket allows only the last holder, and a bad config refuses
+ok - the backup check gives the lease read a real share of the budget and reports only repeated or stale failures
+ok - check returns at once and never runs two uploads at once
+ok - the next check reports a failed or vanished upload only after repeated failures
+ok - the detached upload re-verifies the lease and refuses when it is lost
+ok - a home whose prendi never finished refuses consegna and backup instead of uploading stale data/
+ok - a forced takeover that seeds an empty bucket is still recorded
+ok - the idle probe reports tasks, wakes, inbox notes, and recent activity as busy
+ok - riprendi lists EC2 tasks, hands over on EC2 through SSM, takes the helm here, and stops EC2
+ok - session start on a machine without the lease lands in the existing read-only mode
+ok - session start fails closed when the handoff gate exits without a verdict
