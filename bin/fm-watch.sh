@@ -29,8 +29,15 @@
 #                          recheck first offers the deterministic unchanged-pause
 #                          rule (config/absorb-unchanged-pause), then Jev
 #                          (config/jev-absorb), one more look before it
-#                          re-surfaces - both off by default. Only
-#                          when neither absorb class
+#                          re-surfaces - both off by default, and both behind
+#                          absorb_vetoed (bin/fm-classify-lib.sh), the single
+#                          deterministic veto no absorber may override. A stale
+#                          on a terminal status firstmate already surfaced, with
+#                          nothing appended since, is absorbed instead by the
+#                          opt-in config/absorb-presented-stale rule
+#                          (rule_absorb_presented_stale), bounded by
+#                          FM_PAUSE_REMIND_SECS. Only
+#                          when no absorb class
 #                          applies does the log's last line decide:
 #                          terminal (captain-relevant) or non-terminal (no verb),
 #                          both surfaced at once. A provably-working stale past the
@@ -479,10 +486,11 @@ rule_absorb_requested() {
 # The deterministic (no-model) twin of jev_stale_absorbed: no classifier, same
 # unchanged/open-decision eligibility. <key>'s since-marker is its own safety
 # valve, bounded by FM_PAUSE_REMIND_SECS, so one real surface still lands.
-rule_absorb_unchanged_pause() {  # <task> <key> <now-situation> <prev-situation>
-  local task=$1 key=$2 now_sit=$3 prev_sit=$4 statusf="$STATE/$1.status" last marker
+rule_absorb_unchanged_pause() {  # <task> <key> <now-situation> <prev-situation> <reason>
+  local task=$1 key=$2 now_sit=$3 prev_sit=$4 reason=${5:-} statusf="$STATE/$1.status" last marker
   rule_absorb_requested || return 1
   command -v jq >/dev/null 2>&1 || return 1
+  absorb_vetoed "$STATE" "$task" stale "$reason" >/dev/null && return 1
   [ "$now_sit" = "$prev_sit" ] || return 1
   [ -f "$statusf" ] || return 1
   [ "$(grep '^kind=' "$STATE/$task.meta" 2>/dev/null | tail -1 | cut -d= -f2-)" != secondmate ] || return 1
@@ -507,6 +515,45 @@ rule_absorb_record() {  # <task> <reason> <status>
     '{t: $t, kind: "stale", task: $task, reason: $reason, status: $status, choice: "absorbable", confidence: null, source: "rule"}') || return 1
   [ -n "$line" ] || return 1
   _fm_jev_absorb_append "$STATE" "$line"
+}
+
+# 0 when config/absorb-presented-stale's first non-blank line is "on".
+rule_presented_requested() {
+  local line
+  line=$(grep -v '^[[:space:]]*$' "$FM_HOME/config/absorb-presented-stale" 2>/dev/null | head -n1) || return 1
+  [ "$line" = on ]
+}
+
+# The deterministic (no-model) absorber for a stale re-surface of a worker parked on
+# a terminal status the captain already saw: done, failed, or a needs-decision or
+# blocked whose decision is still open. It is the one absorber that is not subject
+# to absorb_vetoed's status and open-decision checks, because it proves them
+# instead: the task's latest line must equal the line recorded when it was last
+# surfaced (.hb-surfaced-<task>), the status log's size:mtime must equal the one
+# recorded then (.hb-surfaced-<task>.sig), so any new line - even a repeat of the
+# same text - means it is no longer presented, and no unread note may be pending.
+# The absorb window is the rule's own safety valve, bounded by PAUSE_REMIND_SECS:
+# when it lapses the wake surfaces for real and the caller drops <key>'s marker.
+rule_absorb_presented_stale() {  # <task> <key> <reason>
+  local task=$1 key=$2 reason=$3 statusf="$STATE/$1.status" last verb marker recorded_sig now_sig
+  rule_presented_requested || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  [ -f "$statusf" ] || return 1
+  [ "$(grep '^kind=' "$STATE/$task.meta" 2>/dev/null | tail -1 | cut -d= -f2-)" != secondmate ] || return 1
+  last=$(last_status_line "$statusf")
+  status_is_terminal_verb "$last" || return 1
+  verb=$(status_line_verb "$last")
+  case "$verb" in
+    needs-decision|blocked) [ -n "$(status_open_decisions "$statusf" 2>/dev/null)" ] || return 1 ;;
+  esac
+  absorb_vetoed "$STATE" "$task" stale "$reason" presented >/dev/null && return 1
+  [ "$(cat "$(_hb_surfaced_path "$task")" 2>/dev/null || true)" = "$last" ] || return 1
+  recorded_sig=$(cat "$(_hb_surfaced_path "$task").sig" 2>/dev/null || true)
+  now_sig=$(fm_wake_signal_sig "$statusf") || return 1
+  [ -n "$now_sig" ] && [ "$recorded_sig" = "$now_sig" ] || return 1
+  marker="$STATE/.presented-absorbed-since-$key"
+  [ -e "$marker" ] || date +%s > "$marker"
+  [ "$(age_of "$marker")" -lt "$PAUSE_REMIND_SECS" ]
 }
 
 handle_paused_stale() {  # <window> <task> <hash> <tail40>
@@ -546,7 +593,7 @@ handle_paused_stale() {  # <window> <task> <hash> <tail40>
       reason="$reason; changed since the last recheck: $(paused_situation_change "$prev_sit" "$now_sit")"
     fi
     if [ "$detail" = "paused, awaiting external" ] && [ "$dead_agent" -ne 0 ] \
-      && rule_absorb_unchanged_pause "$task" "$key" "$now_sit" "$prev_sit" \
+      && rule_absorb_unchanged_pause "$task" "$key" "$now_sit" "$prev_sit" "stale: $win ($reason)" \
       && rule_absorb_record "$task" "stale: $win ($reason)" "$(last_status_line "$statusf")"; then
       date +%s > "$throttle"
       printf '%s\n' "$now_sit" > "$surfaced"
@@ -910,7 +957,7 @@ mark_all_captain_relevant_surfaced() {
   local f task last
   while IFS=$(printf '\t') read -r f task last; do
     [ -n "$f" ] || continue
-    printf '%s' "$last" > "$(_hb_surfaced_path "$task")"
+    _hb_record_surfaced "$task" "$last" "$f"
   done < <(scan_captain_relevant_statuses "$STATE")
 }
 
@@ -1422,7 +1469,17 @@ EOF
               date +%s > "$ssf"
               clear_write_tracking "$key"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
+            elif rule_absorb_presented_stale "$task" "$key" "stale: $w" \
+              && rule_absorb_record "$task" "stale: $w (terminal status already presented, unchanged)" "$last"; then
+              # Already surfaced and nothing changed since (config/absorb-presented-stale,
+              # off by default): the same pane, the same status log. No wedge timer -
+              # this crew is idle by declaration, not provably working.
+              printf '%s' "$h" > "$sf"
+              rm -f "$ssf"
+              clear_write_tracking "$key"
+              triage_log "absorbed stale via rule (terminal status already presented, unchanged): $w"
             else
+              rm -f "$STATE/.presented-absorbed-since-$key"
               fm_wake_append stale "$w" "stale: $w" || exit 1
               printf '%s' "$h" > "$sf"
               rm -f "$ssf"

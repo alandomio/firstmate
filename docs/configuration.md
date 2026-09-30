@@ -653,7 +653,8 @@ It is off by default and requires ALL of the following, checked at the moment of
 - Either the go-live gate (`bin/fm-jev.sh absorb-gate`: zero wrongly absorbable, at least 90% agreement, and a minimum sample of 300 scored wakes - classified wakes whose ground truth was measured - over a recent window) is met, or `config/jev-absorb`'s second non-blank line is exactly `override` - a captain override that skips the measured gate but never the other requirements above.
 - For this wake specifically: the Rizzo native answer's status is `ok`, its choice is `absorbable`, and its top probability is at or above the threshold.
 
-Never eligible, regardless of the above: needs-decision, blocked, done, failed, a merge/check result, a heartbeat, a captain inbox note, Relay, a process-event wake, a secondmate's routed-reply channel, or any task with an open decision.
+Never eligible, regardless of the above: needs-decision, blocked, done, failed, resolved, a merge/check result, a heartbeat, a captain inbox note, Relay, a process-event wake, a secondmate's routed-reply channel, or any task with an open decision or an unread note.
+Every item on that list except the secondmate and Relay or process-event exclusions is the deterministic veto owned by `absorb_vetoed` (see "Deterministic absorption veto and already-presented stale absorption" below), which absorb-try asks before any other rule and before any model call.
 Any doubt anywhere in that chain - disabled, ineligible, an unmet gate, a classifier timeout, error, or low-confidence answer - falls through to today's unconditional behavior.
 Absorption adds no latency on the wake path beyond the existing per-request classify timeout, and only for a wake it might absorb; the go-live gate's own computation is cached for a few minutes rather than re-scanned on every wake.
 Nothing is lost: every absorbed wake is appended, masked, to `state/jev/absorbed.jsonl` with `source: "jev"`, which `bin/fm-wake-drain.sh` prints - a count plus one line each - the next time any drain runs, whether that is a real wake or a heartbeat, so nothing absorbed can rot unseen and absorption itself never wakes the supervising session on its own.
@@ -669,6 +670,31 @@ When on, this rule is tried first, before Jev, at the same recheck point, requir
 Any of those failing falls through to Jev, then to a real surface, exactly as if the rule were off.
 Safety valve: each recheck window (`state/.rule-absorbed-since-<key>`) tracks how long the rule has continuously absorbed that task; once that reaches `FM_PAUSE_REMIND_SECS` (the same default as the existing daily reminder, one day), the rule refuses so the task still gets one real, human-visible surface, and the marker then resets.
 Same digest contract as Jev absorption, tagged `source: "rule"` so `bin/fm-jev.sh report` keeps measuring the model only on what this rule did not already take.
+
+### Deterministic absorption veto and already-presented stale absorption (config/absorb-presented-stale)
+
+A measured day of Jev shadow triage found two things: every wake it wrongly called absorbable carried a `done:` status or was a heartbeat or check wake, and most of the wakes that were genuinely absorbable were stale re-surfaces of a worker the captain had already been told about.
+Two deterministic (no-model) rules follow from that.
+
+The veto is unconditional, has no config file, and is owned by `absorb_vetoed` in `bin/fm-classify-lib.sh`.
+Every absorber asks it first, ahead of any model call and of its own eligibility rules: Jev's absorb-try, the unchanged-pause rule, and the presented-stale rule below.
+It vetoes a heartbeat or check kind, a reason naming a heartbeat, a check, a merge, or an inactive terminal outcome, a task whose latest status line leads with `done`, `needs-decision`, `blocked`, `failed`, or `resolved`, a task with any open decision, and a task with an unread `note:` line past the presentation cursor or an unreadable cursor.
+Reason matching is a substring test, so over-vetoing is the only failure direction.
+`tests/fm-watch-triage.test.sh` and `tests/fm-jev.test.sh` pin it through the public entry points.
+
+The presented-stale rule targets a worker whose pane settles at a new idle state while its status log still ends in a terminal outcome firstmate already surfaced: a finished pull request awaiting the captain's merge, or a still-open `needs-decision` or `blocked` awaiting the captain's answer.
+Off by default; `config/absorb-presented-stale`'s first non-blank line must be exactly `on`.
+When on, it is tried on the stale re-surface of a worker that is not provably working, just before the wake would be queued, and absorbs it only when all of these hold:
+
+- the latest status line is `done`, `failed`, or a `needs-decision` or `blocked` whose decision is still open;
+- that exact line is the one recorded when the wake was last surfaced (`state/.hb-surfaced-<task>`), and the status log's size and mtime equal the signature recorded with it (`state/.hb-surfaced-<task>.sig`), so any appended line, even a repeat of the same text, defeats the rule;
+- the veto passes in its presented mode, which relaxes only the status and open-decision checks, because the two proofs above replace them;
+- the task is not a secondmate, `jq` is available, and the masked digest entry was actually written.
+
+Any failure surfaces the wake exactly as if the rule were off.
+A declared `paused:` or `captain-held:` recheck is not this rule's business: those keep their own unchanged comparison, and the unchanged-pause rule above covers `paused:`.
+Safety valve: `state/.presented-absorbed-since-<key>` tracks how long the rule has continuously absorbed that window; once that reaches `FM_PAUSE_REMIND_SECS` (default one day) the wake surfaces for real, the marker resets, and the next absorb window starts.
+Same digest contract as the other absorbers, tagged `source: "rule"`.
 
 ## Process-to-event sources (state/procevent)
 

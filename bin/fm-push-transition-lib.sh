@@ -112,6 +112,21 @@ _hb_surfaced_path() {
   printf '%s/.hb-surfaced-%s' "$STATE" "$(printf '%s' "$1" | tr ':/.' '___')"
 }
 
+# Record that <task>'s captain-relevant <line> was surfaced: the line itself, and
+# the status log's size:mtime signature at that moment in a sibling ".sig" file,
+# which is what lets the already-presented-stale rule (bin/fm-watch.sh) prove
+# nothing was appended since, even a line that repeats this one's text.
+_hb_record_surfaced() {  # <task> <line> <status-file>
+  local marker sig
+  marker=$(_hb_surfaced_path "$1")
+  printf '%s' "$2" > "$marker"
+  if sig=$(fm_wake_signal_sig "$3") && [ -n "$sig" ]; then
+    printf '%s' "$sig" > "$marker.sig"
+  else
+    rm -f "$marker.sig"
+  fi
+}
+
 # Record a captain-relevant status after its durable wake has been enqueued.
 mark_surfaced() {  # <status-file>
   local f=$1 task last
@@ -119,7 +134,7 @@ mark_surfaced() {  # <status-file>
   last=$(last_status_line "$f")
   [ -n "$last" ] || return 0
   status_is_captain_relevant "$last" || return 0
-  printf '%s' "$last" > "$(_hb_surfaced_path "$task")"
+  _hb_record_surfaced "$task" "$last" "$f"
 }
 
 # Act on a fresh actionable transition from a push-capable backend.
