@@ -869,7 +869,19 @@ make_live_runtime() {  # <home>
   cat > "$runtime/bin/fm-bearings-snapshot.sh" <<'SH'
 #!/usr/bin/env bash
 [ -n "${LIVE_SNAPSHOT_FAIL:-}" ] && { echo "fm-bearings-snapshot: simulated failure" >&2; exit 1; }
-cat "$LIVE_SNAPSHOT_FIXTURE"
+all_decisions=false all_in_flight=false all_prs=false
+for arg in "$@"; do
+  case "$arg" in
+    --all-decisions) all_decisions=true ;;
+    --all-in-flight) all_in_flight=true ;;
+    --all-recorded-prs) all_prs=true ;;
+  esac
+done
+jq --argjson cap "${LIVE_SNAPSHOT_CAP:-20}" --argjson d "$all_decisions" \
+  --argjson f "$all_in_flight" --argjson p "$all_prs" '
+  (if $d then . else .decisions_open |= .[:$cap] end)
+  | (if $f then . else .in_flight |= .[:$cap] end)
+  | (if $p then . else .recorded_prs |= .[:$cap] end)' "$LIVE_SNAPSHOT_FIXTURE"
 SH
   cat > "$runtime/bin/fm-bearings-quota.sh" <<'SH'
 #!/usr/bin/env bash
@@ -1112,6 +1124,45 @@ test_refresh_drops_a_malformed_stored_card_and_keeps_the_last_data_on_failure() 
   pass "refresh drops a malformed stored card and keeps the last data when the snapshot fails"
 }
 
+test_refresh_sees_every_open_hold_and_in_flight_task_past_the_snapshot_caps() {
+  local home out live
+  home=$(make_home live-uncapped)
+  make_live_runtime "$home" >/dev/null
+  write_live_snapshot "$home/snapshot.json"
+  write_composed_board_payload "$home/payload.json"
+  mkdir -p "$home/config"
+  printf 'on\n' > "$home/config/live-board"
+  run_live_board "$home" build "$home/payload.json" >/dev/null || fail "the composed board did not build"
+
+  out=$(LIVE_SNAPSHOT_CAP=1 run_live_board "$home" refresh) || fail "refresh failed: $out"
+  live="$home/live.json"
+  extract_live_payload "$home/.lavish/bearings-board.data.js" > "$live" \
+    || fail "the refreshed data file is not readable"
+  [ "$(jq -c '[.captains_call[].key]' "$live")" = '["composed-call","merge.ship-a","new-call"]' ] \
+    || fail "an open hold past the snapshot cap was dropped: $(jq -c '[.captains_call[].key]' "$live")"
+  [ "$(jq -c '[.underway[].id]' "$live")" = '["ship-a","scout-b","android"]' ] \
+    || fail "an in-flight task past the snapshot cap was dropped: $(jq -c '[.underway[].id]' "$live")"
+  [ "$(jq -c '[.prs[].id]' "$live")" = '["ship-a","landed-already"]' ] \
+    || fail "a recorded PR past the snapshot cap was dropped: $(jq -c '[.prs[].id]' "$live")"
+  pass "refresh sees every open hold, in-flight task, and recorded PR past the snapshot caps"
+}
+
+test_systemd_units_escape_quotes_backslashes_and_specifiers() {
+  local home out parsed
+  home=$(make_home 'live-units-q"b\\s%h')
+  out=$(PATH="/odd\\dir:/q\"uote:/pct%n:$PATH" run_board "$home" systemd-units) || fail "systemd-units failed: $out"
+  parsed=$(printf '%s\n' "$out" | sed -n 's/^Environment="FM_HOME=\(.*\)"$/\1/p' \
+    | perl -pe 's/%%/%/g; s/\\(["\\])/$1/g')
+  [ "$parsed" = "$(cd "$home" && pwd -P)" ] || fail "FM_HOME does not round-trip through systemd quoting: $parsed"
+  parsed=$(printf '%s\n' "$out" | sed -n 's/^Environment="PATH=\(.*\)"$/\1/p' \
+    | perl -pe 's/%%/%/g; s/\\(["\\])/$1/g')
+  case "$parsed" in
+    *'/odd\dir:/q"uote:/pct%n:'*) ;;
+    *) fail "PATH does not round-trip through systemd quoting: $parsed" ;;
+  esac
+  pass "systemd-units escapes quotes, backslashes, and specifiers in quoted values"
+}
+
 test_systemd_units_run_refresh_for_this_home() {
   local home out rc name
   home=$(make_home live-units)
@@ -1297,7 +1348,9 @@ test_refresh_does_nothing_until_enabled_and_published
 test_build_writes_the_live_data_file_and_the_composed_card_store
 test_refresh_composes_a_live_payload_without_touching_the_page
 test_refresh_drops_a_malformed_stored_card_and_keeps_the_last_data_on_failure
+test_refresh_sees_every_open_hold_and_in_flight_task_past_the_snapshot_caps
 test_systemd_units_run_refresh_for_this_home
+test_systemd_units_escape_quotes_backslashes_and_specifiers
 test_a_live_update_keeps_an_unsent_answer_and_its_card
 test_a_live_update_keeps_a_queued_answer_until_its_call_closes
 test_a_live_update_refreshes_an_idle_card_and_ignores_a_bad_update

@@ -38,7 +38,9 @@
 #            has been published by a build, and away mode is not holding
 #            ordinary fleet reads (bin/fm-afk-return.sh guard); each of those
 #            prints one `skipped: <why>` line and exits 0. Otherwise it reads
-#            bin/fm-bearings-snapshot.sh --json (local-only) and
+#            bin/fm-bearings-snapshot.sh --json --all-decisions --all-in-flight
+#            --all-recorded-prs (local-only; open holds, in-flight tasks, and
+#            recorded PRs are complete, gates stay capped) and
 #            bin/fm-bearings-quota.sh, composes a fresh payload with source
 #            "live-refresh", validates it exactly as build does, and atomically
 #            replaces the live data file, printing `refreshed: <path>`. The
@@ -454,7 +456,7 @@ command_refresh() {
   trap "rm -rf -- '$work'" EXIT
 
   snap_err="$work/snapshot.err"
-  "$SCRIPT_DIR/fm-bearings-snapshot.sh" --json > "$work/snapshot.json" 2> "$snap_err" \
+  "$SCRIPT_DIR/fm-bearings-snapshot.sh" --json --all-decisions --all-in-flight --all-recorded-prs > "$work/snapshot.json" 2> "$snap_err" \
     || fail "the fleet snapshot failed: $(tail -n1 "$snap_err")"
   jq -e '.schema == "fm-bearings.v1"' "$work/snapshot.json" >/dev/null 2>&1 \
     || fail "the fleet snapshot is not readable"
@@ -503,6 +505,14 @@ command_loop() {
   done
 }
 
+systemd_quoted() {  # <value>
+  local v=$1
+  v=${v//\\/\\\\}
+  v=${v//\"/\\\"}
+  v=${v//%/%%}
+  printf '%s' "$v"
+}
+
 command_systemd_units() {
   local interval=$DEFAULT_INTERVAL dir="" name home script service timer home_unit path_unit script_unit
   while [ "$#" -gt 0 ]; do
@@ -515,10 +525,11 @@ command_systemd_units() {
   done
   home=$(cd "$FM_HOME" && pwd -P) || fail "FM_HOME is not a directory: $FM_HOME"
   script="$SCRIPT_DIR/fm-bearings-board.sh"
-  # systemd expands `%` specifiers in these values, so a literal `%` is doubled.
-  home_unit=${home//%/%%}
-  path_unit=${PATH//%/%%}
-  script_unit=${script//%/%%}
+  # These values sit inside systemd double quotes, where `\` and `"` are escapes
+  # and `%` starts a specifier, so each is escaped.
+  home_unit=$(systemd_quoted "$home")
+  path_unit=$(systemd_quoted "$PATH")
+  script_unit=$(systemd_quoted "$script")
   name="fm-live-board-$(printf '%s' "$home" | cksum | cut -d' ' -f1)"
   service=$(printf '[Unit]\nDescription=Firstmate live fleet board refresh for %s\n\n[Service]\nType=oneshot\nEnvironment="FM_HOME=%s"\nEnvironment="PATH=%s"\nExecStart="%s" refresh\nNice=10' \
     "$home_unit" "$home_unit" "$path_unit" "$script_unit")
