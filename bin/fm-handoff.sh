@@ -21,7 +21,8 @@
 #                                        take the helm: take the lease, download data/
 #   fm-handoff.sh consegna [--leave]     hand over: upload data/, release the lease
 #   fm-handoff.sh backup                 upload data/ now, keeping the lease
-#   fm-handoff.sh check                  watcher entry: backup when due, silent otherwise
+#   fm-handoff.sh check                  watcher entry: start a background backup when due, report the last one's outcome, silent otherwise
+#   fm-handoff.sh backup-worker          internal: the detached upload `check` starts; not run by hand
 #   fm-handoff.sh arm | disarm           register or remove the watcher backup check
 #   fm-handoff.sh diff                   local unuploaded changes, then local vs bucket
 #   fm-handoff.sh inflight               list this home's in-flight tasks
@@ -71,12 +72,20 @@
 # BACKUP. `arm` writes state/handoff-backup.check.sh and binds it with
 # bin/fm-check-register.sh, the same trusted-check path bin/fm-tool-update-check.sh
 # uses, so the watcher runs `check` every FM_CHECK_INTERVAL while supervision is
-# live. `check` uploads when data/ differs from the last sync AND either
-# data/backlog.md changed or FM_HANDOFF_BACKUP_INTERVAL (default 900) seconds have
-# passed since the last upload. It never releases the lease, and it verifies the
-# lease is still this machine's before uploading: a lost lease writes the refusal
-# marker and prints one line so the watcher wakes firstmate. It prints only when
-# something needs attention, and repeats the same problem at most once.
+# live. `check` only does the cheap part inside the watcher's FM_CHECK_TIMEOUT:
+# it reports the outcome of the previous background upload, detects changes, and
+# reads the lease. When data/ differs from the last sync AND either data/backlog.md
+# changed or FM_HANDOFF_BACKUP_INTERVAL (default 900) seconds have passed since the
+# last upload, it starts `backup-worker` detached (own process group, stdio closed,
+# so the watcher never waits for it) and returns. The worker takes its own
+# single-flight lock (state/.handoff-backup-worker.lock) and the operation lock,
+# re-verifies the lease, uploads with the full FM_HANDOFF_SYNC_TIMEOUT, and records
+# its outcome in state/.handoff-backup-outcome; the next `check` reports it and
+# clears it. Two uploads never run at once: a check that finds the worker alive
+# starts nothing. `check` never releases the lease, and a lost lease (seen by
+# `check` or by the worker) writes the refusal marker, uploads nothing, and prints
+# one line so the watcher wakes firstmate. It prints only when something needs
+# attention, and repeats the same problem at most once.
 # prendi arms the check and consegna disarms it.
 #
 # idle is the EC2 idle-shutdown probe: busy while any in-flight task (a
@@ -98,10 +107,10 @@
 #   FM_HANDOFF_AWS              aws CLI command (default aws; tests stub it)
 #   FM_HANDOFF_TIMEOUT          seconds per small S3 call (default 15; `check` gives the
 #                               lease read up to half of FM_CHECK_TIMEOUT)
-#   FM_HANDOFF_SYNC_TIMEOUT     seconds per data/ sync (default 120; `check` caps
-#                               it to fit FM_CHECK_TIMEOUT)
+#   FM_HANDOFF_SYNC_TIMEOUT     seconds per data/ sync (default 120; the detached
+#                               backup worker gets all of it, no watcher budget)
 #   FM_HANDOFF_BACKUP_INTERVAL  seconds between periodic backups (default 900)
-#   FM_HANDOFF_ALARM_FAILURES   consecutive failed backup checks before `check`
+#   FM_HANDOFF_ALARM_FAILURES   consecutive failed backup uploads before `check`
 #                               reports a failure (default 3)
 #   FM_HANDOFF_ALARM_AGE        seconds since the last successful upload after
 #                               which `check` reports a failure at once (default 3600)
@@ -124,6 +133,8 @@ MANIFEST="$STATE/.handoff-manifest"
 LAST_UPLOAD_EPOCH="$STATE/.handoff-last-upload"
 REPORTED="$STATE/.handoff-backup-report"
 FAILURES="$STATE/.handoff-backup-failures"
+OUTCOME="$STATE/.handoff-backup-outcome"
+WORKER_LOCK="$STATE/.handoff-backup-worker.lock"
 OP_LOCK="$STATE/.handoff.lock"
 BACKUPS="$STATE/handoff-backups"
 CHECK_ID=handoff-backup
@@ -425,10 +436,17 @@ describe_task() {  # <id>
 
 # --- op lock -------------------------------------------------------------------
 
-OP_LOCK_HELD=0
-op_lock() {
+LOCK_LIB_LOADED=0
+load_lock_lib() {
+  [ "$LOCK_LIB_LOADED" -eq 0 ] || return 0
   # shellcheck source=bin/fm-wake-lib.sh
   . "$SCRIPT_DIR/fm-wake-lib.sh"
+  LOCK_LIB_LOADED=1
+}
+
+OP_LOCK_HELD=0
+op_lock() {
+  load_lock_lib
   if [ "${1:-}" = try ]; then
     fm_lock_try_acquire "$OP_LOCK" || return 1
   else
@@ -447,18 +465,19 @@ trap 'exit 1' HUP INT TERM
 
 # --- upload / download ----------------------------------------------------------
 
-# upload <kind> [sync-timeout]: sync data/ up, then publish the last-upload record.
+# upload <kind>: sync data/ up, then publish the last-upload record.
 UPLOADED_ID=
 upload() {
-  local kind=$1 t=${2:-$SYNC_TIMEOUT} id at
+  local kind=$1 id at
   mkdir -p "$DATA" || return 1
   id="$(date -u +%Y%m%dT%H%M%SZ)-$CFG_MACHINE-$(random_token | cut -c1-6)"
   at=$(now_iso)
-  aws_run "$t" s3 sync "$DATA/" "$S3_BASE/data/" --delete --only-show-errors >/dev/null || return 1
+  aws_run "$SYNC_TIMEOUT" s3 sync "$DATA/" "$S3_BASE/data/" --delete --only-show-errors >/dev/null || return 1
   s3_write last-upload "$(printf 'fm-handoff-upload-v1\nid=%s\nmachine=%s\nat=%s\nkind=%s' "$id" "$CFG_MACHINE" "$at" "$kind")" || return 1
   record_manifest "$id" || return 1
   now_epoch > "$LAST_UPLOAD_EPOCH"
   rm -f "$REPORTED" "$FAILURES"
+  [ "$(outcome_field result)" = running ] || rm -f "$OUTCOME"
   UPLOADED_ID=$id
 }
 
@@ -533,7 +552,7 @@ action_arm() {
 }
 
 action_disarm() {
-  rm -f -- "$CHECK_SHIM" "$CHECK_TRUST" "$REPORTED"
+  rm -f -- "$CHECK_SHIM" "$CHECK_TRUST" "$REPORTED" "$OUTCOME"
   printf 'disarmed: state/%s.check.sh\n' "$CHECK_ID"
 }
 
@@ -623,6 +642,7 @@ action_status() {
   printf 'local record: %s\n' "$( [ -f "$HELD" ] && tr '\n' ' ' < "$HELD" || printf 'none')"
   printf 'session lock refusal: %s\n' "$( [ -f "$REFUSED" ] && printf present || printf absent)"
   printf 'periodic backup: %s\n' "$( [ -f "$CHECK_SHIM" ] && printf armed || printf 'not armed')"
+  printf 'background upload: %s\n' "$(if backup_worker_alive; then printf running; else printf idle; fi)"
   local changes
   changes=$(local_changes)
   if [ -n "$changes" ]; then
@@ -869,50 +889,153 @@ backup_failed() {  # <message> <last-upload-epoch>
   fi
 }
 
+# --- background backup ------------------------------------------------------------
+
+outcome_field() { sed -n "s/^$1=//p" "$OUTCOME" 2>/dev/null | head -1; }
+
+write_outcome() {  # <result> <detail>: result is running|ok|failed|unreachable|lost
+  local tmp
+  tmp=$(mktemp "$STATE/.handoff-backup-outcome.XXXXXX") || return 1
+  if printf 'result=%s\ndetail=%s\nat=%s\n' "$1" "$2" "$(now_iso)" > "$tmp"; then
+    mv -f "$tmp" "$OUTCOME" && return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+# backup_worker_alive: the worker's single-flight lock is held by a live process.
+backup_worker_alive() {
+  load_lock_lib
+  if fm_lock_try_acquire "$WORKER_LOCK"; then
+    fm_lock_release "$WORKER_LOCK"
+    return 1
+  fi
+  return 0
+}
+
+mark_lease_lost() {  # <holder>
+  write_held lost "$(held_field nonce)" || true
+  write_refused "HANDOFF: this machine ($CFG_MACHINE) lost the lease to ${1:-nobody} - operate read-only. See bin/fm-handoff.sh status." || true
+}
+
+lease_lost_report() {  # <holder>
+  report_once "handoff: this machine lost the helm to ${1:-nobody} - stop mutating fleet state and rerun bin/fm-session-start.sh"
+}
+
+# report_backup_outcome <last-upload-epoch>: consume the finished worker's
+# outcome. A success needs no report (upload cleared the counters); a failure
+# counts toward the alarm; a worker that died without an outcome counts as one.
+report_backup_outcome() {
+  local result detail
+  [ -f "$OUTCOME" ] || return 0
+  result=$(outcome_field result)
+  detail=$(outcome_field detail)
+  case "$result" in
+    running)
+      backup_worker_alive && return 0
+      rm -f "$OUTCOME"
+      backup_failed "handoff backup: the upload worker stopped before finishing; it will be retried" "$1"
+      ;;
+    failed) rm -f "$OUTCOME"; backup_failed "handoff backup: uploading data/ failed; it will be retried" "$1" ;;
+    unreachable) rm -f "$OUTCOME"; backup_failed "handoff backup: the bucket is unreachable (${detail:-unknown}); data/ is not backed up" "$1" ;;
+    lost) rm -f "$OUTCOME"; lease_lost_report "$detail" ;;
+    *) rm -f "$OUTCOME" ;;
+  esac
+}
+
+# The detached upload. Single-flight through its own lock; the operation lock
+# keeps it from overlapping backup, consegna, or prendi; the lease is verified
+# again under that lock right before the upload.
+BACKUP_WORKER_HELD=0
+backup_worker_exit() {
+  if [ "$BACKUP_WORKER_HELD" -eq 1 ]; then
+    [ "$(outcome_field result)" != running ] || write_outcome failed "the upload worker was interrupted" || true
+    op_unlock
+    fm_lock_release "$WORKER_LOCK" || true
+    BACKUP_WORKER_HELD=0
+  fi
+}
+
+action_backup_worker() {
+  enabled || return 0
+  load_config
+  mkdir -p "$STATE" || return 1
+  load_lock_lib
+  fm_lock_try_acquire "$WORKER_LOCK" || return 0
+  BACKUP_WORKER_HELD=1
+  trap backup_worker_exit EXIT
+  write_outcome running "" || die "cannot write $OUTCOME"
+  op_lock
+  if [ "$(held_field status)" != held ]; then
+    rm -f "$OUTCOME"
+    return 0
+  fi
+  read_lease
+  case "$LEASE_STATE" in
+    ours) ;;
+    unknown) write_outcome unreachable "$LEASE_ERR"; return 0 ;;
+    *) mark_lease_lost "$LEASE_MACHINE"; write_outcome lost "$LEASE_MACHINE"; return 0 ;;
+  esac
+  if upload backup; then
+    write_outcome ok "$UPLOADED_ID"
+  else
+    write_outcome failed "the data/ sync or the last-upload write failed"
+  fi
+}
+
+# Detached three ways, like the deferred startup network stage
+# (bin/fm-startup-network.sh): stdio closed, because the watcher reads the
+# check's output to EOF and a worker holding that pipe would stall it; nohup, so
+# it outlives the check; its own process group (monitor mode), because the
+# watcher's bound on the check terminates the check's whole group.
+start_backup_worker() {
+  local monitor_was_on=0
+  case $- in *m*) monitor_was_on=1 ;; esac
+  set -m 2>/dev/null || true
+  FM_HOME="$FM_HOME" nohup "$SCRIPT_DIR/fm-handoff.sh" backup-worker >/dev/null 2>&1 </dev/null &
+  [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
+}
+
+# The watcher's check: only the cheap part, so it always fits FM_CHECK_TIMEOUT.
 action_check() {
-  local changes elapsed last t budget start lease_timeout
-  start=$(now_epoch)
+  local changes elapsed last budget lease_timeout
   enabled || return 0
   (load_config) >/dev/null 2>&1 || { report_once "handoff backup: config/handoff-s3 is invalid - run bin/fm-handoff.sh status"; return 0; }
   load_config
+  last=$(cat "$LAST_UPLOAD_EPOCH" 2>/dev/null || printf 0)
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  # The previous upload's outcome is reported first, even after it found the
+  # lease lost, when this home is no longer "held".
+  report_backup_outcome "$last"
   [ "$(held_field status)" = held ] || return 0
+  backup_worker_alive && return 0
   op_lock try || return 0
-  # Fit inside the watcher's per-check bound: the lease read, the sync, and the
-  # last-upload write together.
   budget=${FM_CHECK_TIMEOUT:-30}
   case "$budget" in ''|*[!0-9]*) budget=30 ;; esac
-  # The lease read gets the largest share (up to half the budget, so a slow but
-  # working link never false-fails); the last-upload write gets a fifth and the
-  # sync takes the remainder.
+  # The lease read gets up to half the budget, so a slow but working link never
+  # false-fails; nothing else in this check touches the bucket.
   lease_timeout=$SMALL_TIMEOUT
   [ "$lease_timeout" -le $((budget / 2)) ] || lease_timeout=$((budget / 2))
   [ "$lease_timeout" -ge 1 ] || lease_timeout=1
   SMALL_TIMEOUT=$lease_timeout
   changes=$(local_changes)
   [ -n "$changes" ] || return 0
-  last=$(cat "$LAST_UPLOAD_EPOCH" 2>/dev/null || printf 0)
-  case "$last" in ''|*[!0-9]*) last=0 ;; esac
   elapsed=$(( $(now_epoch) - last ))
   if [ "$elapsed" -lt "$BACKUP_INTERVAL" ] && ! printf '%s\n' "$changes" | grep -q ': backlog.md$'; then
     return 0
   fi
   read_lease
-  SMALL_TIMEOUT=$((budget / 5))
-  [ "$SMALL_TIMEOUT" -ge 1 ] || SMALL_TIMEOUT=1
   case "$LEASE_STATE" in
     ours) ;;
     unknown) backup_failed "handoff backup: the bucket is unreachable ($LEASE_ERR); data/ is not backed up" "$last"; return 0 ;;
     *)
-      write_held lost "$(held_field nonce)" || true
-      write_refused "HANDOFF: this machine ($CFG_MACHINE) lost the lease to ${LEASE_MACHINE:-nobody} - operate read-only. See bin/fm-handoff.sh status." || true
-      report_once "handoff: this machine lost the helm to ${LEASE_MACHINE:-nobody} - stop mutating fleet state and rerun bin/fm-session-start.sh"
+      mark_lease_lost "$LEASE_MACHINE"
+      lease_lost_report "$LEASE_MACHINE"
       return 0
       ;;
   esac
-  t=$(( budget - ($(now_epoch) - start) - SMALL_TIMEOUT - 3 ))
-  [ "$t" -le "$SYNC_TIMEOUT" ] || t=$SYNC_TIMEOUT
-  [ "$t" -ge 1 ] || t=1
-  upload backup "$t" || backup_failed "handoff backup: uploading data/ failed; it will be retried" "$last"
+  op_unlock
+  start_backup_worker
   return 0
 }
 
@@ -1056,6 +1179,7 @@ case "$ACTION" in
   consegna) action_consegna "$@" ;;
   backup) action_backup ;;
   check) action_check ;;
+  backup-worker) action_backup_worker ;;
   arm) load_config; action_arm ;;
   disarm) action_disarm ;;
   diff) action_diff ;;
