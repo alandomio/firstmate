@@ -727,7 +727,8 @@ The timer runs a refresh 90 seconds after the previous one finished by default; 
 Where systemd is unavailable, run `bin/fm-bearings-board.sh loop [--interval <seconds>]` under a supervisor of your own, such as launchd or a tmux pane.
 Removing the flag makes every run a no-op, and `systemctl --user disable --now fm-live-board-<n>.timer` stops the timer.
 
-While away mode or its return catch-up is pending, a refresh steps aside like any ordinary fleet read (`bin/fm-afk-return.sh guard`), and the page flags live data older than six minutes as possibly out of date.
+A refresh keeps running during away mode and its return catch-up, when the captain is most likely to watch the board from elsewhere: it is not a captain request, so it reads the fleet with `bin/fm-bearings-snapshot.sh --unattended`, the one read that skips the return guard (`bin/fm-afk-return.sh guard`) every `/bearings` request still honors.
+The page flags live data older than six minutes as possibly out of date.
 The open pull request list is what each worker last reported locally; a refresh makes no GitHub or GitLab call.
 
 ### Reaching the board over Tailscale (optional)

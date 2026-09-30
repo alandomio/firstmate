@@ -34,11 +34,12 @@
 # refresh    The live board's deterministic regeneration; it never calls a
 #            model, never rewrites the board page, never touches the Lavish
 #            session, and never binds or arms anything. It does nothing unless
-#            config/live-board's first non-blank line is exactly `on`, the board
-#            has been published by a build, and away mode is not holding
-#            ordinary fleet reads (bin/fm-afk-return.sh guard); each of those
-#            prints one `skipped: <why>` line and exits 0. Otherwise it reads
-#            bin/fm-bearings-snapshot.sh --json --all-decisions --all-in-flight
+#            config/live-board's first non-blank line is exactly `on` and the
+#            board has been published by a build; each of those prints one
+#            `skipped: <why>` line and exits 0. It keeps running during away
+#            mode and its return catch-up, when the captain watches the board
+#            from elsewhere: it reads bin/fm-bearings-snapshot.sh --unattended
+#            --json --all-decisions --all-in-flight
 #            --all-recorded-prs (local-only; open holds, in-flight tasks, and
 #            recorded PRs are complete, gates stay capped) and
 #            bin/fm-bearings-quota.sh, composes a fresh payload with source
@@ -446,17 +447,12 @@ command_refresh() {
   command -v jq >/dev/null 2>&1 || fail "jq is required"
   board=$(board_path)
   [ -f "$board" ] || { printf 'skipped: no board has been published yet; build it once with /bearings lavish\n'; return 0; }
-  if ! "$SCRIPT_DIR/fm-afk-return.sh" guard >/dev/null 2>&1; then
-    printf 'skipped: away mode is holding fleet reads; the board keeps its last data until the captain is back\n'
-    return 0
-  fi
-
   work=$(mktemp -d "${TMPDIR:-/tmp}/fm-live-board.XXXXXX") || fail "cannot create a work directory"
   # shellcheck disable=SC2064 # expand now: the path is fixed for this run
   trap "rm -rf -- '$work'" EXIT
 
   snap_err="$work/snapshot.err"
-  "$SCRIPT_DIR/fm-bearings-snapshot.sh" --json --all-decisions --all-in-flight --all-recorded-prs > "$work/snapshot.json" 2> "$snap_err" \
+  "$SCRIPT_DIR/fm-bearings-snapshot.sh" --unattended --json --all-decisions --all-in-flight --all-recorded-prs > "$work/snapshot.json" 2> "$snap_err" \
     || fail "the fleet snapshot failed: $(tail -n1 "$snap_err")"
   jq -e '.schema == "fm-bearings.v1"' "$work/snapshot.json" >/dev/null 2>&1 \
     || fail "the fleet snapshot is not readable"

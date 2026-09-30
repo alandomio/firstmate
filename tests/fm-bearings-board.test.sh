@@ -869,14 +869,17 @@ make_live_runtime() {  # <home>
   cat > "$runtime/bin/fm-bearings-snapshot.sh" <<'SH'
 #!/usr/bin/env bash
 [ -n "${LIVE_SNAPSHOT_FAIL:-}" ] && { echo "fm-bearings-snapshot: simulated failure" >&2; exit 1; }
-all_decisions=false all_in_flight=false all_prs=false
+all_decisions=false all_in_flight=false all_prs=false unattended=false
 for arg in "$@"; do
   case "$arg" in
+    --unattended) unattended=true ;;
     --all-decisions) all_decisions=true ;;
     --all-in-flight) all_in_flight=true ;;
     --all-recorded-prs) all_prs=true ;;
   esac
 done
+# like the real reader, only --unattended skips the away-mode return guard
+[ "$unattended" = true ] || "$(dirname "$0")/fm-afk-return.sh" guard || exit $?
 jq --argjson cap "${LIVE_SNAPSHOT_CAP:-20}" --argjson d "$all_decisions" \
   --argjson f "$all_in_flight" --argjson p "$all_prs" '
   (if $d then . else .decisions_open |= .[:$cap] end)
@@ -1003,13 +1006,33 @@ test_refresh_does_nothing_until_enabled_and_published() {
 
   write_composed_board_payload "$home/payload.json"
   run_live_board "$home" build "$home/payload.json" >/dev/null || fail "the composed board did not build"
+  pass "refresh does nothing until the flag is on and a board exists"
+}
+
+# Away mode is when the captain watches the board from elsewhere, so the
+# read-only, model-free refresh must keep running through it and through the
+# return catch-up that follows.
+test_refresh_keeps_running_during_away_mode() {
+  local home out
+  home=$(make_home live-away)
+  make_live_runtime "$home" >/dev/null
+  write_live_snapshot "$home/snapshot.json"
+  write_composed_board_payload "$home/payload.json"
+  mkdir -p "$home/config"
+  printf 'on\n' > "$home/config/live-board"
+  run_live_board "$home" build "$home/payload.json" >/dev/null || fail "the composed board did not build"
+
   : > "$home/state/.afk"
-  cp "$home/.lavish/bearings-board.data.js" "$home/data-before.js"
   out=$(run_live_board "$home" refresh) || fail "refresh failed during away mode: $out"
-  assert_contains "$out" "skipped: away mode" "refresh did not step aside during away mode: $out"
-  cmp -s "$home/data-before.js" "$home/.lavish/bearings-board.data.js" \
-    || fail "refresh replaced the live data while away mode held fleet reads"
-  pass "refresh does nothing until the flag is on, a board exists, and away mode is clear"
+  assert_contains "$out" "refreshed: " "refresh stepped aside during away mode: $out"
+  extract_live_payload "$home/.lavish/bearings-board.data.js" | jq -e '.source == "live-refresh"' >/dev/null \
+    || fail "away mode left the board on its built data instead of a live refresh"
+
+  rm -f "$home/state/.afk"
+  printf 'pending\n' > "$home/state/.afk-return-catchup"
+  out=$(run_live_board "$home" refresh) || fail "refresh failed during the return catch-up: $out"
+  assert_contains "$out" "refreshed: " "refresh stepped aside during the return catch-up: $out"
+  pass "refresh keeps the board live during away mode and the return catch-up"
 }
 
 test_build_writes_the_live_data_file_and_the_composed_card_store() {
@@ -1345,6 +1368,7 @@ test_changing_the_selection_drops_a_stale_queued_mark
 test_build_accepts_an_optional_quota_section_and_refuses_a_malformed_one
 test_quota_panel_renders_values_and_says_why_anything_is_unavailable
 test_refresh_does_nothing_until_enabled_and_published
+test_refresh_keeps_running_during_away_mode
 test_build_writes_the_live_data_file_and_the_composed_card_store
 test_refresh_composes_a_live_payload_without_touching_the_page
 test_refresh_drops_a_malformed_stored_card_and_keeps_the_last_data_on_failure
