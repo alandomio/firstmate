@@ -12,7 +12,7 @@
 // that shim, since Node's own global FormData does not support the browser's
 // `new FormData(formElement)` reflection.
 //
-// Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1|throw> <mode:decision|decision-lost|decision-repick|dispatch|dispatch-regained|dispatch-lost|dispatch-repick|quota>
+// Usage: node fm-bearings-board-dom-harness.js <script-file> <payload-file> <bridge:0|1|throw> <mode:decision|decision-lost|decision-repick|dispatch|dispatch-regained|dispatch-lost|dispatch-repick|quota|live-*> [<update-file>...]
 // The bridge argument picks what window.lavish.queuePrompt does: 0 withholds
 // the bridge entirely, 1 accepts the call, throw raises.
 // dispatch-regained is dispatch run with <bridge:0>, clicked once, then given
@@ -29,6 +29,15 @@
 // panel: subText (its header note), providers (every non-empty text of each
 // provider card, in order), fillStyles (each usage bar's style), and stats
 // (how many stat tiles rendered, proving the rest of the board survived).
+// The live-* modes drive the page's live-data entry point
+// (window.fmBearingsBoardData) with each <update-file> payload in turn, the
+// way the page's timer-loaded data file does, after the captain action the
+// mode names: live-draft types an unsent answer into the first card,
+// live-queued queues an answer on it, live-idle touches nothing, and
+// live-dispatch picks and queues the first charted row. They report the
+// deck (key, title, freeform value, queued mark, note, and whether the node
+// is the one first rendered for that key, per card), the dispatch picks and
+// queued mark, the freshness line, and the answers queued so far.
 
 "use strict";
 const fs = require("fs");
@@ -76,7 +85,24 @@ class FakeNode {
   }
   get textContent() { return this._textContent; }
   set textContent(v) { this._textContent = v; }
-  appendChild(child) { child.parentNode = this; this.children.push(child); return child; }
+  appendChild(child) { return this.insertBefore(child, null); }
+  insertBefore(child, ref) {
+    if (child.parentNode) child.parentNode.removeChild(child);
+    child.parentNode = this;
+    const at = ref ? this.children.indexOf(ref) : -1;
+    if (at === -1) this.children.push(child); else this.children.splice(at, 0, child);
+    return child;
+  }
+  removeChild(child) {
+    const at = this.children.indexOf(child);
+    if (at !== -1) this.children.splice(at, 1);
+    child.parentNode = null;
+    return child;
+  }
+  contains(node) {
+    for (let n = node; n; n = n.parentNode) if (n === this) return true;
+    return false;
+  }
   setAttribute(k, v) { this.attributes[k] = String(v); }
   getAttribute(k) { return this.attributes[k]; }
   addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
@@ -106,7 +132,7 @@ function findAll(root, pred, out) {
 }
 
 const registry = {};
-["bb-provenance", "bb-stats", "bb-call-sub", "bb-call", "bb-stack-count", "bb-stack-prev",
+["bb-fresh", "bb-prs-section", "bb-prs", "bb-prs-sub", "bb-provenance", "bb-stats", "bb-call-sub", "bb-call", "bb-stack-count", "bb-stack-prev",
   "bb-stack-next", "bb-underway", "bb-landed", "bb-charted", "bb-charted-sub", "bb-dispatch",
   "bb-dispatch-count", "bb-dispatch-limit", "bb-dispatch-btn", "bb-quota", "bb-quota-sub"].forEach((id) => { registry[id] = new FakeNode("div"); });
 // stackNav = stackCount.parentNode in the real script - give it a wrapper so
@@ -121,6 +147,8 @@ registry["bearings-data"] = bearingsData;
 const bbMain = new FakeNode("div");
 
 const fakeDocument = {
+  activeElement: null,
+  head: new FakeNode("head"),
   getElementById(id) { return registry[id] || null; },
   querySelector(sel) { return sel === ".bb-main" ? bbMain : null; },
   createElement(tag) { return new FakeNode(tag); },
@@ -237,6 +265,64 @@ if (mode === "decision" || mode === "decision-lost" || mode === "decision-repick
       .map((n) => n.textContent)),
     fillStyles: findAll(box, (n) => n.classList.contains("bb-quota__fill")).map((n) => n.getAttribute("style")),
     stats: registry["bb-stats"].children.length,
+  });
+} else if (mode.startsWith("live-")) {
+  const deck = registry["bb-call"];
+  const ch = registry["bb-charted"];
+  const bar = registry["bb-dispatch"];
+  const firstNodes = {};
+  const keyOf = (card) => {
+    const form = findAll(card, (n) => n.tagName === "FORM")[0];
+    return form ? form.getAttribute("data-lavish-question") : null;
+  };
+  deck.children.forEach((card) => { const k = keyOf(card); if (k) firstNodes[k] = card; });
+  const first = deck.children[0];
+  const firstForm = first ? findAll(first, (n) => n.tagName === "FORM")[0] : null;
+  if (mode === "live-draft") {
+    const ff = findAll(firstForm, (n) => n.classList.contains("bb-freeform"))[0];
+    ff.value = "half-written answer";
+    ff.dispatch("input");
+  } else if (mode === "live-queued") {
+    const radio = findAll(firstForm, (n) => n.tagName === "INPUT" && n.type === "radio")[0];
+    if (radio) radio.checked = true;
+    else findAll(firstForm, (n) => n.classList.contains("bb-freeform"))[0].value = "my answer";
+    firstForm.dispatch("submit", { preventDefault() {} });
+  } else if (mode === "live-dispatch") {
+    const pick = findAll(ch, (n) => n.classList.contains("bb-pick"))[0];
+    pick.checked = true;
+    pick.dispatch("change");
+    registry["bb-dispatch-btn"].dispatch("click");
+  } else if (mode !== "live-idle") {
+    throw new Error("unknown mode: " + mode);
+  }
+  process.argv.slice(6).forEach((file) => {
+    fakeWindow.fmBearingsBoardData(JSON.parse(fs.readFileSync(file, "utf8")));
+  });
+  snapshot = () => ({
+    cards: deck.children.filter((c) => keyOf(c)).map((card) => {
+      const ff = findAll(card, (n) => n.classList.contains("bb-freeform"))[0];
+      const note = findAll(card, (n) => n.classList.contains("bb-card-note"))[0];
+      const k = keyOf(card);
+      return {
+        key: k,
+        title: findAll(card, (n) => n.classList.contains("bb-decision__title"))[0].textContent,
+        badges: findAll(card, (n) => n.classList.contains("fm-badge")).map((n) => n.textContent),
+        freeform: ff ? ff.value : null,
+        queued: card.classList.contains("is-queued"),
+        note: note ? note.textContent : "",
+        sameNode: firstNodes[k] === card,
+      };
+    }),
+    empty: deck.children.some((c) => c.classList.contains("bb-empty")),
+    picks: findAll(ch, (n) => n.classList.contains("bb-pick") && n.checked).map((n) => n.value),
+    chartedTitles: findAll(ch, (n) => n.classList.contains("bb-row__title")).map((n) => n.textContent),
+    barQueued: bar.classList.contains("is-queued"),
+    fresh: registry["bb-fresh"].textContent,
+    freshStale: registry["bb-fresh"].classList.contains("bb-fresh--stale"),
+    underway: findAll(registry["bb-underway"], (n) => n.classList.contains("bb-row__title")).map((n) => n.textContent),
+    prsHidden: registry["bb-prs-section"].hidden,
+    prs: findAll(registry["bb-prs"], (n) => n.classList.contains("bb-row__title")).map((n) => n.textContent),
+    queued: queueCalls.map((c) => c[1] && c[1].data),
   });
 } else {
   throw new Error("unknown mode: " + mode);

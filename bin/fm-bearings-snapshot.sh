@@ -59,6 +59,9 @@
 #   --all-recorded-prs include every locally recorded PR
 #   --all-unhealthy  include every unhealthy endpoint
 #   --all-pr-repos   query every discovered repository under --include-prs
+#   --unattended     skip the away-mode return guard below; only for a deterministic,
+#                    model-free reader that no captain request drives (the live
+#                    board refresh in bin/fm-bearings-board.sh), never for /bearings
 #   -h,--help        usage
 #
 # Output contract: `fm-bearings.v1`. Read-only; no locks, no mutation, no reports.
@@ -109,7 +112,7 @@ usage: fm-bearings-snapshot.sh [--json] [--include-prs] [--fields <list>]
                                [--all-secondmates] [--all-landed]
                                [--all-reports] [--all-queued]
                                [--all-recorded-prs] [--all-unhealthy]
-                               [--all-pr-repos]
+                               [--all-pr-repos] [--unattended]
 
 Compact bearings projection over fm-fleet-snapshot.sh. TOON by default.
 Default is LOCAL-ONLY (no network); --include-prs is the only path that fetches.
@@ -134,6 +137,8 @@ Opt-in surfaces: --fields bodies|paths|actions|endpoints, --all-in-flight,
   --all-decisions, --all-secondmates, --all-landed, --all-reports, --all-queued, --all-recorded-prs,
   --all-unhealthy, --all-pr-repos, --include-prs (adds candidate_prs).
 Raise FM_BEARINGS_PR_LIMIT to expand per-repository open-PR results.
+--unattended skips the away-mode return guard; only the live board's model-free refresh
+  uses it, never a captain request.
 EOF
 }
 
@@ -148,6 +153,7 @@ ALL_LANDED=0
 ALL_RECORDED_PRS=0
 ALL_UNHEALTHY=0
 ALL_PR_REPOS=0
+UNATTENDED=0
 FIELDS=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -162,6 +168,7 @@ while [ $# -gt 0 ]; do
     --all-recorded-prs) ALL_RECORDED_PRS=1 ;;
     --all-unhealthy) ALL_UNHEALTHY=1 ;;
     --all-pr-repos) ALL_PR_REPOS=1 ;;
+    --unattended) UNATTENDED=1 ;;
     --fields) shift; FIELDS=${1:-} ;;
     --fields=*) FIELDS=${1#--fields=} ;;
     -h|--help) usage; exit 0 ;;
@@ -174,8 +181,13 @@ command -v jq >/dev/null 2>&1 || { echo "fm-bearings-snapshot: jq not found" >&2
 
 # The deterministic return-catch-up owner must clear before this or any other
 # ordinary captain request proceeds. Bearings does not reproduce that policy;
-# it only consults the shared read-only gate.
-"$SCRIPT_DIR/fm-afk-return.sh" guard || exit $?
+# it only consults the shared read-only gate. --unattended skips it for the
+# live board's timer-driven refresh: this read is read-only and model-free, no
+# captain request is proceeding through it, and away mode is exactly when the
+# captain watches that board from elsewhere.
+if [ "$UNATTENDED" != 1 ]; then
+  "$SCRIPT_DIR/fm-afk-return.sh" guard || exit $?
+fi
 
 NOW=${FM_BEARINGS_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
 if [ "$ALL_LANDED" = 1 ] || [ "$ALL_SECONDMATES" = 1 ]; then

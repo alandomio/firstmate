@@ -291,6 +291,13 @@ a { color: inherit; text-decoration: none; }
 
 .bb-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--border-default); padding-top: 14px; }
 
+/* ---- live refresh: freshness line, row ages, and card notes ---- */
+.bb-fresh { color: var(--text-muted); }
+.bb-fresh--stale { color: var(--status-warn); font-weight: 700; white-space: normal; text-align: right; }
+.bb-row__age { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint); white-space: nowrap; }
+.bb-card-note { margin: 0; font-size: var(--fs-xs); line-height: 1.4; color: var(--ink-700);
+  background: var(--gold-100); border: 1px solid var(--gold-300); border-radius: var(--radius-xs); padding: 6px 9px; }
+
 @media (max-width: 900px) {
   .bb-cols { grid-template-columns: 1fr; }
 }
@@ -308,6 +315,7 @@ a { color: inherit; text-decoration: none; }
       </span>
       <span class="bb-brand__wm">bearings</span>
     </span>
+    <span class="bb-meta-mono bb-fresh" id="bb-fresh" role="status"></span>
   </div>
 </header>
 
@@ -385,6 +393,17 @@ a { color: inherit; text-decoration: none; }
     </section>
   </div>
 
+  <section class="bb-section" id="bb-prs-section" hidden>
+    <div class="bb-section__head">
+      <span class="fm-sign fm-sign--eyebrow">
+        <svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M6 9v12"/></svg>
+        Open pull requests
+      </span>
+      <span class="fm-sign fm-sign--muted" id="bb-prs-sub"></span>
+    </div>
+    <div class="fm-card"><div class="bb-rows" id="bb-prs"></div></div>
+  </section>
+
   <section class="bb-section">
     <div class="bb-section__head">
       <span class="fm-sign fm-sign--eyebrow">
@@ -434,6 +453,26 @@ __FM_BEARINGS_BOARD_DATA__
     main.appendChild(card);
   }
 
+  /* one structural check for the embedded payload and every live update:
+     it returns why a payload cannot render, or "" when it can */
+  function payloadProblem(d) {
+    if (!d || d.schema !== "fm-bearings-board.v1") {
+      return "Unsupported board data schema: " + (d && d.schema ? d.schema : "(none)");
+    }
+    var fleetLists = [d.captains_call, d.underway, d.landed, d.charted];
+    var callItemsValid = Array.isArray(d.captains_call) && d.captains_call.every(function (item) {
+      return item && typeof item === "object" &&
+        typeof item.key === "string" && item.key.length > 0 &&
+        typeof item.type === "string" && item.type.length > 0 &&
+        typeof item.title === "string" && item.title.length > 0 &&
+        Array.isArray(item.options);
+    });
+    if (!fleetLists.every(Array.isArray) || !callItemsValid) {
+      return "The board data does not have the required structure";
+    }
+    return "";
+  }
+
   var data;
   try {
     data = JSON.parse(document.getElementById("bearings-data").textContent);
@@ -441,62 +480,62 @@ __FM_BEARINGS_BOARD_DATA__
     renderBoardError("The board data is not valid JSON");
     return;
   }
-  if (!data || data.schema !== "fm-bearings-board.v1") {
-    renderBoardError("Unsupported board data schema: " + (data && data.schema ? data.schema : "(none)"));
-    return;
-  }
-  var fleetLists = [data.captains_call, data.underway, data.landed, data.charted];
-  var callItemsValid = Array.isArray(data.captains_call) && data.captains_call.every(function (item) {
-    return item && typeof item === "object" &&
-      typeof item.key === "string" && item.key.length > 0 &&
-      typeof item.type === "string" && item.type.length > 0 &&
-      typeof item.title === "string" && item.title.length > 0 &&
-      Array.isArray(item.options);
-  });
-  if (!fleetLists.every(Array.isArray) || !callItemsValid) {
-    renderBoardError("The board data does not have the required structure");
+  var problem = payloadProblem(data);
+  if (problem) {
+    renderBoardError(problem);
     return;
   }
 
-  try {
   function el(tag, cls, text) {
     var n = document.createElement(tag);
     if (cls) n.className = cls;
     if (text != null) n.textContent = text;
     return n;
   }
+  function byId(id) { return document.getElementById(id); }
+  function clear(node) { while (node.children.length) node.removeChild(node.children[0]); }
   function badge(tone, text) { return el("span", "fm-badge fm-badge--" + tone, text); }
   function utf8ByteLength(text) { return new TextEncoder().encode(text).length; }
+  function nowMs() { return new Date().getTime(); }
+  /* "3 min", "2 h", "4 days" - the age of an ISO timestamp, or "" */
+  function ageText(iso) {
+    var t = typeof iso === "string" ? new Date(iso).getTime() : NaN;
+    if (isNaN(t)) return "";
+    var mins = Math.max(0, Math.round((nowMs() - t) / 60000));
+    if (mins < 1) return "just now";
+    if (mins < 60) return mins + " min";
+    var hours = Math.round(mins / 60);
+    if (hours < 48) return hours + " h";
+    return Math.round(hours / 24) + " days";
+  }
   var CHECK_SVG = '<svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
-
-  document.getElementById("bb-provenance").textContent = data.schema + " · " + data.generated;
-
-  /* stat strip */
-  var callTotal = data.captains_call.length;
-  var stats = [
-    { n: callTotal, l: "need you", call: true },
-    { n: data.underway.length, l: "underway" },
-    { n: data.landed.length, l: "landed recently" },
-    { n: data.charted.length + (data.charted_more || 0), l: "charted next" }
-  ];
-  var strip = document.getElementById("bb-stats");
-  stats.forEach(function (s) {
-    var t = el("div", "bb-stat" + (s.call ? " bb-stat--call" : ""));
-    t.appendChild(el("span", "bb-stat__num", String(s.n)));
-    t.appendChild(el("span", "bb-stat__label", s.l));
-    strip.appendChild(t);
-  });
-  document.getElementById("bb-call-sub").textContent =
-    callTotal ? callTotal + " item" + (callTotal === 1 ? "" : "s") + " wait on you, captain" : "nothing needs you, captain";
 
   /* Reload, not rebuild: window.lavish is injected by the Lavish host runtime,
      and rebuilding the board re-establishes that session - the very action
      that was seen orphaning a queued answer live. renderBoardError's "ask
      firstmate to rebuild" idiom is therefore wrong advice on this path. */
   var ANSWER_BRIDGE_LOST = "Answer not sent - the board's connection is unavailable. Reload the board and try again.";
+  /* same reason the card says reload rather than rebuild: a rebuild restarts
+     the Lavish session that carries the queue, and that is what was seen
+     orphaning an order live */
+  var DISPATCH_BRIDGE_LOST = "Dispatch not sent - the board's connection is unavailable. Reload the board and try again.";
+  /* a live board is refreshed every minute or two; past this age its data is
+     visibly flagged as old rather than silently trusted */
+  var LIVE_STALE_MS = 6 * 60 * 1000;
 
-  /* Captain's Call deck: every item renders as the same full card */
-  var deck = document.getElementById("bb-call");
+  /* ---- Captain's Call deck: every item renders as the same full card ----
+     Cards are kept by key across live updates. A card the captain is using -
+     an option picked, words typed, focus inside, or an answer queued - is
+     never rebuilt under them; a fresh card replaces it only once it is idle. */
+  var deck = byId("bb-call");
+  var stackCount = byId("bb-stack-count");
+  var stackPrev = byId("bb-stack-prev");
+  var stackNext = byId("bb-stack-next");
+  var stackNav = stackCount.parentNode;
+  var entries = [];
+  var cards = [];
+  var active = 0;
+
   function ctxRow(k, v, rec) {
     var row = el("div", "bb-ctx__row" + (rec ? " bb-ctx__row--rec" : ""));
     row.appendChild(el("span", "bb-ctx__k", k));
@@ -504,17 +543,33 @@ __FM_BEARINGS_BOARD_DATA__
     return row;
   }
 
-  data.captains_call.forEach(function (item) {
+  function showCard(i) {
+    active = Math.max(0, Math.min(cards.length - 1, i));
+    cards.forEach(function (c, j) { c.hidden = j !== active; });
+    var answered = deck.querySelectorAll(".is-queued").length;
+    stackCount.textContent = "card " + (active + 1) + " of " + cards.length +
+      (answered ? " · " + answered + " answered" : "");
+    stackPrev.disabled = active === 0;
+    stackNext.disabled = active === cards.length - 1;
+    /* the pile thins as the deal approaches the bottom */
+    deck.classList.toggle("bb-call--penult", active === cards.length - 2);
+    deck.classList.toggle("bb-call--last", active === cards.length - 1);
+  }
+  stackPrev.addEventListener("click", function () { showCard(active - 1); });
+  stackNext.addEventListener("click", function () { showCard(active + 1); });
+
+  function buildCard(item) {
     var card = el("div", "fm-card fm-card--poster bb-decision");
     var pad = el("div", "bb-decision__pad");
+    var entry = { key: item.key, card: card, sig: JSON.stringify(item), inputs: [], note: null };
 
     var top = el("div", "bb-decision__top");
     if (item.type === "merge") {
       top.appendChild(badge("online", "checks green"));
       top.appendChild(badge(item.risk === "low" ? "neutral" : "warn", "risk " + item.risk));
     } else {
-      top.appendChild(badge("solid", "decision"));
-      top.appendChild(el("span", "bb-decision__repo", item.repo));
+      top.appendChild(item.raw ? badge("warn", "raw hold reason") : badge("solid", "decision"));
+      top.appendChild(el("span", "bb-decision__repo", item.repo || item.key));
     }
     pad.appendChild(top);
 
@@ -537,10 +592,11 @@ __FM_BEARINGS_BOARD_DATA__
       pr.href = item.pr_url; pr.target = "_blank"; pr.rel = "noopener";
       pad.appendChild(pr);
     }
+    entry.notePad = pad;
 
     var form = document.createElement("form");
     form.setAttribute("data-lavish-question", item.key);
-    var answerInputs = [];
+    var answerInputs = entry.inputs;
     var opts = el("div", "bb-opts");
     item.options.forEach(function (o) {
       var lab = el("label", "bb-opt");
@@ -639,81 +695,203 @@ __FM_BEARINGS_BOARD_DATA__
 
     pad.appendChild(form);
     card.appendChild(pad);
-    deck.appendChild(card);
-  });
-
-  /* stack navigation: one card at a time, dealt off the pile */
-  var cards = Array.prototype.slice.call(deck.children);
-  var active = 0;
-  var stackCount = document.getElementById("bb-stack-count");
-  var stackPrev = document.getElementById("bb-stack-prev");
-  var stackNext = document.getElementById("bb-stack-next");
-  var stackNav = stackCount.parentNode;
-  function showCard(i) {
-    active = Math.max(0, Math.min(cards.length - 1, i));
-    cards.forEach(function (c, j) { c.hidden = j !== active; });
-    var answered = deck.querySelectorAll(".is-queued").length;
-    stackCount.textContent = "card " + (active + 1) + " of " + cards.length +
-      (answered ? " · " + answered + " answered" : "");
-    stackPrev.disabled = active === 0;
-    stackNext.disabled = active === cards.length - 1;
-    /* the pile thins as the deal approaches the bottom */
-    deck.classList.toggle("bb-call--penult", active === cards.length - 2);
-    deck.classList.toggle("bb-call--last", active === cards.length - 1);
-  }
-  if (cards.length) {
-    stackPrev.addEventListener("click", function () { showCard(active - 1); });
-    stackNext.addEventListener("click", function () { showCard(active + 1); });
-    showCard(0);
-  } else {
-    deck.classList.add("bb-call--empty");
-    deck.appendChild(el("div", "bb-empty", "Nothing needs your action right now."));
-    stackNav.hidden = true;
+    return entry;
   }
 
-  /* Underway */
-  var uw = document.getElementById("bb-underway");
-  if (!data.underway.length) uw.appendChild(el("div", "bb-empty", "Nothing is underway."));
-  data.underway.forEach(function (t) {
-    var row = el("div", "bb-row");
-    row.appendChild(badge(t.state === "working" ? "online" : "info", t.state));
-    var main = el("div", "bb-row__main");
-    main.appendChild(el("div", "bb-row__title", t.doing));
-    /* captain-facing rows name the repo; the internal task id shows only when
-       no repo is known */
-    main.appendChild(el("div", "bb-row__sub", t.kind + " · " + (t.repo || t.id)));
-    row.appendChild(main);
-    uw.appendChild(row);
-  });
-
-  /* Landed */
-  var ld = document.getElementById("bb-landed");
-  if (!data.landed.length) ld.appendChild(el("div", "bb-empty", "No recent completions are in the current baseline."));
-  data.landed.forEach(function (t) {
-    var row = el("div", "bb-row");
-    var chk = el("span", "bb-row__check");
-    chk.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
-    row.appendChild(chk);
-    var main = el("div", "bb-row__main");
-    main.appendChild(el("div", "bb-row__title", t.what));
-    main.appendChild(el("div", "bb-row__sub", (t.repo || t.id) + " · " + t.owner));
-    row.appendChild(main);
-    if (t.pr_url) {
-      var a = el("a", "bb-row__pr", "#" + t.pr_url.split("/").pop());
-      a.href = t.pr_url; a.title = t.pr_url; a.target = "_blank"; a.rel = "noopener";
-      row.appendChild(a);
+  function hasDraft(entry) {
+    return entry.inputs.some(function (input) {
+      return input.type === "radio" ? input.checked : String(input.value || "").trim() !== "";
+    });
+  }
+  function holdsFocus(entry) {
+    var focused = document.activeElement;
+    return Boolean(focused && entry.card.contains && entry.card.contains(focused));
+  }
+  function inUse(entry) {
+    return hasDraft(entry) || holdsFocus(entry) || entry.card.classList.contains("is-queued");
+  }
+  function setNote(entry, text) {
+    if (!text) {
+      if (entry.note) { entry.notePad.removeChild(entry.note); entry.note = null; }
+      return;
     }
-    ld.appendChild(row);
-  });
+    if (!entry.note) {
+      entry.note = el("p", "bb-card-note");
+      entry.notePad.insertBefore(entry.note, entry.notePad.children[1] || null);
+    }
+    entry.note.textContent = text;
+  }
+
+  function renderCalls(list) {
+    var activeKey = entries[active] ? entries[active].key : null;
+    var focused = document.activeElement;
+    var selection = focused && typeof focused.selectionStart === "number" ?
+      [focused.selectionStart, focused.selectionEnd] : null;
+    var byKey = {};
+    entries.forEach(function (e) { byKey[e.key] = e; });
+    var seen = {};
+    var next = [];
+    list.forEach(function (item) {
+      seen[item.key] = true;
+      var sig = JSON.stringify(item);
+      var prev = byKey[item.key];
+      if (prev && (prev.sig === sig || inUse(prev))) {
+        setNote(prev, prev.sig === sig ? "" :
+          "Firstmate has newer text for this call; it shows once you have sent or cleared your answer here.");
+        next.push(prev);
+      } else {
+        next.push(buildCard(item));
+      }
+    });
+    /* a call that left the fleet keeps its card only while it holds unsent
+       words: a queued answer already lives in the Lavish queue */
+    entries.forEach(function (e) {
+      if (seen[e.key]) return;
+      if (hasDraft(e) && !e.card.classList.contains("is-queued")) {
+        setNote(e, "This call is no longer open on the fleet. Your unsent answer is kept here; send it only if it still applies.");
+        next.push(e);
+      }
+    });
+    var keep = next.map(function (e) { return e.card; });
+    Array.prototype.slice.call(deck.children).forEach(function (child) {
+      if (keep.indexOf(child) === -1) deck.removeChild(child);
+    });
+    keep.forEach(function (card, i) {
+      if (deck.children[i] !== card) deck.insertBefore(card, deck.children[i] || null);
+    });
+    /* moving a node can drop focus in a real browser; put the caret back */
+    if (focused && focused !== document.activeElement && focused.focus &&
+        keep.some(function (c) { return c.contains && c.contains(focused); })) {
+      focused.focus();
+      if (selection && focused.setSelectionRange) {
+        try { focused.setSelectionRange(selection[0], selection[1]); } catch (e) { /* not a text field */ }
+      }
+    }
+    entries = next;
+    cards = keep;
+    if (cards.length) {
+      deck.classList.remove("bb-call--empty");
+      stackNav.hidden = false;
+      var at = -1;
+      entries.forEach(function (e, i) { if (e.key === activeKey) at = i; });
+      showCard(at >= 0 ? at : Math.min(active, cards.length - 1));
+    } else {
+      deck.classList.add("bb-call--empty");
+      deck.classList.remove("bb-call--penult");
+      deck.classList.remove("bb-call--last");
+      deck.appendChild(el("div", "bb-empty", "Nothing needs your action right now."));
+      stackNav.hidden = true;
+    }
+  }
+
+  function stateTone(state) {
+    if (state === "working") return "online";
+    if (state === "blocked" || state === "failed") return "danger";
+    if (state === "needs-decision" || state === "paused" || state === "unknown") return "warn";
+    return "info";
+  }
+
+  function renderStats(d) {
+    var callTotal = d.captains_call.length;
+    var stats = [
+      { n: callTotal, l: "need you", call: true },
+      { n: d.underway.length, l: "underway" },
+      { n: d.landed.length, l: "landed recently" },
+      { n: d.charted.length + (d.charted_more || 0), l: "charted next" }
+    ];
+    var strip = byId("bb-stats");
+    clear(strip);
+    stats.forEach(function (s) {
+      var t = el("div", "bb-stat" + (s.call ? " bb-stat--call" : ""));
+      t.appendChild(el("span", "bb-stat__num", String(s.n)));
+      t.appendChild(el("span", "bb-stat__label", s.l));
+      strip.appendChild(t);
+    });
+    byId("bb-call-sub").textContent =
+      callTotal ? callTotal + " item" + (callTotal === 1 ? "" : "s") + " wait on you, captain" : "nothing needs you, captain";
+  }
+
+  /* Underway: the age is the time since the worker's last reported event */
+  function renderUnderway(d) {
+    var uw = byId("bb-underway");
+    clear(uw);
+    if (!d.underway.length) uw.appendChild(el("div", "bb-empty", "Nothing is underway."));
+    d.underway.forEach(function (t) {
+      var row = el("div", "bb-row");
+      row.appendChild(badge(stateTone(t.state), t.state));
+      var main = el("div", "bb-row__main");
+      main.appendChild(el("div", "bb-row__title", t.doing));
+      /* captain-facing rows name the repo; the internal task id shows only when
+         no repo is known */
+      main.appendChild(el("div", "bb-row__sub", t.kind + " · " + (t.repo || t.id)));
+      row.appendChild(main);
+      if (t.since) {
+        var age = el("span", "bb-row__age", ageText(t.since));
+        age.setAttribute("data-since", t.since);
+        age.title = "last reported " + t.since;
+        row.appendChild(age);
+      }
+      uw.appendChild(row);
+    });
+  }
+
+  function renderLanded(d) {
+    var ld = byId("bb-landed");
+    clear(ld);
+    if (!d.landed.length) ld.appendChild(el("div", "bb-empty", "No recent completions are in the current baseline."));
+    d.landed.forEach(function (t) {
+      var row = el("div", "bb-row");
+      var chk = el("span", "bb-row__check");
+      chk.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+      row.appendChild(chk);
+      var main = el("div", "bb-row__main");
+      main.appendChild(el("div", "bb-row__title", t.what));
+      main.appendChild(el("div", "bb-row__sub", (t.repo || t.id) + " · " + t.owner));
+      row.appendChild(main);
+      if (t.pr_url) {
+        var a = el("a", "bb-row__pr", "#" + t.pr_url.split("/").pop());
+        a.href = t.pr_url; a.title = t.pr_url; a.target = "_blank"; a.rel = "noopener";
+        row.appendChild(a);
+      }
+      ld.appendChild(row);
+    });
+  }
+
+  /* Open pull requests: an optional section, shown only when the payload
+     carries it; the state is what the worker last reported, not a live check */
+  function renderPrs(d) {
+    var section = byId("bb-prs-section");
+    var box = byId("bb-prs");
+    if (!section || !box) return;
+    clear(box);
+    if (!Array.isArray(d.prs)) { section.hidden = true; return; }
+    section.hidden = false;
+    var sub = byId("bb-prs-sub");
+    if (sub) sub.textContent = d.prs.length ? "as last reported by each worker" : "";
+    if (!d.prs.length) box.appendChild(el("div", "bb-empty", "No open pull requests are recorded."));
+    d.prs.forEach(function (p) {
+      var row = el("div", "bb-row");
+      row.appendChild(badge(stateTone(p.state), p.state || "unknown"));
+      var main = el("div", "bb-row__main");
+      main.appendChild(el("div", "bb-row__title", (p.repo || p.id) + " #" + String(p.url).split("/").pop()));
+      if (p.doing) main.appendChild(el("div", "bb-row__sub", p.doing));
+      row.appendChild(main);
+      var a = el("a", "bb-row__pr", "open");
+      a.href = p.url; a.title = p.url; a.target = "_blank"; a.rel = "noopener";
+      row.appendChild(a);
+      box.appendChild(row);
+    });
+  }
 
   /* Provider quota - optional payload section from bin/fm-bearings-quota.sh.
      It renders in its own guard so a malformed or absent section degrades to
      "non disponibile" without taking the fleet board down with it; it never
      shows a number the payload did not carry. */
-  (function renderQuota() {
-    var box = document.getElementById("bb-quota");
-    var sub = document.getElementById("bb-quota-sub");
+  function renderQuota(d) {
+    var box = byId("bb-quota");
+    var sub = byId("bb-quota-sub");
     if (!box) return;
+    clear(box);
     var STATUS_IT = {
       stale: "dati non aggiornati",
       auth_required: "accesso richiesto",
@@ -739,22 +917,22 @@ __FM_BEARINGS_BOARD_DATA__
     }
     function isPct(v) { return typeof v === "number" && v >= 0 && v <= 100; }
     function when(iso) {
-      var d = new Date(iso);
-      if (isNaN(d.getTime())) return iso;
+      var dt = new Date(iso);
+      if (isNaN(dt.getTime())) return iso;
       try {
-        return d.toLocaleString("it-IT",
+        return dt.toLocaleString("it-IT",
           { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
       } catch (e) {
-        return d.toISOString();
+        return dt.toISOString();
       }
     }
     function resetText(iso) { return "si azzera " + when(iso); }
     function unavailable(msg) {
-      box.innerHTML = "";
+      clear(box);
       box.appendChild(el("div", "bb-empty", "Quote non disponibili - " + msg + "."));
       if (sub) sub.textContent = "non disponibile";
     }
-    var q = data.quota;
+    var q = d.quota;
     if (!q || typeof q !== "object") { unavailable("questa board non contiene i dati di quota"); return; }
     try {
       if (!Array.isArray(q.providers) || !q.providers.length) {
@@ -807,15 +985,14 @@ __FM_BEARINGS_BOARD_DATA__
     } catch (e) {
       unavailable("i dati di quota non si possono mostrare");
     }
-  })();
+  }
 
-  /* Charted Next + dispatch picker */
-  var ch = document.getElementById("bb-charted");
-  var bar = document.getElementById("bb-dispatch");
-  var barCount = document.getElementById("bb-dispatch-count");
-  var barLimit = document.getElementById("bb-dispatch-limit");
-  var barBtn = document.getElementById("bb-dispatch-btn");
-  var anyPickable = false;
+  /* ---- Charted Next + dispatch picker ---- */
+  var ch = byId("bb-charted");
+  var bar = byId("bb-dispatch");
+  var barCount = byId("bb-dispatch-count");
+  var barLimit = byId("bb-dispatch-limit");
+  var barBtn = byId("bb-dispatch-btn");
 
   function pickedIds() {
     return Array.prototype.map.call(ch.querySelectorAll(".bb-pick:checked"), function (c) { return c.value; });
@@ -835,80 +1012,154 @@ __FM_BEARINGS_BOARD_DATA__
     barLimit.textContent = message;
     barLimit.classList.add("is-visible");
   }
-  /* same reason the card says reload rather than rebuild: a rebuild restarts
-     the Lavish session that carries the queue, and that is what was seen
-     orphaning an order live */
-  var DISPATCH_BRIDGE_LOST = "Dispatch not sent - the board's connection is unavailable. Reload the board and try again.";
 
-  if (!data.charted.length) ch.appendChild(el("div", "bb-empty", "Nothing is queued."));
-  data.charted.forEach(function (t) {
-    var row = el("div", "bb-row");
-    if (t.dispatchable) {
-      anyPickable = true;
-      var pick = document.createElement("input");
-      pick.type = "checkbox"; pick.className = "bb-pick"; pick.value = t.id;
-      pick.setAttribute("aria-label", "Pick " + t.id + " for dispatch");
-      pick.addEventListener("change", function () {
-        if (pick.checked && utf8ByteLength(pickedIds().join(",")) > 512) {
-          pick.checked = false;
+  /* picks survive a live update for every row that is still queued; the
+     queued mark survives only when the picks are exactly the ones sent */
+  function renderCharted(d) {
+    var before = pickedIds();
+    var wasQueued = bar.classList.contains("is-queued");
+    var anyPickable = false;
+    clear(ch);
+    if (!d.charted.length) ch.appendChild(el("div", "bb-empty", "Nothing is queued."));
+    d.charted.forEach(function (t) {
+      var row = el("div", "bb-row");
+      if (t.dispatchable) {
+        anyPickable = true;
+        var pick = document.createElement("input");
+        pick.type = "checkbox"; pick.className = "bb-pick"; pick.value = t.id;
+        pick.checked = before.indexOf(t.id) !== -1;
+        pick.setAttribute("aria-label", "Pick " + t.id + " for dispatch");
+        pick.addEventListener("change", function () {
+          if (pick.checked && utf8ByteLength(pickedIds().join(",")) > 512) {
+            pick.checked = false;
+            refreshBar();
+            refuseDispatch("Selection limit reached (512 bytes maximum).");
+            return;
+          }
           refreshBar();
-          refuseDispatch("Selection limit reached (512 bytes maximum).");
-          return;
-        }
-        refreshBar();
-      });
-      row.appendChild(pick);
-    } else {
-      row.appendChild(el("span", "bb-pick-spacer"));
+        });
+        row.appendChild(pick);
+      } else {
+        row.appendChild(el("span", "bb-pick-spacer"));
+      }
+      var main = el("div", "bb-row__main");
+      main.appendChild(el("div", "bb-row__title", t.title));
+      /* second line keeps the title uncrowded in the half-width column */
+      var chSub = t.repo || t.id;
+      main.appendChild(el("div", "bb-row__sub", t.reason ? t.reason + " · " + chSub : chSub));
+      row.appendChild(main);
+      if (t.reason) row.appendChild(badge("warn", "waiting"));
+      ch.appendChild(row);
+    });
+    var chartedTotal = d.charted.length + (d.charted_more || 0);
+    byId("bb-charted-sub").textContent =
+      d.charted_more ? "showing " + d.charted.length + " of " + chartedTotal : "";
+    if (d.charted_more) {
+      ch.appendChild(el("span", "bb-morechip", "+" + d.charted_more + " more queued - ask firstmate for the full chart"));
     }
-    var main = el("div", "bb-row__main");
-    main.appendChild(el("div", "bb-row__title", t.title));
-    /* second line keeps the title uncrowded in the half-width column */
-    var chSub = t.repo || t.id;
-    main.appendChild(el("div", "bb-row__sub", t.reason ? t.reason + " · " + chSub : chSub));
-    row.appendChild(main);
-    if (t.reason) row.appendChild(badge("warn", "waiting"));
-    ch.appendChild(row);
-  });
-  var chartedTotal = data.charted.length + (data.charted_more || 0);
-  document.getElementById("bb-charted-sub").textContent =
-    data.charted_more ? "showing " + data.charted.length + " of " + chartedTotal : "";
-  if (data.charted_more) {
-    ch.appendChild(el("span", "bb-morechip", "+" + data.charted_more + " more queued - ask firstmate for the full chart"));
+    bar.hidden = !anyPickable;
+    if (anyPickable) {
+      var after = pickedIds();
+      refreshBar();
+      if (wasQueued && after.length && after.join(",") === before.join(",")) bar.classList.add("is-queued");
+    }
   }
 
-  if (anyPickable) {
-    bar.hidden = false;
+  barBtn.addEventListener("click", function () {
     refreshBar();
-    barBtn.addEventListener("click", function () {
-      refreshBar();
-      var ids = pickedIds();
-      var dispatchAnswer = ids.join(",");
-      if (!ids.length) return;
-      if (utf8ByteLength(dispatchAnswer) > 512) {
-        refuseDispatch("Selection is too long to queue (512 bytes maximum).");
-        return;
-      }
-      if (!window.lavish || !window.lavish.queuePrompt) {
-        refuseDispatch(DISPATCH_BRIDGE_LOST);
-        return;
-      }
-      try {
-        window.lavish.queuePrompt(
-          "Dispatch order - start this queued work now: " + ids.join(", "),
-          { tag: "choice", text: "Dispatch: " + ids.join(", "), element: bar,
-            queueKey: "dispatch.charted",
-            data: { question: "dispatch.charted", answer: dispatchAnswer } }
-        );
-      } catch (err) {
-        refuseDispatch(DISPATCH_BRIDGE_LOST);
-        return;
-      }
-      bar.classList.add("is-queued");
+    var ids = pickedIds();
+    var dispatchAnswer = ids.join(",");
+    if (!ids.length) return;
+    if (utf8ByteLength(dispatchAnswer) > 512) {
+      refuseDispatch("Selection is too long to queue (512 bytes maximum).");
+      return;
+    }
+    if (!window.lavish || !window.lavish.queuePrompt) {
+      refuseDispatch(DISPATCH_BRIDGE_LOST);
+      return;
+    }
+    try {
+      window.lavish.queuePrompt(
+        "Dispatch order - start this queued work now: " + ids.join(", "),
+        { tag: "choice", text: "Dispatch: " + ids.join(", "), element: bar,
+          queueKey: "dispatch.charted",
+          data: { question: "dispatch.charted", answer: dispatchAnswer } }
+      );
+    } catch (err) {
+      refuseDispatch(DISPATCH_BRIDGE_LOST);
+      return;
+    }
+    bar.classList.add("is-queued");
+  });
+
+  /* freshness: how old the data on screen is, flagged once a live board's
+     refresh has visibly stopped */
+  function renderFreshness() {
+    var fresh = byId("bb-fresh");
+    if (!fresh) return;
+    var age = ageText(data.generated);
+    var live = data.source === "live-refresh";
+    var t = new Date(data.generated).getTime();
+    var stale = live && !isNaN(t) && nowMs() - t > LIVE_STALE_MS;
+    fresh.textContent = !age ? "" :
+      stale ? "live refresh has not run for " + age + " - this data may be out of date" :
+      (live ? "live · updated " : "updated ") + (age === "just now" ? age : age + " ago");
+    fresh.classList.toggle("bb-fresh--stale", stale);
+  }
+  function tickAges() {
+    renderFreshness();
+    Array.prototype.forEach.call(document.querySelectorAll ? document.querySelectorAll("[data-since]") : [], function (n) {
+      n.textContent = ageText(n.getAttribute("data-since"));
     });
   }
+
+  function renderAll(d) {
+    byId("bb-provenance").textContent = d.schema + " · " + d.generated + (d.source ? " · " + d.source : "");
+    renderStats(d);
+    renderCalls(d.captains_call);
+    renderUnderway(d);
+    renderLanded(d);
+    renderPrs(d);
+    renderQuota(d);
+    renderCharted(d);
+    renderFreshness();
+  }
+
+  try {
+    renderAll(data);
   } catch (e) {
     renderBoardError("The board data could not be rendered");
+    return;
+  }
+
+  /* ---- live data: the page re-reads its sibling data file on a timer ----
+     bin/fm-bearings-board.sh refresh replaces bearings-board.data.js without
+     touching this page, so Lavish never reloads it; the file hands its
+     payload to fmBearingsBoardData, which re-renders in place. A malformed or
+     unreadable update is ignored and the board keeps what it already shows. */
+  window.fmBearingsBoardData = function (next) {
+    if (payloadProblem(next)) return;
+    if (next.generated === data.generated && next.source === data.source) return;
+    var previous = data;
+    data = next;
+    try {
+      renderAll(next);
+    } catch (e) {
+      data = previous;
+    }
+  };
+  function loadLiveData() {
+    var parent = document.head || document.body;
+    if (!parent) return;
+    var s = document.createElement("script");
+    s.src = "bearings-board.data.js?t=" + nowMs();
+    s.onload = s.onerror = function () { if (s.parentNode) s.parentNode.removeChild(s); };
+    parent.appendChild(s);
+  }
+  if (typeof setInterval === "function") {
+    loadLiveData();
+    setInterval(loadLiveData, 30000);
+    setInterval(tickAges, 30000);
   }
 })();
 </script>

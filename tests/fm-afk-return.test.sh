@@ -117,6 +117,13 @@ test_return_gate_orders_catchup_before_bearings() {
   set -e
   [ "$rc" -eq 3 ] || fail "Bearings should refuse behind the return gate (rc=$rc): $out"
   assert_contains "$out" 'return catch-up is pending' "Bearings refusal did not point to the shared return owner"
+  # The live board's timer-driven refresh is not a captain request: its
+  # read-only, model-free read must keep working behind the same gate.
+  out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" "$ROOT/bin/fm-bearings-snapshot.sh" --unattended --json 2>&1) \
+    || fail "the unattended Bearings read refused behind the return gate: $out"
+  printf '%s' "$out" | jq -e '.schema == "fm-bearings.v1"' >/dev/null \
+    || fail "the unattended Bearings read did not produce a snapshot behind the return gate: $out"
+  [ -s "$gate" ] || fail "the unattended Bearings read disturbed the return gate"
 
   # Restart/re-entry is idempotent: no second stop, no duplicate catch-up line,
   # and the same unresolved blocker remains authoritative.

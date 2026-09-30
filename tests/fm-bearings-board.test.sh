@@ -858,6 +858,497 @@ test_build_refuses_a_template_without_exactly_one_slot() {
   pass "build refuses a template without exactly one data slot"
 }
 
+# ---- live board: deterministic refresh ------------------------------------
+
+# A runtime copy of bin/ whose snapshot and quota readers print fixtures, so
+# refresh composes from a known fleet without a real fleet or network.
+make_live_runtime() {  # <home>
+  local home=$1 runtime="$1/runtime"
+  mkdir -p "$runtime"
+  cp -R "$ROOT/bin" "$runtime/bin"
+  cat > "$runtime/bin/fm-bearings-snapshot.sh" <<'SH'
+#!/usr/bin/env bash
+[ -n "${LIVE_SNAPSHOT_FAIL:-}" ] && { echo "fm-bearings-snapshot: simulated failure" >&2; exit 1; }
+all_decisions=false all_in_flight=false all_prs=false unattended=false
+for arg in "$@"; do
+  case "$arg" in
+    --unattended) unattended=true ;;
+    --all-decisions) all_decisions=true ;;
+    --all-in-flight) all_in_flight=true ;;
+    --all-recorded-prs) all_prs=true ;;
+  esac
+done
+# like the real reader, only --unattended skips the away-mode return guard
+[ "$unattended" = true ] || "$(dirname "$0")/fm-afk-return.sh" guard || exit $?
+jq --argjson cap "${LIVE_SNAPSHOT_CAP:-20}" --argjson d "$all_decisions" \
+  --argjson f "$all_in_flight" --argjson p "$all_prs" '
+  (if $d then . else .decisions_open |= .[:$cap] end)
+  | (if $f then . else .in_flight |= .[:$cap] end)
+  | (if $p then . else .recorded_prs |= .[:$cap] end)' "$LIVE_SNAPSHOT_FIXTURE"
+SH
+  cat > "$runtime/bin/fm-bearings-quota.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' '{"source":"quota-axi","generated":null,"available":false,"status":"tool_missing","detail":"quota-axi is not installed","providers":[]}'
+SH
+  chmod +x "$runtime/bin/fm-bearings-snapshot.sh" "$runtime/bin/fm-bearings-quota.sh"
+  cat > "$home/fakebin/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${LAVISH_CALLS:-/dev/null}"
+exit 0
+SH
+  chmod +x "$home/fakebin/lavish-axi"
+  printf '%s\n' "$runtime"
+}
+
+run_live_board() {  # <home> <args...>
+  local home=$1
+  shift
+  PATH="$home/fakebin:$PATH" FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROCEVENT_CLAIM_ROOT="$home/procevent-claims" \
+    FM_BEARINGS_BOARD_TEMPLATE="$ROOT/.agents/skills/bearings/assets/board-template.html" \
+    LIVE_SNAPSHOT_FIXTURE="$home/snapshot.json" LAVISH_CALLS="$home/lavish-calls" \
+    "$home/runtime/bin/fm-bearings-board.sh" "$@"
+}
+
+write_live_snapshot() {  # <path>
+  cat > "$1" <<'EOF'
+{
+  "schema": "fm-bearings.v1",
+  "home": "alan/test-home",
+  "generated": "2026-09-30T07:00:00Z",
+  "prs": "not_requested",
+  "in_flight": [
+    { "id": "ship-a", "kind": "ship", "state": "done", "doing": "checks green: PR ready for review" },
+    { "id": "scout-b", "kind": "scout", "state": "working", "doing": "reading the export job" }
+  ],
+  "secondmates": [
+    { "id": "android", "state": "active_child_work", "doing": "one child task working", "age_seconds": 120 },
+    { "id": "ios", "state": "unknown", "doing": "structured home state invalid", "reason": "home state unreadable", "age_seconds": 5 }
+  ],
+  "decisions_open": [
+    { "id": "composed-call", "key": "composed-call", "verb": "captain-hold", "summary": "terse raw reason", "owner": "(main)" },
+    { "id": "new-call", "key": "new-call", "verb": "captain-hold", "summary": "Pick the export window: nightly or weekly, why now - the disk fills on Friday", "owner": "(main)" }
+  ],
+  "landed": [
+    { "id": "old-fix", "what": "Old fix", "artifact": "https://github.com/example/widget/pull/7", "owner": "(main)" }
+  ],
+  "gates": [
+    { "id": "free-work", "title": "Free work", "blocked_by": "-", "reason": "-", "owner": "(main)" },
+    { "id": "blocked-work", "title": "Blocked work", "blocked_by": "free-work", "reason": "-", "owner": "(main)" },
+    { "id": "(main-inventory)", "title": "in-flight backlog item has no child metadata", "blocked_by": "-", "reason": "main inventory", "owner": "(main)" }
+  ],
+  "reports": [],
+  "recorded_prs": [
+    { "id": "ship-a", "url": "https://github.com/example/widget/pull/9" },
+    { "id": "landed-already", "url": "https://gitlab.com/example/api/-/merge_requests/3" }
+  ],
+  "omitted": [ { "surface": "gates showing 3 of 6", "reveal": "--all-queued" } ]
+}
+EOF
+}
+
+# The composed payload firstmate built earlier: one card still open, one merge
+# card for an in-flight PR, and two cards whose calls are gone.
+write_composed_board_payload() {  # <path>
+  cat > "$1" <<'EOF'
+{
+  "schema": "fm-bearings-board.v1",
+  "home": "alan/test-home",
+  "generated": "2026-09-30T06:00:00Z",
+  "prs_live": false,
+  "captains_call": [
+    { "key": "composed-call", "type": "decision", "repo": "widget", "title": "Composed title",
+      "about": "Composed about text", "decide": "Ship it?", "close": "release",
+      "options": [ { "value": "yes", "label": "Yes" }, { "value": "no", "label": "No" } ],
+      "allow_freeform": true },
+    { "key": "merge.ship-a", "type": "merge", "repo": "widget", "title": "Merge: widget fix",
+      "detail": "fixes the widget", "risk": "low", "pr_url": "https://github.com/example/widget/pull/9",
+      "options": [ { "value": "merge", "label": "Merge now" }, { "value": "hold", "label": "Not yet" } ],
+      "allow_freeform": true },
+    { "key": "answered-call", "type": "decision", "repo": "widget", "title": "Already answered",
+      "options": [], "allow_freeform": true },
+    { "key": "merge.landed-already", "type": "merge", "repo": "api", "title": "Merge: gone",
+      "risk": "low", "options": [ { "value": "merge", "label": "Merge now" } ], "allow_freeform": true },
+    { "key": "raw-copy", "type": "decision", "repo": null, "title": "A raw card copied back",
+      "options": [], "allow_freeform": true, "raw": true }
+  ],
+  "underway": [],
+  "landed": [],
+  "charted": []
+}
+EOF
+}
+
+# The live data file is a script that hands its payload to the page; pull the
+# JSON argument back out of it.
+extract_live_payload() {  # <data-file>
+  perl -0pe 's/\A.*?\}\)\(//s; s/\);\s*\z//s' "$1"
+}
+
+test_refresh_does_nothing_until_enabled_and_published() {
+  local home out
+  home=$(make_home live-gates)
+  make_live_runtime "$home" >/dev/null
+  write_live_snapshot "$home/snapshot.json"
+
+  out=$(run_live_board "$home" refresh) || fail "refresh failed while the live board is off: $out"
+  assert_contains "$out" "skipped: the live board is off" "refresh did not say the live board is off: $out"
+  mkdir -p "$home/config"
+  printf 'off\n' > "$home/config/live-board"
+  out=$(run_live_board "$home" refresh) || fail "refresh failed with the flag set to off: $out"
+  assert_contains "$out" "skipped: the live board is off" "a non-on flag enabled the live board: $out"
+
+  printf '\non\n' > "$home/config/live-board"
+  out=$(run_live_board "$home" refresh) || fail "refresh failed before any board was published: $out"
+  assert_contains "$out" "skipped: no board has been published" "refresh did not say no board exists: $out"
+  assert_absent "$home/.lavish/bearings-board.data.js" "refresh wrote live data with no published board"
+
+  write_composed_board_payload "$home/payload.json"
+  run_live_board "$home" build "$home/payload.json" >/dev/null || fail "the composed board did not build"
+  pass "refresh does nothing until the flag is on and a board exists"
+}
+
+# Away mode is when the captain watches the board from elsewhere, so the
+# read-only, model-free refresh must keep running through it and through the
+# return catch-up that follows.
+test_refresh_keeps_running_during_away_mode() {
+  local home out
+  home=$(make_home live-away)
+  make_live_runtime "$home" >/dev/null
+  write_live_snapshot "$home/snapshot.json"
+  write_composed_board_payload "$home/payload.json"
+  mkdir -p "$home/config"
+  printf 'on\n' > "$home/config/live-board"
+  run_live_board "$home" build "$home/payload.json" >/dev/null || fail "the composed board did not build"
+
+  : > "$home/state/.afk"
+  out=$(run_live_board "$home" refresh) || fail "refresh failed during away mode: $out"
+  assert_contains "$out" "refreshed: " "refresh stepped aside during away mode: $out"
+  extract_live_payload "$home/.lavish/bearings-board.data.js" | jq -e '.source == "live-refresh"' >/dev/null \
+    || fail "away mode left the board on its built data instead of a live refresh"
+
+  rm -f "$home/state/.afk"
+  printf 'pending\n' > "$home/state/.afk-return-catchup"
+  out=$(run_live_board "$home" refresh) || fail "refresh failed during the return catch-up: $out"
+  assert_contains "$out" "refreshed: " "refresh stepped aside during the return catch-up: $out"
+  pass "refresh keeps the board live during away mode and the return catch-up"
+}
+
+test_build_writes_the_live_data_file_and_the_composed_card_store() {
+  local home
+  home=$(make_home live-build)
+  make_live_runtime "$home" >/dev/null
+  write_composed_board_payload "$home/payload.json"
+  run_live_board "$home" build "$home/payload.json" >/dev/null || fail "the composed board did not build"
+
+  extract_live_payload "$home/.lavish/bearings-board.data.js" | jq -S . > "$home/live.json" \
+    || fail "the live data file does not carry a readable payload"
+  jq -S . "$home/payload.json" > "$home/expected.json"
+  diff -u "$home/expected.json" "$home/live.json" >/dev/null \
+    || fail "the live data file written by build is not the built payload"
+  jq -e '.schema == "fm-bearings-board-cards.v1"
+      and ([.cards[].key] == ["composed-call", "merge.ship-a", "answered-call", "merge.landed-already"])' \
+    "$home/data/bearings-board-cards.json" >/dev/null \
+    || fail "the composed-card store does not hold exactly the composed (non-raw) cards: $(cat "$home/data/bearings-board-cards.json")"
+  [ "$(stat -c %a "$home/data/bearings-board-cards.json" 2>/dev/null \
+      || stat -f %Lp "$home/data/bearings-board-cards.json" 2>/dev/null)" = 600 ] \
+    || fail "the composed-card store is not private"
+  pass "build writes the live data file and the composed-card store"
+}
+
+test_refresh_composes_a_live_payload_without_touching_the_page() {
+  local home out live board_sum records
+  home=$(make_home live-compose)
+  make_live_runtime "$home" >/dev/null
+  write_live_snapshot "$home/snapshot.json"
+  write_composed_board_payload "$home/payload.json"
+  mkdir -p "$home/config"
+  printf 'on\n' > "$home/config/live-board"
+  fm_write_meta "$home/state/ship-a.meta" "project=/somewhere/projects/widget" "kind=ship"
+  printf 'done: PR ready\n' > "$home/state/ship-a.status"
+  TZ=UTC touch -t 202609300700.00 "$home/state/ship-a.status"
+  run_live_board "$home" build "$home/payload.json" >/dev/null || fail "the composed board did not build"
+  board_sum=$(cksum < "$home/.lavish/bearings-board.html")
+  : > "$home/lavish-calls"
+  records=$(find "$home/state/procevent" -name '*.source' | wc -l | tr -d ' ')
+
+  out=$(run_live_board "$home" refresh) || fail "refresh failed: $out"
+  assert_contains "$out" "refreshed: $home/.lavish/bearings-board.data.js" "refresh did not report the data file: $out"
+  [ "$(cksum < "$home/.lavish/bearings-board.html")" = "$board_sum" ] \
+    || fail "refresh rewrote the board page, which would reload it under the captain"
+  [ ! -s "$home/lavish-calls" ] || fail "refresh touched the Lavish session: $(cat "$home/lavish-calls")"
+  [ "$(find "$home/state/procevent" -name '*.source' | wc -l | tr -d ' ')" = "$records" ] \
+    || fail "refresh changed the answer-source registrations"
+
+  live="$home/live.json"
+  extract_live_payload "$home/.lavish/bearings-board.data.js" > "$live" \
+    || fail "the refreshed data file is not readable"
+  jq -e '.source == "live-refresh" and .home == "alan/test-home"' "$live" >/dev/null \
+    || fail "the refreshed payload is not marked as a live refresh: $(cat "$live")"
+  [ "$(jq -c '[.captains_call[].key]' "$live")" = '["composed-call","merge.ship-a","new-call"]' ] \
+    || fail "Captain's Call is not the open composed cards followed by the new raw one: $(jq -c '[.captains_call[].key]' "$live")"
+  jq -e '.captains_call[0] | .title == "Composed title" and .about == "Composed about text"
+      and .close == "release" and (.raw | not)' "$live" >/dev/null \
+    || fail "a still-open call lost firstmate's composed text: $(jq -c '.captains_call[0]' "$live")"
+  jq -e '.captains_call[2] | .raw == true and .close == "release" and .options == []
+      and .allow_freeform == true and .title == "Pick the export window"
+      and (.about | startswith("Pick the export window: nightly or weekly"))' "$live" >/dev/null \
+    || fail "a new hold did not become a clearly marked raw card: $(jq -c '.captains_call[2]' "$live")"
+  jq -e '[.underway[] | {id, kind, repo}] == [
+      {id: "ship-a", kind: "ship", repo: "widget"},
+      {id: "scout-b", kind: "scout", repo: null},
+      {id: "android", kind: "second mate", repo: null}]' "$live" >/dev/null \
+    || fail "Underway is not every in-flight worker plus active second mates: $(jq -c '.underway' "$live")"
+  jq -e '.underway[0].since == "2026-09-30T07:00:00Z"' "$live" >/dev/null || fail "a worker's age does not come from its last status event: $(jq -c '.underway[0]' "$live")"
+  jq -e '[.prs[] | {id, repo, state}] == [
+      {id: "ship-a", repo: "widget", state: "done"},
+      {id: "landed-already", repo: "api", state: "not in flight"}]' "$live" >/dev/null \
+    || fail "the open PR list is not the recorded PRs with their last state: $(jq -c '.prs' "$live")"
+  jq -e '[.charted[] | {id, dispatchable}] == [
+      {id: "free-work", dispatchable: true},
+      {id: "blocked-work", dispatchable: false},
+      {id: "main-inventory", dispatchable: false},
+      {id: "ios", dispatchable: false}] and .charted[1].reason == "waiting on free-work"
+      and .charted_more == 3' "$live" >/dev/null \
+    || fail "Charted Next did not come from the snapshot gates: $(jq -c '{charted, charted_more}' "$live")"
+  jq -e '.landed[0] | .repo == "widget" and .pr_url == "https://github.com/example/widget/pull/7"' "$live" >/dev/null \
+    || fail "Recently Landed lost its PR link: $(jq -c '.landed' "$live")"
+  jq -e '.quota.status == "tool_missing"' "$live" >/dev/null || fail "the quota section was not carried"
+  pass "refresh composes a live payload from the fleet without touching the page or its session"
+}
+
+test_refresh_drops_a_malformed_stored_card_and_keeps_the_last_data_on_failure() {
+  local home out rc
+  home=$(make_home live-robust)
+  make_live_runtime "$home" >/dev/null
+  write_live_snapshot "$home/snapshot.json"
+  write_composed_board_payload "$home/payload.json"
+  mkdir -p "$home/config"
+  printf 'on\n' > "$home/config/live-board"
+  run_live_board "$home" build "$home/payload.json" >/dev/null || fail "the composed board did not build"
+  jq '.cards[0].allow_freeform = false' "$home/data/bearings-board-cards.json" > "$home/cards.tmp" \
+    && mv "$home/cards.tmp" "$home/data/bearings-board-cards.json"
+
+  out=$(run_live_board "$home" refresh) || fail "one malformed stored card failed the whole refresh: $out"
+  extract_live_payload "$home/.lavish/bearings-board.data.js" \
+    | jq -e '.captains_call[] | select(.key == "composed-call") | .raw == true' >/dev/null \
+    || fail "an open call whose stored card is malformed did not fall back to its raw card"
+
+  cp "$home/.lavish/bearings-board.data.js" "$home/data-before.js"
+  set +e
+  out=$(LIVE_SNAPSHOT_FAIL=1 run_live_board "$home" refresh 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "refresh reported success when the fleet snapshot failed"
+  assert_contains "$out" "simulated failure" "the snapshot failure was not named: $out"
+  cmp -s "$home/data-before.js" "$home/.lavish/bearings-board.data.js" \
+    || fail "a failed refresh replaced the last good live data"
+  pass "refresh drops a malformed stored card and keeps the last data when the snapshot fails"
+}
+
+test_refresh_sees_every_open_hold_and_in_flight_task_past_the_snapshot_caps() {
+  local home out live
+  home=$(make_home live-uncapped)
+  make_live_runtime "$home" >/dev/null
+  write_live_snapshot "$home/snapshot.json"
+  write_composed_board_payload "$home/payload.json"
+  mkdir -p "$home/config"
+  printf 'on\n' > "$home/config/live-board"
+  run_live_board "$home" build "$home/payload.json" >/dev/null || fail "the composed board did not build"
+
+  out=$(LIVE_SNAPSHOT_CAP=1 run_live_board "$home" refresh) || fail "refresh failed: $out"
+  live="$home/live.json"
+  extract_live_payload "$home/.lavish/bearings-board.data.js" > "$live" \
+    || fail "the refreshed data file is not readable"
+  [ "$(jq -c '[.captains_call[].key]' "$live")" = '["composed-call","merge.ship-a","new-call"]' ] \
+    || fail "an open hold past the snapshot cap was dropped: $(jq -c '[.captains_call[].key]' "$live")"
+  [ "$(jq -c '[.underway[].id]' "$live")" = '["ship-a","scout-b","android"]' ] \
+    || fail "an in-flight task past the snapshot cap was dropped: $(jq -c '[.underway[].id]' "$live")"
+  [ "$(jq -c '[.prs[].id]' "$live")" = '["ship-a","landed-already"]' ] \
+    || fail "a recorded PR past the snapshot cap was dropped: $(jq -c '[.prs[].id]' "$live")"
+  pass "refresh sees every open hold, in-flight task, and recorded PR past the snapshot caps"
+}
+
+test_systemd_units_escape_quotes_backslashes_and_specifiers() {
+  local home out parsed
+  home=$(make_home 'live-units-q"b\\s%h')
+  out=$(PATH="/odd\\dir:/q\"uote:/pct%n:$PATH" run_board "$home" systemd-units) || fail "systemd-units failed: $out"
+  parsed=$(printf '%s\n' "$out" | sed -n 's/^Environment="FM_HOME=\(.*\)"$/\1/p' \
+    | perl -pe 's/%%/%/g; s/\\(["\\])/$1/g')
+  [ "$parsed" = "$(cd "$home" && pwd -P)" ] || fail "FM_HOME does not round-trip through systemd quoting: $parsed"
+  parsed=$(printf '%s\n' "$out" | sed -n 's/^Environment="PATH=\(.*\)"$/\1/p' \
+    | perl -pe 's/%%/%/g; s/\\(["\\])/$1/g')
+  case "$parsed" in
+    *'/odd\dir:/q"uote:/pct%n:'*) ;;
+    *) fail "PATH does not round-trip through systemd quoting: $parsed" ;;
+  esac
+  pass "systemd-units escapes quotes, backslashes, and specifiers in quoted values"
+}
+
+test_systemd_units_run_refresh_for_this_home() {
+  local home out rc name
+  home=$(make_home live-units)
+  out=$(run_board "$home" systemd-units) || fail "systemd-units failed: $out"
+  assert_contains "$out" "ExecStart=\"$ROOT/bin/fm-bearings-board.sh\" refresh" "the service does not run refresh: $out"
+  assert_contains "$out" "Environment=\"FM_HOME=$(cd "$home" && pwd -P)\"" "the service is not bound to this home: $out"
+  assert_contains "$out" "OnUnitInactiveSec=90s" "the default cadence is not 90 seconds: $out"
+  assert_contains "$out" "WantedBy=timers.target" "the timer cannot be enabled: $out"
+
+  set +e
+  run_board "$home" systemd-units --interval 10 >/dev/null 2>&1
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "an interval below the minimum was accepted"
+
+  out=$(run_board "$home" systemd-units --interval 60 --dir "$home/units") || fail "writing the units failed: $out"
+  name=$(printf '%s\n' "$out" | sed -n 's/^unit: //p')
+  assert_present "$home/units/${name%.timer}.service" "the service unit was not written"
+  grep -qxF 'OnUnitInactiveSec=60s' "$home/units/$name" || fail "the written timer does not carry the chosen cadence"
+  pass "systemd-units describes a user timer that runs refresh for this home"
+}
+
+# ---- live board: the page keeps what the captain is doing -----------------
+
+write_live_dom_payload() {  # <path> <generated> <source> <calls-json> [<charted-json>] [<extra-jq>]
+  jq -n --arg generated "$2" --arg source "$3" --argjson calls "$4" --argjson charted "${5:-[]}" '
+    { schema: "fm-bearings-board.v1", home: "dom-test", generated: $generated, source: $source,
+      prs_live: false, captains_call: $calls, underway: [], landed: [], charted: $charted, charted_more: 0 }' \
+    | jq "${6:-.}" > "$1"
+}
+
+live_card() {  # <key> <title> [<raw>]
+  jq -cn --arg key "$1" --arg title "$2" --arg raw "${3:-}" '
+    { key: $key, type: "decision", repo: "sample", title: $title,
+      options: [ { value: "yes", label: "Yes" }, { value: "no", label: "No" } ], allow_freeform: true }
+    + (if $raw == "" then {} else { raw: true, close: "release", options: [] } end)'
+}
+
+run_live_dom() {  # <mode> <bridge> <payload> [<update>...]
+  local runtime="$TMP_ROOT/live-runtime.js" mode=$1 bridge=$2
+  shift 2
+  extract_runtime_script "$ROOT/.agents/skills/bearings/assets/board-template.html" "$runtime"
+  node "$ROOT/tests/fm-bearings-board-dom-harness.js" "$runtime" "$1" "$bridge" "$mode" "${@:2}"
+}
+
+test_a_live_update_keeps_an_unsent_answer_and_its_card() {
+  command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
+  local dir="$TMP_ROOT/live-draft" out a b c
+  mkdir -p "$dir"
+  a=$(live_card call-a "First call"); b=$(live_card call-b "Second call"); c=$(live_card call-c "Third call")
+  write_live_dom_payload "$dir/start.json" 2026-09-30T07:00:00Z live-refresh "[$a,$b]"
+  a=$(live_card call-a "First call, reworded")
+  write_live_dom_payload "$dir/update.json" 2026-09-30T07:01:30Z live-refresh "[$a,$c]"
+
+  out=$(run_live_dom live-draft 1 "$dir/start.json" "$dir/update.json" 2>&1) \
+    || fail "the DOM harness crashed on a live update: $out"
+  [ "$(printf '%s' "$out" | jq -c '[.cards[].key]')" = '["call-a","call-c"]' ] \
+    || fail "the deck is not the updated calls: $out"
+  printf '%s' "$out" | jq -e '.cards[0] | .sameNode and .freeform == "half-written answer"
+      and .title == "First call" and (.note | test("newer text"))' >/dev/null \
+    || fail "a live update rebuilt or lost the card the captain was typing into: $out"
+  printf '%s' "$out" | jq -e '.cards[1] | .title == "Third call" and (.queued | not)' >/dev/null \
+    || fail "a new call did not appear on a live update: $out"
+
+  write_live_dom_payload "$dir/gone.json" 2026-09-30T07:03:00Z live-refresh "[$c]"
+  out=$(run_live_dom live-draft 1 "$dir/start.json" "$dir/gone.json" 2>&1) \
+    || fail "the DOM harness crashed when a drafted call left the fleet: $out"
+  printf '%s' "$out" | jq -e '[.cards[].key] == ["call-c", "call-a"]
+      and (.cards[1] | .freeform == "half-written answer" and (.note | test("no longer open")))' >/dev/null \
+    || fail "an unsent answer was dropped when its call left the fleet: $out"
+  pass "a live update never rebuilds or drops a card holding an unsent answer"
+}
+
+test_a_live_update_keeps_a_queued_answer_until_its_call_closes() {
+  command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
+  local dir="$TMP_ROOT/live-queued" out a b
+  mkdir -p "$dir"
+  a=$(live_card call-a "First call"); b=$(live_card call-b "Second call")
+  write_live_dom_payload "$dir/start.json" 2026-09-30T07:00:00Z live-refresh "[$a,$b]"
+  a=$(live_card call-a "First call, reworded")
+  write_live_dom_payload "$dir/reworded.json" 2026-09-30T07:01:30Z live-refresh "[$a,$b]"
+  write_live_dom_payload "$dir/closed.json" 2026-09-30T07:03:00Z live-refresh "[$b]"
+
+  out=$(run_live_dom live-queued 1 "$dir/start.json" "$dir/reworded.json" 2>&1) \
+    || fail "the DOM harness crashed on a live update after an answer was queued: $out"
+  printf '%s' "$out" | jq -e '.cards[0] | .sameNode and .queued and .title == "First call"' >/dev/null \
+    || fail "a live update rebuilt a card whose answer is queued: $out"
+  printf '%s' "$out" | jq -e '.queued == [{question: "call-a", answer: "yes"}]' >/dev/null \
+    || fail "the queued answer was not the one sent: $out"
+
+  out=$(run_live_dom live-queued 1 "$dir/start.json" "$dir/reworded.json" "$dir/closed.json" 2>&1) \
+    || fail "the DOM harness crashed when a queued call closed: $out"
+  [ "$(printf '%s' "$out" | jq -c '[.cards[].key]')" = '["call-b"]' ] \
+    || fail "a closed call's card stayed on the board after its answer was queued: $out"
+  pass "a queued answer's card stays as sent until its call closes"
+}
+
+test_a_live_update_refreshes_an_idle_card_and_ignores_a_bad_update() {
+  command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
+  local dir="$TMP_ROOT/live-idle" out a
+  mkdir -p "$dir"
+  a=$(live_card call-a "First call")
+  write_live_dom_payload "$dir/start.json" 2026-09-30T07:00:00Z live-refresh "[$a]"
+  a=$(live_card call-a "First call, reworded")
+  write_live_dom_payload "$dir/update.json" 2026-09-30T07:01:30Z live-refresh "[$a]"
+  printf '{"schema":"fm-bearings-board.v0","generated":"2026-09-30T07:02:00Z"}\n' > "$dir/bad.json"
+
+  out=$(run_live_dom live-idle 1 "$dir/start.json" "$dir/update.json" "$dir/bad.json" 2>&1) \
+    || fail "the DOM harness crashed on an idle live update: $out"
+  printf '%s' "$out" | jq -e '.cards == [.cards[0]] and (.cards[0] | .title == "First call, reworded" and .note == "")' \
+    >/dev/null || fail "an idle card did not take the updated text, or a bad update replaced it: $out"
+  pass "an idle card takes new text and a malformed update is ignored"
+}
+
+test_a_live_update_keeps_dispatch_picks_that_still_apply() {
+  command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
+  local dir="$TMP_ROOT/live-dispatch" out row1 row2
+  mkdir -p "$dir"
+  row1='{"id":"queued-one","repo":"sample","title":"Queued one","reason":"","dispatchable":true}'
+  row2='{"id":"queued-two","repo":"sample","title":"Queued two","reason":"","dispatchable":true}'
+  write_live_dom_payload "$dir/start.json" 2026-09-30T07:00:00Z live-refresh '[]' "[$row1]"
+  write_live_dom_payload "$dir/more.json" 2026-09-30T07:01:30Z live-refresh '[]' "[$row1,$row2]"
+  write_live_dom_payload "$dir/gone.json" 2026-09-30T07:03:00Z live-refresh '[]' "[$row2]"
+
+  out=$(run_live_dom live-dispatch 1 "$dir/start.json" "$dir/more.json" 2>&1) \
+    || fail "the DOM harness crashed on a live update after a dispatch pick: $out"
+  printf '%s' "$out" | jq -e '.picks == ["queued-one"] and .barQueued
+      and .chartedTitles == ["Queued one", "Queued two"]' >/dev/null \
+    || fail "a live update dropped a dispatch pick or its queued mark: $out"
+
+  out=$(run_live_dom live-dispatch 1 "$dir/start.json" "$dir/more.json" "$dir/gone.json" 2>&1) \
+    || fail "the DOM harness crashed when a picked row left Charted Next: $out"
+  printf '%s' "$out" | jq -e '.picks == [] and (.barQueued | not)' >/dev/null \
+    || fail "a pick for a row that left Charted Next survived, or the bar still claims it queued: $out"
+  pass "dispatch picks and their queued mark survive a live update while they still apply"
+}
+
+test_a_raw_card_and_freshness_are_shown_plainly() {
+  command -v node >/dev/null 2>&1 || { echo "skip: node not found (DOM harness)"; return 0; }
+  local dir="$TMP_ROOT/live-raw" out raw
+  mkdir -p "$dir"
+  raw=$(live_card raw-call "New hold, not yet written up" raw)
+  write_live_dom_payload "$dir/start.json" 2020-01-01T00:00:00Z live-refresh "[$raw]" '[]' \
+    '.prs = [{id: "ship-a", repo: "widget", url: "https://github.com/example/widget/pull/9", state: "done", doing: "checks green"}]'
+
+  out=$(run_live_dom live-queued 1 "$dir/start.json" 2>&1) \
+    || fail "the DOM harness crashed on a raw card: $out"
+  printf '%s' "$out" | jq -e '.cards[0].badges | index("raw hold reason") != null' >/dev/null \
+    || fail "a raw card is not marked as the raw hold reason: $out"
+  printf '%s' "$out" | jq -e '.queued == [{question: "raw-call", answer: "my answer", close: "release"}]' >/dev/null \
+    || fail "a raw card's free-text answer did not queue with the release close mode: $out"
+  printf '%s' "$out" | jq -e '.freshStale and (.fresh | test("has not run"))' >/dev/null \
+    || fail "an old live payload was not flagged as out of date: $out"
+  printf '%s' "$out" | jq -e '(.prsHidden | not) and .prs == ["widget #9"]' >/dev/null \
+    || fail "the open pull requests section did not render: $out"
+
+  write_live_dom_payload "$dir/composed.json" 2020-01-01T00:00:00Z firstmate '[]'
+  out=$(run_live_dom live-idle 1 "$dir/composed.json" 2>&1) || fail "the DOM harness crashed: $out"
+  printf '%s' "$out" | jq -e '(.freshStale | not) and .prsHidden and .empty' >/dev/null \
+    || fail "a firstmate-built board was flagged stale or showed an empty PR section: $out"
+  pass "a raw card is marked plainly, old live data is flagged, and the PR list renders"
+}
+
 test_path_is_stable_and_home_scoped
 test_build_refuses_malformed_payloads_before_touching_the_board
 test_build_injects_binds_then_arms
@@ -876,3 +1367,16 @@ test_a_throwing_bridge_is_refused_like_a_missing_one
 test_changing_the_selection_drops_a_stale_queued_mark
 test_build_accepts_an_optional_quota_section_and_refuses_a_malformed_one
 test_quota_panel_renders_values_and_says_why_anything_is_unavailable
+test_refresh_does_nothing_until_enabled_and_published
+test_refresh_keeps_running_during_away_mode
+test_build_writes_the_live_data_file_and_the_composed_card_store
+test_refresh_composes_a_live_payload_without_touching_the_page
+test_refresh_drops_a_malformed_stored_card_and_keeps_the_last_data_on_failure
+test_refresh_sees_every_open_hold_and_in_flight_task_past_the_snapshot_caps
+test_systemd_units_run_refresh_for_this_home
+test_systemd_units_escape_quotes_backslashes_and_specifiers
+test_a_live_update_keeps_an_unsent_answer_and_its_card
+test_a_live_update_keeps_a_queued_answer_until_its_call_closes
+test_a_live_update_refreshes_an_idle_card_and_ignores_a_bad_update
+test_a_live_update_keeps_dispatch_picks_that_still_apply
+test_a_raw_card_and_freshness_are_shown_plainly

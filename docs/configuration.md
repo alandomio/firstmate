@@ -701,6 +701,56 @@ A declared `paused:` or `captain-held:` recheck is not this rule's business: tho
 Safety valve: `state/.presented-absorbed-since-<key>` tracks how long the rule has continuously absorbed that window; once that reaches `FM_PAUSE_REMIND_SECS` (default one day) the wake surfaces for real, the marker resets, and the next absorb window starts.
 Same digest contract as the other absorbers, tagged `source: "rule"`.
 
+## Live fleet board (config/live-board)
+
+The `/bearings lavish` fleet board can keep itself current between firstmate's own rebuilds, with no model call.
+Off by default; `config/live-board`'s first non-blank line must be exactly `on`.
+The flag is local to this home and is not inherited by secondmate homes.
+When it is on, `bin/fm-bearings-board.sh refresh` regenerates the board's data from `bin/fm-bearings-snapshot.sh --json` and `bin/fm-bearings-quota.sh`; that script's header owns the exact composition rules.
+A refresh never rewrites the board page and never touches its Lavish session: it replaces only the sibling data file `.lavish/bearings-board.data.js`, which the open page re-reads every 30 seconds and renders in place.
+Lavish reloads the page only when the page file itself changes ([`docs/verification/live-board.md`](verification/live-board.md)), so a refresh cannot reload the board under the captain.
+The page keeps every Captain's Call card the captain is using - an option picked, words typed, focus inside, or an answer queued - and says on the card when newer text is waiting.
+A call that leaves the fleet keeps its card only while it holds unsent words, because a queued answer already sits in Lavish's own queue until the captain sends it.
+Answers use the unchanged channel: `build` binds the board to `bin/fm-captain-hold.sh`'s keyed-answer intake and arms it as a Lavish process-event source, and a merge answer keeps the `bearings` skill's merge-click safeguards.
+
+Every `build` replaces the private store `data/bearings-board-cards.json` with the Captain's Call cards firstmate composed for that board, and a refresh reuses a stored card for as long as its call stays open.
+A new captain hold with no composed card yet shows as a raw card, badged "raw hold reason", carrying the hold's own recorded reason and answerable in free text only.
+A raw card's answer lifts the hold instead of closing the task, because the card cannot tell a question from held work; firstmate finishes the call when the answer arrives.
+
+To turn it on:
+
+```sh
+printf 'on\n' > config/live-board
+# build the board once with /bearings lavish; until then every refresh prints "skipped:"
+bin/fm-bearings-board.sh systemd-units --dir ~/.config/systemd/user
+systemctl --user daemon-reload
+systemctl --user enable --now fm-live-board-<n>.timer   # the name from the printed unit: line
+```
+
+The timer runs a refresh 90 seconds after the previous one finished by default; pass `--interval <seconds>` (minimum 30) to `systemd-units` to change it.
+`journalctl --user -u fm-live-board-<n>.service` shows each run's `refreshed:` or `skipped:` line.
+Where systemd is unavailable, run `bin/fm-bearings-board.sh loop [--interval <seconds>]` under a supervisor of your own, such as launchd or a tmux pane.
+Removing the flag makes every run a no-op, and `systemctl --user disable --now fm-live-board-<n>.timer` stops the timer.
+
+A refresh keeps running during away mode and its return catch-up, when the captain is most likely to watch the board from elsewhere: it is not a captain request, so it reads the fleet with `bin/fm-bearings-snapshot.sh --unattended`, the one read that skips the return guard (`bin/fm-afk-return.sh guard`) every `/bearings` request still honors.
+The page flags live data older than six minutes as possibly out of date.
+The open pull request list is what each worker last reported locally; a refresh makes no GitHub or GitLab call.
+
+### Reaching the board over Tailscale (optional)
+
+The board is served by Lavish, which binds to loopback and serves an unauthenticated page that can read local files, so exposing it is a deliberate choice and is off by default.
+To open it from your own devices on your tailnet, keep Lavish on loopback, let it accept the tailnet name, and put Tailscale Serve in front of its port (default 4387, `LAVISH_AXI_PORT`):
+
+```sh
+# in the environment that starts the Lavish server (firstmate's, before /bearings lavish;
+# run `lavish-axi stop` first if a server is already running)
+export LAVISH_AXI_ALLOWED_HOSTS=<machine>.<tailnet>.ts.net
+tailscale serve --bg --https=443 http://127.0.0.1:4387
+```
+
+Then open `https://<machine>.<tailnet>.ts.net/session/<key>`, where `<key>` is the session key in the board URL `build` printed.
+Use `tailscale serve`, never `tailscale funnel`, which would publish the page to the internet; `tailscale serve reset` turns the exposure off.
+
 ## Process-to-event sources (state/procevent)
 
 A long-polling external process is registered as a *source* through its adapter, whose header and `--help` own the commands and flags.

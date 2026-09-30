@@ -98,6 +98,7 @@ Compose the payload from the same snapshot with the same ranking judgment as the
 
 Run `build` once after composing the payload.
 Its serve-first sequence publishes the board, establishes or resumes its Lavish session with `lavish-axi`, and only then binds and arms the polling source; use the session URL it prints in the chat digest.
+`build` also stores the Captain's Call cards you composed, so when the live board is on (`docs/configuration.md` "Live fleet board") its deterministic refresh keeps showing your composed text between builds and marks a hold you have not composed yet as a raw card.
 Never bind or arm the board before that session exists.
 Never run `lavish-axi poll` for the board yourself: the armed source's supervised runner owns the blocking poll, and the watcher's ordinary reconcile restarts it, so no conversational turn ever blocks on the board.
 
@@ -105,6 +106,7 @@ Never run `lavish-axi poll` for the board yourself: the armed source's supervise
 
 A board answer arrives as an ordinary `procevent lavish <source-id> <sequence>` check wake. Identify it by comparing the wake source id with `bin/fm-procevent-lavish.sh source-id "$(bin/fm-bearings-board.sh path)"`, regardless of which answer kinds the result contains; then load `process-event-sources` and follow its contract for the result read, adapter classification, and the handled acknowledgement.
 Decision answers need no routing from you: the runner feeds the board's binding into `bin/fm-captain-hold.sh`'s one keyed-answer intake, which closes or releases each answered captain-held task at answer time; reconcile any `skipped:` key yourself with a direct `answer`, and when the captain's answer is "later", record it as a deferral with `tasks-axi hold <id> ... --until <date>` instead of a closure.
+An answer to a raw card (a live-board card for a hold you had not composed yet) arrives with the release close mode, so it lifts the hold without closing the task; read the recorded answer and finish the call yourself - close a question-shaped task, or let held work proceed.
 Route the non-decision keys yourself:
 
 - `merge.<task-id>` is the captain's explicit merge order; follow the merge ruling below.
