@@ -67,6 +67,7 @@ case "$service $op" in
     src=$1 dst=$2 delete=0
     shift 2
     for a in "$@"; do [ "$a" = --delete ] && delete=1; done
+    [ ! -s "$root/.slow-sync" ] || sleep "$(cat "$root/.slow-sync")"
     [ ! -e "$root/.fail-sync" ] || { echo 'upload failed' >&2; exit 1; }
     case "$src" in s3://*) src=$(local_of "$src") ;; esac
     case "$dst" in s3://*) dst=$(local_of "$dst") ;; esac
@@ -165,6 +166,23 @@ hf() {  # <home> <args...>
 lock() {  # <home>
   FM_HOME="$1" "$ROOT/bin/fm-lock.sh"
 }
+
+# wait_outcome <home>: block until the detached backup worker the last `check`
+# started has recorded its outcome and released its lock.
+wait_outcome() {
+  local home=$1 i=0 out="$1/state/.handoff-backup-outcome" lk="$1/state/.handoff-backup-worker.lock"
+  while [ "$i" -lt 600 ]; do
+    if [ -f "$out" ] && ! grep -qx 'result=running' "$out" && [ ! -e "$lk" ] && [ ! -L "$lk" ]; then
+      return 0
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+  fail "the detached backup worker in $home never recorded an outcome"
+}
+
+# sync_calls: how many data/ uploads the stub aws has seen.
+sync_calls() { grep -c '^s3 sync .* s3://' "$S3ROOT/.calls" 2>/dev/null || true; }
 
 reset_bucket() { rm -rf "$S3ROOT"; mkdir -p "$S3ROOT"; }
 
@@ -312,14 +330,20 @@ test_backup_check_uploads_when_due_and_detects_lost_lease() {
   [ "$(wc -l < "$S3ROOT/.calls")" -eq "$calls" ] || fail "check before the interval should not touch the bucket"
   printf 'task\n' > "$laptop/data/backlog.md"
   out=$(hf "$laptop" check 2>&1)
+  [ -z "$out" ] || fail "starting a backup should be silent: $out"
+  wait_outcome "$laptop"
+  out=$(hf "$laptop" check 2>&1)
   [ -z "$out" ] || fail "a successful backup should be silent: $out"
+  [ ! -e "$laptop/state/.handoff-backup-outcome" ] || fail "the next check should consume the outcome"
   assert_grep "two" "$S3ROOT/fm-test-bucket/firstmate/data/notes.md"
   assert_grep "machine=laptop" "$S3ROOT/fm-test-bucket/firstmate/lease"
   printf 'three\n' >> "$laptop/data/notes.md"
-  out=$(FM_HANDOFF_BACKUP_INTERVAL=1 FM_HOME="$laptop" "$HANDOFF" check 2>&1)
   sleep 1
   out=$(FM_HANDOFF_BACKUP_INTERVAL=1 FM_HOME="$laptop" "$HANDOFF" check 2>&1)
   [ -z "$out" ] || fail "an interval backup should be silent: $out"
+  wait_outcome "$laptop"
+  out=$(hf "$laptop" check 2>&1)
+  [ -z "$out" ] || fail "a finished interval backup should be silent: $out"
   assert_grep "three" "$S3ROOT/fm-test-bucket/firstmate/data/notes.md"
   hf "$ec2" prendi --force >/dev/null 2>&1 || fail "ec2 force"
   printf 'more\n' > "$laptop/data/backlog.md"
@@ -362,6 +386,8 @@ test_backup_check_tolerates_slow_links_and_transient_failures() {
   printf 'x\n' > "$laptop/data/backlog.md"
   printf '3\n' > "$S3ROOT/.slow"
   out=$(FM_CHECK_TIMEOUT=20 FM_HOME="$laptop" "$HANDOFF" check 2>&1)
+  wait_outcome "$laptop"
+  out=$(FM_CHECK_TIMEOUT=20 FM_HOME="$laptop" "$HANDOFF" check 2>&1)
   rm -f "$S3ROOT/.slow"
   [ -z "$out" ] || fail "a slow but working link must not report a failure: $out"
   assert_grep "x" "$S3ROOT/fm-test-bucket/firstmate/data/backlog.md"
@@ -376,6 +402,9 @@ test_backup_check_tolerates_slow_links_and_transient_failures() {
   rm -f "$S3ROOT/.offline"
   out=$(hf "$laptop" check 2>&1)
   [ -z "$out" ] || fail "recovery should be silent: $out"
+  wait_outcome "$laptop"
+  out=$(hf "$laptop" check 2>&1)
+  [ -z "$out" ] || fail "a finished recovery upload should be silent: $out"
   [ ! -e "$laptop/state/.handoff-backup-failures" ] || fail "a successful upload should clear the failure count"
   printf 'z\n' > "$laptop/data/backlog.md"
   : > "$S3ROOT/.offline"
@@ -386,6 +415,88 @@ test_backup_check_tolerates_slow_links_and_transient_failures() {
   assert_contains "$out" "bucket is unreachable" "a stale last upload should report at once"
   rm -f "$S3ROOT/.offline"
   pass "the backup check gives the lease read a real share of the budget and reports only repeated or stale failures"
+}
+
+test_backup_check_starts_a_detached_single_flight_upload() {
+  local laptop out t0 t1 before
+  reset_bucket
+  laptop=$(new_home detached-laptop laptop)
+  hf "$laptop" prendi >/dev/null 2>&1 || fail "prendi"
+  printf 'x\n' > "$laptop/data/backlog.md"
+  printf '4\n' > "$S3ROOT/.slow-sync"
+  before=$(sync_calls)
+  t0=$(date +%s)
+  out=$(hf "$laptop" check 2>&1)
+  t1=$(date +%s)
+  [ -z "$out" ] || fail "starting a detached upload should be silent: $out"
+  [ $((t1 - t0)) -lt 3 ] || fail "check must not wait for the upload (took $((t1 - t0))s with a 4s sync)"
+  # the worker is alive: a second check and a direct second worker start nothing
+  out=$(hf "$laptop" check 2>&1)
+  [ -z "$out" ] || fail "a check while the upload runs should be silent: $out"
+  hf "$laptop" backup-worker >/dev/null 2>&1 || fail "a second worker should exit quietly"
+  out=$(hf "$laptop" status 2>&1)
+  assert_contains "$out" "background upload: running" "status should show the running upload"
+  wait_outcome "$laptop"
+  [ "$(( $(sync_calls) - before ))" -eq 1 ] || fail "exactly one upload must run, saw $(( $(sync_calls) - before ))"
+  assert_grep "x" "$S3ROOT/fm-test-bucket/firstmate/data/backlog.md"
+  out=$(hf "$laptop" status 2>&1)
+  assert_contains "$out" "background upload: idle" "status should show the finished upload"
+  rm -f "$S3ROOT/.slow-sync"
+  pass "check returns at once and never runs two uploads at once"
+}
+
+test_backup_outcomes_are_reported_by_the_next_check() {
+  local laptop out
+  reset_bucket
+  laptop=$(new_home outcome-laptop laptop)
+  hf "$laptop" prendi >/dev/null 2>&1 || fail "prendi"
+  : > "$S3ROOT/.fail-sync"
+  printf 'a\n' > "$laptop/data/backlog.md"
+  out=$(hf "$laptop" check 2>&1)
+  wait_outcome "$laptop"
+  assert_grep "result=failed" "$laptop/state/.handoff-backup-outcome"
+  out=$(hf "$laptop" check 2>&1)
+  [ -z "$out" ] || fail "the first failed upload should stay silent: $out"
+  wait_outcome "$laptop"
+  out=$(hf "$laptop" check 2>&1)
+  [ -z "$out" ] || fail "the second failed upload should stay silent: $out"
+  wait_outcome "$laptop"
+  out=$(hf "$laptop" check 2>&1)
+  assert_contains "$out" "uploading data/ failed" "the third consecutive failed upload should report"
+  rm -f "$S3ROOT/.fail-sync"
+  out=$(hf "$laptop" check 2>&1)
+  wait_outcome "$laptop"
+  out=$(hf "$laptop" check 2>&1)
+  [ -z "$out" ] || fail "a successful upload after failures should be silent: $out"
+  [ ! -e "$laptop/state/.handoff-backup-failures" ] || fail "a successful upload should clear the failure count"
+  # a worker that died without recording an outcome counts as one failed upload
+  printf 'result=running\ndetail=\nat=x\n' > "$laptop/state/.handoff-backup-outcome"
+  out=$(FM_HANDOFF_ALARM_FAILURES=1 FM_HOME="$laptop" "$HANDOFF" check 2>&1)
+  assert_contains "$out" "worker stopped before finishing" "a dead worker should be reported"
+  pass "the next check reports a failed or vanished upload only after repeated failures"
+}
+
+test_detached_upload_refuses_when_the_lease_was_lost() {
+  local laptop ec2 out
+  reset_bucket
+  laptop=$(new_home lost-worker-laptop laptop)
+  ec2=$(new_home lost-worker-ec2 ec2)
+  printf 'base\n' > "$laptop/data/backlog.md"
+  hf "$laptop" prendi >/dev/null 2>&1 || fail "prendi"
+  printf 'mine\n' > "$laptop/data/backlog.md"
+  hf "$ec2" prendi --force >/dev/null 2>&1 || fail "ec2 force"
+  # the lease changed hands after check's read: the worker must re-verify it
+  hf "$laptop" backup-worker >/dev/null 2>&1
+  assert_grep "result=lost" "$laptop/state/.handoff-backup-outcome"
+  assert_grep "base" "$S3ROOT/fm-test-bucket/firstmate/data/backlog.md"
+  assert_no_grep "mine" "$S3ROOT/fm-test-bucket/firstmate/data/backlog.md"
+  [ -f "$laptop/state/.handoff-refused" ] || fail "a lost lease should write the refusal marker"
+  out=$(hf "$laptop" check 2>&1)
+  assert_contains "$out" "lost the helm to ec2" "the next check should report the lost lease"
+  out=$(hf "$laptop" check 2>&1)
+  [ -z "$out" ] || fail "the lost lease should be reported once: $out"
+  lock "$laptop" >/dev/null 2>&1 && fail "after losing the lease fm-lock must refuse"
+  pass "the detached upload re-verifies the lease and refuses when it is lost"
 }
 
 test_unfinished_prendi_never_uploads() {
@@ -541,6 +652,9 @@ test_forced_takeover_records_it_and_returning_machine_keeps_its_changes
 test_backup_check_uploads_when_due_and_detects_lost_lease
 test_unreachable_bucket_allows_only_the_last_holder
 test_backup_check_tolerates_slow_links_and_transient_failures
+test_backup_check_starts_a_detached_single_flight_upload
+test_backup_outcomes_are_reported_by_the_next_check
+test_detached_upload_refuses_when_the_lease_was_lost
 test_unfinished_prendi_never_uploads
 test_forced_takeover_of_an_empty_bucket_is_recorded
 test_idle_probe
