@@ -1,0 +1,31 @@
+ok - path prints the stable home-scoped board location
+ok - build refuses malformed payloads before touching the board
+ok - build injects the payload, binds any-origin, then arms the source
+not-autohandled: lavish-916d8bf49b653631 (left for the handler; still unacknowledged)
+ok - registration can consume answers only after any-origin binding exists
+ok - build establishes the Lavish session before binding and arming
+ok - rebuild refreshes the board in place without double-arming
+ok - build refuses a template without exactly one data slot
+ok - a decision card refuses to queue and surfaces an error without a Lavish bridge
+ok - the dispatch bar refuses to queue and surfaces an error without a Lavish bridge
+ok - the dispatch bar drops a stale refusal once the bridge returns
+ok - a decision card drops its queued mark when a later answer is refused
+ok - the dispatch bar drops its queued mark when a later dispatch is refused
+ok - an option-less card is built and answerable through its freeform box
+ok - a decision card shows every decision-card element
+ok - a queuePrompt that throws is refused like a missing bridge
+ok - changing the selection drops a stale queued mark
+ok - build accepts an optional quota section and refuses a malformed one
+ok - the quota panel shows reported values and says why anything is unavailable
+ok - refresh does nothing until the flag is on, a board exists, and away mode is clear
+ok - build writes the live data file and the composed-card store
+ok - refresh composes a live payload from the fleet without touching the page or its session
+ok - refresh drops a malformed stored card and keeps the last data when the snapshot fails
+ok - refresh sees every open hold, in-flight task, and recorded PR past the snapshot caps
+ok - systemd-units describes a user timer that runs refresh for this home
+ok - systemd-units escapes quotes, backslashes, and specifiers in quoted values
+ok - a live update never rebuilds or drops a card holding an unsent answer
+ok - a queued answer's card stays as sent until its call closes
+ok - an idle card takes new text and a malformed update is ignored
+ok - dispatch picks and their queued mark survive a live update while they still apply
+ok - a raw card is marked plainly, old live data is flagged, and the PR list renders
