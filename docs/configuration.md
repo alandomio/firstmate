@@ -613,7 +613,7 @@ The session-start digest separately prints a "Public commitments" subsection fro
 `FM_PF_RETRY_BACKOFF_SECS` (default 900) sets the next-attempt time recorded with a retryable delivery error.
 See [verification/public-followup.md](verification/public-followup.md) for the current maintainer evidence behind restart recovery, retained-loop disposition, and the relay-disabled zero-overhead guarantee.
 
-## Jev shadow wake triage (.env OPENROUTER_API_KEY / config/jev-endpoint / config/jev-timeout / config/jev-daily-cap / config/jev-max-load)
+## Jev shadow wake triage (.env OPENROUTER_API_KEY / config/jev-endpoint / config/jev-timeout / config/jev-timeout-streak / config/jev-timeout-pause / config/jev-daily-cap / config/jev-max-load)
 
 Jev is TypeSafe's decision model, reached through OpenRouter as `typesafe/jev-1.13`.
 Firstmate uses it only as an advisory, shadow-only classifier of supervision wakes: it asks one three-way question per presented wake (needs firstmate, absorbable, or urgent for the captain), logs the answer next to what firstmate actually did, and acts on nothing.
@@ -627,7 +627,7 @@ One of two backends runs per home, config/jev-endpoint taking priority when pres
 - **Local**: on when this home's gitignored `config/jev-endpoint` carries a base URL for a Rizzo Flow server (`rizzo serve`, on `http://127.0.0.1:8017` by default; see the `rizzo-flow` skill).
   The server must expose Rizzo Flow's native `POST /v1/decisions`; one offering only the Jev-compatible `/v1/systemone` answers every row as a skipped `api-error`.
   No key is read or required.
-  The URL must resolve to `127.0.0.1`, `localhost`, or `::1` with no path; anything else is refused outright, logged as a skipped `invalid-endpoint` row, and pauses classification for the day rather than ever being dialed - this is the one local-backend condition that still pauses (see below).
+  The URL must resolve to `127.0.0.1`, `localhost`, or `::1` with no path; anything else is refused outright, logged as a skipped `invalid-endpoint` row, and pauses classification for the day rather than ever being dialed - this is the one local-backend condition that pauses for the whole day (see below).
 
 A home with neither pays one cheap file check per drain, send, lifecycle action, captain hold, and primary turn end, and writes nothing.
 
@@ -635,13 +635,17 @@ Only the wake's reason line and the worker's last status line leave the machine,
 For the local backend nothing leaves the machine at all (no egress); masking is kept only for prompt-length hygiene, not data governance.
 
 Each request, on either backend, has a 5 second timeout by default; `config/jev-timeout` optionally overrides it with a positive number of seconds (an invalid value keeps the default and `bin/fm-jev.sh status` says so).
-The OpenRouter backend also has a daily spend cap (USD, default 1; override with a decimal number in `config/jev-daily-cap`), summed from each response's `usage.cost`; its timeout, an API/transport error, a response without a cost, or reaching the spend cap all pause classification until the next local day, unchanged.
-The local backend has no per-request cost and no monotonic quota to protect, so none of its own failure reasons ever pauses it for the day: a 1-minute load average at or above `config/jev-max-load` (default 8, checked before each request), a timeout, or an API/transport error each only skip that one row (logged with `why=load`/`timeout`/`api-error`), and the very next drain tries again.
-A timeout also skips the rest of that same drain's rows (logged with `why=timeout`) without dialing, so a stuck server costs one timeout per drain rather than one per row and detached drains never pile up behind it.
+A timeout pauses classification only when several happen in a row, on either backend: `config/jev-timeout-streak` (positive whole number, default 3) sets how many consecutive timeouts, and any successful classification resets the count.
+The pause is short and clears itself: `config/jev-timeout-pause` (positive whole number of minutes, default 60) sets its length, after which Jev tries again.
+A further pause with no success in between doubles in length (60, 120, 240 minutes and so on), and no pause outlasts the local day.
+A single slow request therefore only skips its own wake; invalid values in either file keep the default and `bin/fm-jev.sh status` says so.
+The OpenRouter backend also has a daily spend cap (USD, default 1; override with a decimal number in `config/jev-daily-cap`), summed from each response's `usage.cost`; reaching it, an API/transport error, or a response without a cost pauses classification until the next local day, unchanged.
+The local backend has no per-request cost and no monotonic quota to protect, so apart from the timeout pause above none of its own failure reasons pauses it: a 1-minute load average at or above `config/jev-max-load` (default 8, checked before each request) or an API/transport error each only skip that one row (logged with `why=load`/`api-error`), and the very next drain tries again.
+A timeout also skips the rest of that same drain's rows (logged with `why=timeout`) without dialing, so a stuck server costs one timeout per drain rather than one per row, counts once toward the streak, and detached drains never pile up behind it.
 The local backend asks through Rizzo Flow's native `/v1/decisions` API with `allow_abstain` and a `policy.min_top_probability` of 0.6 (matching `report`'s own `--min-confidence` default); a response the server itself could not decide, or answered under that confidence floor, carries no choice and is logged as `doubt`, exactly like a low-confidence OpenRouter answer.
 In shadow mode every wake still surfaces exactly as it would without Jev, in every case.
 
-`bin/fm-jev.sh status` reports the active backend (or that both are off), the OpenRouter spend or the local endpoint and load ceiling, and any pause.
+`bin/fm-jev.sh status` reports the active backend (or that both are off), the OpenRouter spend or the local endpoint and load ceiling, any pause with its reason and the time it ends, and the current timeout streak against its limit; `report` prints the same pause lines and keeps counting skipped wakes by reason.
 `bin/fm-jev.sh report` measures the shadow window: agreement between Jev and firstmate's actual handling, the count of wakes Jev would have absorbed that needed firstmate, and about twenty doubtful cases for the captain; each classified row records which model actually answered.
 The go-live criteria are zero wrongly absorbable wakes and at least 90% agreement over one week; activation is the separate opt-in below, and evaluating a local model's calibration against these criteria is a captain decision, not an assumption carried over from OpenRouter's defaults.
 The ground truth for "needed firstmate" (a steer, a decision, or a captain-facing final message in the handling turn) depends on the primary harness reporting its final message on turn end; Claude Code and Codex do, and other harnesses leave that part unknown.
