@@ -1,0 +1,16 @@
+ok - the session-start digest names an active Jev pause and stays silent otherwise
+--- session-start digest excerpt, active timeout pause ---
+99-
+100-Jev classifier
+101---------------------------------------------------------------------------------
+102:Jev shadow classification is paused until 20:34 (timeout); wakes still surface unchanged, only the classifier is off.
+103-
+104-================================================================================
+--- session-start digest excerpt, spend-cap day pause ---
+99-
+100-Jev classifier
+101---------------------------------------------------------------------------------
+102:Jev shadow classification is paused until tomorrow (cap); wakes still surface unchanged, only the classifier is off.
+103-
+104-================================================================================
+--- no pause: Jev lines in digest = 0 ---

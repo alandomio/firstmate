@@ -1,0 +1,140 @@
+
+### 1. OpenRouter backend: ONE timeout does not pause
+$ cat state/jev/disabled
+(no such file)
+$ fm-jev.sh status
+Jev shadow triage: on, OpenRouter backend (OPENROUTER_API_KEY present in /tmp/fm-jev-tests.rRyxJv/demo-or/.env)
+timeout streak: 1 of 3 (that many in a row pause classification for 60 minutes, doubling per repeat, never past midnight; pause episodes today: 0)
+shadow log: /tmp/fm-jev-tests.rRyxJv/demo-or/state/jev/shadow.jsonl
+$ jev wakes in state/.wake-queue
+(none)
+
+### 2. A success resets the streak
+$ fm-jev.sh status
+Jev shadow triage: on, OpenRouter backend (OPENROUTER_API_KEY present in /tmp/fm-jev-tests.rRyxJv/demo-or/.env)
+timeout streak: 0 of 3 (that many in a row pause classification for 60 minutes, doubling per repeat, never past midnight; pause episodes today: 0)
+shadow log: /tmp/fm-jev-tests.rRyxJv/demo-or/state/jev/shadow.jsonl
+
+### 3. Three CONSECUTIVE timeouts start a ~60 minute pause, announced once
+now: 2026-10-04 20:04   network calls so far: 5 (1 timeout + 1 ok + 3 timeouts; 4th wake skipped)
+$ cat state/jev/disabled
+2026-10-04^Itimeout^I1791140667$
+$ fm-jev.sh status
+Jev shadow triage: on, OpenRouter backend (OPENROUTER_API_KEY present in /tmp/fm-jev-tests.rRyxJv/demo-or/.env)
+paused until 21:04: timeout
+timeout streak: 0 of 3 (that many in a row pause classification for 60 minutes, doubling per repeat, never past midnight; pause episodes today: 1)
+shadow log: /tmp/fm-jev-tests.rRyxJv/demo-or/state/jev/shadow.jsonl
+$ jev wakes in state/.wake-queue
+check	jev-pause:1791137067:2407271	check: jev-pause: Jev shadow classification paused (timeout), until 21:04; wakes still surface unchanged, only the classifier is off
+$ fm-jev.sh pause-state
+Jev shadow classification is paused until 21:04 (timeout); wakes still surface unchanged, only the classifier is off.
+$ fm-jev.sh report | grep -i -E 'paus|skipped|disabled|timeout'
+paused until 21:04: timeout
+timeout streak: 0 of 3 (that many in a row pause classification for 60 minutes, doubling per repeat, never past midnight; pause episodes today: 1)
+wakes presented: 6; classified: 1; skipped: 5 (disabled 1, timeout 4); not sent: 0; actual handling known: 0
+  skipped: 0/0/0/5
+
+### 4. What the supervising firstmate sees on its next drain (the pause wake is presented, never classified)
+$ fm-wake-drain.sh
+1791137067	1	check	jev-pause:1791137067:2407271	check: jev-pause: Jev shadow classification paused (timeout), until 21:04; wakes still surface unchanged, only the classifier is off
+network calls: before=5 after=5
+
+### 5. Pause runs out by itself; a failed retry sends NO resume; the first success does, once
+$ fm-jev.sh status
+Jev shadow triage: on, OpenRouter backend (OPENROUTER_API_KEY present in /tmp/fm-jev-tests.rRyxJv/demo-or/.env)
+timeout streak: 0 of 3 (that many in a row pause classification for 60 minutes, doubling per repeat, never past midnight; pause episodes today: 1)
+shadow log: /tmp/fm-jev-tests.rRyxJv/demo-or/state/jev/shadow.jsonl
+after one failed retry:
+$ jev wakes in state/.wake-queue
+check	jev-pause:1791137067:2407271	check: jev-pause: Jev shadow classification paused (timeout), until 21:04; wakes still surface unchanged, only the classifier is off
+after first successful classification:
+$ jev wakes in state/.wake-queue
+check	jev-pause:1791137067:2407271	check: jev-pause: Jev shadow classification paused (timeout), until 21:04; wakes still surface unchanged, only the classifier is off
+check	jev-resume:1791137069:2409655	check: jev-resume: Jev shadow classification resumed after its timeout pause
+$ fm-jev.sh status
+Jev shadow triage: on, OpenRouter backend (OPENROUTER_API_KEY present in /tmp/fm-jev-tests.rRyxJv/demo-or/.env)
+timeout streak: 0 of 3 (that many in a row pause classification for 60 minutes, doubling per repeat, never past midnight; pause episodes today: 0)
+shadow log: /tmp/fm-jev-tests.rRyxJv/demo-or/state/jev/shadow.jsonl
+resume wakes after another success: 1
+
+### 6. Repeat episode with no success in between backs off (doubling)
+first pause:  60 min
+second pause: 120 min
+$ jev wakes in state/.wake-queue
+check	jev-pause:1791137071:2410912	check: jev-pause: Jev shadow classification paused (timeout), until 21:04; wakes still surface unchanged, only the classifier is off
+check	jev-pause:1791137071:2411434	check: jev-pause: Jev shadow classification paused (timeout), until 22:04; wakes still surface unchanged, only the classifier is off
+config/jev-timeout-pause=99999 -> pause until 2026-10-05 00:00:00 (today is 2026-10-04)
+
+### 7. Configurable thresholds: config/jev-timeout-streak=2, config/jev-timeout-pause=10
+pause after 2 timeouts: 10 min
+$ fm-jev.sh status
+Jev shadow triage: on, OpenRouter backend (OPENROUTER_API_KEY present in /tmp/fm-jev-tests.rRyxJv/demo-cfg/.env)
+paused until 20:14: timeout
+timeout streak: 0 of 2 (that many in a row pause classification for 10 minutes, doubling per repeat, never past midnight; pause episodes today: 1)
+shadow log: /tmp/fm-jev-tests.rRyxJv/demo-cfg/state/jev/shadow.jsonl
+
+### 8. Spend cap is unchanged: holds until tomorrow, and is announced
+$ cat state/jev/disabled
+2026-10-04^Icap$
+$ fm-jev.sh status
+Jev shadow triage: on, OpenRouter backend (OPENROUTER_API_KEY present in /tmp/fm-jev-tests.rRyxJv/demo-cap/.env)
+paused until tomorrow: cap
+timeout streak: 0 of 3 (that many in a row pause classification for 60 minutes, doubling per repeat, never past midnight; pause episodes today: 0)
+shadow log: /tmp/fm-jev-tests.rRyxJv/demo-cap/state/jev/shadow.jsonl
+$ jev wakes in state/.wake-queue
+check	jev-pause:1791137073:2414112	check: jev-pause: Jev shadow classification paused (cap), until tomorrow; wakes still surface unchanged, only the classifier is off
+
+### 9. API error still pauses for the day (OpenRouter)
+$ cat state/jev/disabled
+2026-10-04^Iapi-error$
+$ fm-jev.sh status
+Jev shadow triage: on, OpenRouter backend (OPENROUTER_API_KEY present in /tmp/fm-jev-tests.rRyxJv/demo-500/.env)
+paused until tomorrow: api-error
+timeout streak: 0 of 3 (that many in a row pause classification for 60 minutes, doubling per repeat, never past midnight; pause episodes today: 0)
+shadow log: /tmp/fm-jev-tests.rRyxJv/demo-500/state/jev/shadow.jsonl
+$ jev wakes in state/.wake-queue
+check	jev-pause:1791137074:2415472	check: jev-pause: Jev shadow classification paused (api-error), until tomorrow; wakes still surface unchanged, only the classifier is off
+
+### 10. Local loopback backend: a drain with 3 timed-out wakes counts ONCE; 3 such drains pause
+$ fm-jev.sh status
+Jev shadow triage: on, local backend (config/jev-endpoint = http://127.0.0.1:8017)
+timeout streak: 1 of 3 (that many in a row pause classification for 60 minutes, doubling per repeat, never past midnight; pause episodes today: 0)
+shadow log: /tmp/fm-jev-tests.rRyxJv/demo-local/state/jev/shadow.jsonl
+$ cat state/jev/disabled
+(no such file)
+$ cat state/jev/disabled
+2026-10-04^Itimeout^I1791140676$
+$ fm-jev.sh status
+Jev shadow triage: on, local backend (config/jev-endpoint = http://127.0.0.1:8017)
+paused until 21:04: timeout
+timeout streak: 0 of 3 (that many in a row pause classification for 60 minutes, doubling per repeat, never past midnight; pause episodes today: 1)
+shadow log: /tmp/fm-jev-tests.rRyxJv/demo-local/state/jev/shadow.jsonl
+$ jev wakes in state/.wake-queue
+check	jev-pause:1791137076:2418291	check: jev-pause: Jev shadow classification paused (timeout), until 21:04; wakes still surface unchanged, only the classifier is off
+
+### 11. Legacy state/jev/disabled files
+$ cat state/jev/disabled
+2026-10-04^Itimeout$
+$ fm-jev.sh status
+Jev shadow triage: on, OpenRouter backend (OPENROUTER_API_KEY present in /tmp/fm-jev-tests.rRyxJv/demo-legacy/.env)
+timeout streak: 0 of 3 (that many in a row pause classification for 60 minutes, doubling per repeat, never past midnight; pause episodes today: 0)
+shadow log: /tmp/fm-jev-tests.rRyxJv/demo-legacy/state/jev/shadow.jsonl
+$ fm-jev.sh pause-state
+[]
+$ cat state/jev/disabled
+2026-10-04^Iapi-error$
+$ fm-jev.sh status
+Jev shadow triage: on, OpenRouter backend (OPENROUTER_API_KEY present in /tmp/fm-jev-tests.rRyxJv/demo-legacy/.env)
+paused until tomorrow: api-error
+timeout streak: 0 of 3 (that many in a row pause classification for 60 minutes, doubling per repeat, never past midnight; pause episodes today: 0)
+shadow log: /tmp/fm-jev-tests.rRyxJv/demo-legacy/state/jev/shadow.jsonl
+
+### 12. Jev never classifies its own jev-pause / jev-resume wakes
+1790000000	1	check	jev-pause:1:1	check: jev-pause: Jev shadow classification paused (timeout), until 21:04
+1790000000	2	check	jev-resume:1:2	check: jev-resume: Jev shadow classification resumed after its timeout pause
+1790000000	3	check	inbox:3	check: captain inbox note 3 - hi
+network calls for 3 presented wakes (2 Jev-own + 1 ordinary), Jev NOT paused: 1
+{"ev":"presented","id":"1790000000:1","outcome":null,"why":null}
+{"ev":"presented","id":"1790000000:2","outcome":null,"why":null}
+{"ev":"presented","id":"1790000000:3","outcome":null,"why":null}
+{"ev":"jev","id":"1790000000:3","outcome":"classified","why":null}
