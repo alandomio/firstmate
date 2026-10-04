@@ -12,6 +12,7 @@
 #                                            (internal: called synchronously by bin/fm-watch.sh)
 #   fm-jev.sh mask                          (stdin -> the masked text that would leave the machine)
 #   fm-jev.sh observe-drain <spool> <epoch> (internal: called detached by bin/fm-jev-lib.sh)
+#   fm-jev.sh pause-state                   (internal: one line while paused, read by bin/fm-session-start.sh)
 #
 # Absorption (config/jev-absorb). Off by default, and a wholly separate act
 # from the shadow measurement above: shadow mode only ever WATCHES and never
@@ -70,7 +71,7 @@
 # 127.0.0.1/localhost/::1 with no path (jev_local_url_ok); anything else is
 # refused outright rather than dialed, logged as a skipped "invalid-endpoint"
 # row, and pauses classification for the day - the one local-backend
-# condition that still does (see Limits) - this file must never become a
+# condition that does so for the whole day (see Pauses) - this file must never become a
 # back door to a hosted API.
 #
 # Shadow contract. For every wake row a drain presents, this script asks Jev
