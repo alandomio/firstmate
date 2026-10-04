@@ -112,9 +112,11 @@
 # file keeps its default and `status` says so. A "<day>\ttimeout" record with
 # no until time is the old whole-day format and is read as already over. Entering
 # any pause (either kind, any reason) appends one check wake - "check: jev-pause:
-# ..." with the reason and when it ends - and the first drain after it ends
-# appends one "check: jev-resume: ..." wake, but only for a pause that was
-# announced (state/jev/pause-announced); `pause-state` prints a one-line pause
+# ..." with the reason and when it ends - and the first successful
+# classification after it ends appends one "check: jev-resume: ..." wake, but
+# only for a pause that was announced (state/jev/pause-announced); a pause that
+# ends and then fails again sends no resume, the next pause announces itself as
+# a new episode. `pause-state` prints a one-line pause
 # for the session-start digest. `status`
 # and `report` print the pause, the streak and the pause rule; every wake
 # skipped by a pause is logged with why=disabled.
@@ -420,9 +422,11 @@ jev_paused_now() {  # <day> -> 0 when classification is paused right now
 }
 
 # A pause is never silent: entering one from "running" appends ONE check wake
-# (jev_pause_announce) naming the reason and when it ends, and the first drain
-# after it ends appends ONE resume wake (jev_pause_resume_notice) - only for a
-# pause that was announced, tracked in state/jev/pause-announced. Re-writing the
+# (jev_pause_announce) naming the reason and when it ends, and the first
+# successful classification after it ends appends ONE resume wake
+# (jev_pause_resume_notice) - only for a pause that was announced, tracked in
+# state/jev/pause-announced. A retry that fails sends no resume; the next pause
+# announces itself as a new episode and overwrites the marker. Re-writing the
 # record while a pause is already active is the same episode, never announced twice.
 jev_pause() {  # <day> <why> [until-epoch]
   local active=1
@@ -642,11 +646,13 @@ jev_dial_local() {  # <reason-masked> <status-masked> <endpoint-base> <timeout>
 }
 
 # One request against either backend. Prints nothing; logs a classified or
-# skipped event. Only the OpenRouter backend ever pauses for the day here
-# (timeout, API error, or a missing cost); the local backend only skips this
-# one row on any of those (a timeout also sets JEV_LOCAL_TIMED_OUT so the
-# caller skips the rest of this drain), and the caller applies its
-# load-ceiling skip before ever calling this.
+# skipped event. A timeout feeds jev_timeout_note, which can start a timed
+# pause on either backend (on the local backend it also sets
+# JEV_LOCAL_TIMED_OUT so the caller skips the rest of this drain). Day pauses
+# are only an API error, a missing cost or the spend cap on OpenRouter (the
+# caller adds an invalid endpoint); the local backend only skips this one row
+# on an API error, and the caller applies its load-ceiling skip before ever
+# calling this. A classified event also reports the end of an announced pause.
 jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-before> <cap>
   local id=$1 reason=$2 status=$3 backend=$4 spend=$5 cap=$6
   local day key model endpoint timeout body resp code rc start ms cost event
@@ -746,6 +752,7 @@ jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-be
       jev_pause "$day" cap
     fi
   fi
+  jev_pause_resume_notice "$day"
 }
 
 cmd_observe_drain() {  # <spool> <epoch>
@@ -768,7 +775,6 @@ cmd_observe_drain() {  # <spool> <epoch>
 
   fm_lock_acquire_wait "$JEV_LOCK" || { rm -f "$spool"; exit 0; }
   day=$(date +%F)
-  jev_pause_resume_notice "$day"
   JEV_TIMEOUT=$(jev_timeout)
   JEV_LOCAL_TIMED_OUT=
   if [ "$backend" = local ]; then

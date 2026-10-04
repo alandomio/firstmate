@@ -399,25 +399,40 @@ test_every_pause_is_announced_once_through_a_check_wake() {
 }
 
 test_resume_is_announced_only_for_an_announced_pause() {
-  local home
+  local home mode
   home=$(jev_case announce-resume with-key)
   timeout_drain "$home" 1 3
   [ "$(queued_wakes "$home" jev-pause: | wc -l | tr -d ' ')" = 1 ] || fail "no pause was announced"
   timeout_drain "$home" 4 1
   [ -z "$(queued_wakes "$home" jev-resume:)" ] || fail "a resume was announced while still paused"
+  # the pause running out is not a resume: nothing has been classified yet
   printf '%s\ttimeout\t%s\n' "$(date +%F)" "$(( $(date +%s) - 5 ))" > "$home/state/jev/disabled"
-  timeout_drain "$home" 5 1 ok
+  in_home "$home" "$JEV" status >/dev/null || fail "status failed after the pause expired"
+  [ -z "$(queued_wakes "$home" jev-resume:)" ] || fail "a resume was announced on expiry alone"
+  timeout_drain "$home" 5 1
+  [ "$(calls "$home")" = 4 ] || fail "Jev did not retry after the pause expired"
+  [ -z "$(queued_wakes "$home" jev-resume:)" ] || fail "a resume was announced after a failed retry"
+  timeout_drain "$home" 6 1 ok
   [ "$(queued_wakes "$home" jev-resume: | wc -l | tr -d ' ')" = 1 ] || fail "the resume was not announced exactly once: $(queued_wakes "$home" jev-resume:)"
   assert_contains "$(queued_wakes "$home" jev-resume:)" 'timeout' "the resume wake does not name the pause it ended"
-  timeout_drain "$home" 6 1 ok
+  timeout_drain "$home" 7 1 ok
   [ "$(queued_wakes "$home" jev-resume: | wc -l | tr -d ' ')" = 1 ] || fail "the resume was announced again"
+  # a pause that ends and fails straight back into a pause is a new episode, never a resume
+  for mode in timeout http500; do
+    home=$(jev_case "announce-refail-$mode" with-key)
+    timeout_drain "$home" 1 3
+    printf '%s\ttimeout\t%s\n' "$(date +%F)" "$(( $(date +%s) - 5 ))" > "$home/state/jev/disabled"
+    timeout_drain "$home" 4 3 "$mode"
+    [ -z "$(queued_wakes "$home" jev-resume:)" ] || fail "a resume was announced though the $mode retry never succeeded"
+    [ "$(queued_wakes "$home" jev-pause: | wc -l | tr -d ' ')" = 2 ] || fail "the new $mode pause was not announced as its own episode: $(queued_wakes "$home" jev-pause:)"
+  done
   # a pause nobody was told about (an old-format file, a lost wake) is not reported as resumed
   home=$(jev_case announce-unannounced with-key)
   mkdir -p "$home/state/jev"
   printf '%s\ttimeout\t%s\n' "$(date +%F)" "$(( $(date +%s) - 5 ))" > "$home/state/jev/disabled"
   timeout_drain "$home" 1 1 ok
   [ -z "$(queued_wakes "$home" jev-resume:)" ] || fail "a pause that was never announced was reported as resumed"
-  pass "a resume wake follows only a pause that was announced, once"
+  pass "a resume wake follows only the first successful classification after an announced pause, once"
 }
 
 test_pause_state_command_prints_only_while_paused() {
