@@ -110,7 +110,12 @@
 # minutes), and no pause ever outlasts the local calendar day. A single slow
 # request therefore only skips its own wake. An invalid value in either config
 # file keeps its default and `status` says so. A "<day>\ttimeout" record with
-# no until time is the old whole-day format and is read as already over. `status`
+# no until time is the old whole-day format and is read as already over. Entering
+# any pause (either kind, any reason) appends one check wake - "check: jev-pause:
+# ..." with the reason and when it ends - and the first drain after it ends
+# appends one "check: jev-resume: ..." wake, but only for a pause that was
+# announced (state/jev/pause-announced); `pause-state` prints a one-line pause
+# for the session-start digest. `status`
 # and `report` print the pause, the streak and the pause rule; every wake
 # skipped by a pause is logged with why=disabled.
 #
@@ -193,6 +198,7 @@ JEV_LOG="$JEV_DIR/shadow.jsonl"
 JEV_DISABLED="$JEV_DIR/disabled"
 JEV_LOCK="$JEV_DIR/.classify.lock"
 JEV_TIMEOUT_STREAK_FILE="$JEV_DIR/timeout-streak"
+JEV_PAUSE_ANNOUNCED="$JEV_DIR/pause-announced"
 JEV_OR_MODEL=typesafe/jev-1.13
 JEV_OR_ENDPOINT=https://openrouter.ai/api/alpha/decisions
 JEV_DEFAULT_TIMEOUT=5
@@ -413,10 +419,36 @@ jev_paused_now() {  # <day> -> 0 when classification is paused right now
   fi
 }
 
+# A pause is never silent: entering one from "running" appends ONE check wake
+# (jev_pause_announce) naming the reason and when it ends, and the first drain
+# after it ends appends ONE resume wake (jev_pause_resume_notice) - only for a
+# pause that was announced, tracked in state/jev/pause-announced. Re-writing the
+# record while a pause is already active is the same episode, never announced twice.
 jev_pause() {  # <day> <why> [until-epoch]
+  local active=1
+  jev_paused_now "$1" && active=0
   (umask 077 && printf '%s\t%s%s\n' "$1" "$2" "${3:+$(printf '\t%s' "$3")}" > "$JEV_DISABLED") 2>/dev/null || true
   _fm_jev_append "$STATE" "$(jq -cn --argjson t "$(date +%s)" --arg day "$1" --arg why "$2" --arg until "${3:-}" \
     '{ev: "disabled", t: $t, day: $day, why: $why} + (if $until == "" then {} else {until: ($until | tonumber)} end)')"
+  [ "$active" -eq 0 ] || jev_pause_announce "$2" "${3:-}"
+}
+
+jev_pause_announce() {  # <why> [until-epoch]
+  local when key
+  if [ -n "${2:-}" ]; then when="until $(jev_clock "$2")"; else when="until tomorrow"; fi
+  key="jev-pause:$(date +%s):$$"
+  fm_wake_append check "$key" "check: jev-pause: Jev shadow classification paused ($1), $when; wakes still surface unchanged, only the classifier is off" || return 0
+  (umask 077 && printf '%s\t%s\n' "$key" "$1" > "$JEV_PAUSE_ANNOUNCED") 2>/dev/null || true
+}
+
+jev_pause_resume_notice() {  # <day>
+  local key why
+  [ -f "$JEV_PAUSE_ANNOUNCED" ] || return 0
+  jev_paused_now "$1" && return 0
+  IFS=$(printf '\t') read -r key why < "$JEV_PAUSE_ANNOUNCED" 2>/dev/null || true
+  rm -f "$JEV_PAUSE_ANNOUNCED" 2>/dev/null || true
+  [ -n "$key" ] || return 0
+  fm_wake_append check "jev-resume:$(date +%s):$$" "check: jev-resume: Jev shadow classification resumed after its ${why:-earlier} pause" || true
 }
 
 # The consecutive-timeout streak, per local day: "<count>\t<pause-episodes>\t<day>".
@@ -736,6 +768,7 @@ cmd_observe_drain() {  # <spool> <epoch>
 
   fm_lock_acquire_wait "$JEV_LOCK" || { rm -f "$spool"; exit 0; }
   day=$(date +%F)
+  jev_pause_resume_notice "$day"
   JEV_TIMEOUT=$(jev_timeout)
   JEV_LOCAL_TIMED_OUT=
   if [ "$backend" = local ]; then
@@ -753,6 +786,8 @@ cmd_observe_drain() {  # <spool> <epoch>
   while IFS=$(printf '\t') read -r epoch seq kind key payload; do
     case "$epoch:$seq" in *[!0-9:]*|:*|*:) continue ;; esac
     id="$epoch:$seq"
+    # Jev's own pause and resume announcements are never sent to the classifier.
+    case "$key" in jev-pause:*|jev-resume:*) continue ;; esac
     if [ -f "$JEV_LOG" ] && grep -qF "\"ev\":\"jev\",\"t\":" "$JEV_LOG" \
       && jq -n -R -e --arg id "$id" \
         'any(inputs | fromjson? | select(type == "object"); .ev == "jev" and .id == $id)' \
@@ -873,6 +908,21 @@ cmd_absorb_try() {
     --arg reason "$masked_reason" --arg status "$masked_status" --arg choice "$rchoice" --argjson conf "$rconf" \
     '{t: $t, kind: $kind, task: $task, reason: $reason, status: $status, choice: $choice, confidence: $conf, source: "jev"}')"
   return 0
+}
+
+# One line while classification is paused, nothing otherwise: the session-start
+# digest's read of the pause (bin/fm-session-start.sh), so it never prints a
+# "not paused" line into every session.
+cmd_pause_state() {
+  local day
+  day=$(date +%F)
+  jev_paused_now "$day" || return 0
+  if [ -n "$JEV_PAUSE_UNTIL" ]; then
+    printf 'Jev shadow classification is paused until %s (%s); wakes still surface unchanged, only the classifier is off.\n' \
+      "$(jev_clock "$JEV_PAUSE_UNTIL")" "$JEV_PAUSE_WHY"
+  else
+    printf 'Jev shadow classification is paused until tomorrow (%s); wakes still surface unchanged, only the classifier is off.\n' "$JEV_PAUSE_WHY"
+  fi
 }
 
 cmd_status() {
@@ -1156,6 +1206,7 @@ cmd_report() {
 
 case "${1:-}" in
   status) shift; cmd_status "$@" ;;
+  pause-state) shift; cmd_pause_state ;;
   report) shift; cmd_report "$@" ;;
   absorb-gate) shift; cmd_absorb_gate "$@" ;;
   absorb-try) shift; cmd_absorb_try "$@" ;;

@@ -45,7 +45,8 @@
 #                       represented by the two digests below.
 #   6. fleet digest   - a compact data/backlog.md identity/metadata listing,
 #                       every state/*.meta, a bounded state/*.status tail,
-#                       state/.afk, and a cheap per-task endpoint-liveness read:
+#                       state/.afk, an active Jev classifier pause (silent when
+#                       none), and a cheap per-task endpoint-liveness read:
 #                       read-only, always runs.
 #   7. network checks - the result of the deferred network stage started back at
 #                       step 1, harvested WITHOUT waiting for it.
@@ -869,6 +870,17 @@ if fm_pf_relay_active "$FM_HOME" \
     printf 'Reconcile terminal results with %s/bin/fm-public-followup.sh consume, then deliver a ready one with\n' "$FM_ROOT"
     printf '%s/bin/fm-public-followup.sh deliver <id>. Hand a delivered loop on with rechain, or close it with\n' "$FM_ROOT"
     printf '%s/bin/fm-public-followup.sh retire <id> --reason "...". Load fmx-respond for the procedure.\n' "$FM_ROOT"
+  fi
+fi
+
+# An active Jev classifier pause (bin/fm-jev.sh), so a session never starts
+# unaware that the shadow classifier is off. Silent when nothing is paused: one
+# [ -s ] test for a home that never paused, so no subprocess runs for it.
+if [ -s "$STATE/jev/disabled" ]; then
+  JEV_PAUSE=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-jev.sh" pause-state 2>/dev/null) || JEV_PAUSE=
+  if [ -n "$JEV_PAUSE" ]; then
+    subsection "Jev classifier"
+    printf '%s\n' "$JEV_PAUSE"
   fi
 fi
 
