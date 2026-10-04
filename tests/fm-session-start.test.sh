@@ -2201,6 +2201,31 @@ EOF
   pass "an empty fleet reports (none) for in-flight tasks and an absent AFK flag"
 }
 
+test_digest_surfaces_an_active_jev_pause() {
+  local rec root home fakebin out
+  rec=$(new_world jev-pause)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_not_contains "$out" "Jev shadow classification" "a home that never paused printed a Jev line"
+
+  mkdir -p "$home/state/jev"
+  printf '%s\ttimeout\t%s\n' "$(date +%F)" "$(( $(date +%s) + 1800 ))" > "$home/state/jev/disabled"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "Jev shadow classification is paused until" "an active Jev pause was not surfaced"
+  assert_contains "$out" "(timeout)" "the digest did not carry the pause reason"
+
+  printf '%s\ttimeout\t%s\n' "$(date +%F)" "$(( $(date +%s) - 60 ))" > "$home/state/jev/disabled"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_not_contains "$out" "Jev shadow classification" "an expired Jev pause was still surfaced"
+
+  pass "the session-start digest names an active Jev pause and stays silent otherwise"
+}
+
 test_next_step_sources_x_mode_cadence() {
   local rec root home fakebin out
   rec=$(new_world next-step-x)
@@ -2428,6 +2453,7 @@ test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback
 test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon
+test_digest_surfaces_an_active_jev_pause
 test_supervision_block_exactly_one_and_pi_diagnostic
 test_pi_signed_primary_uses_pi_extensions_without_identity_normalization
 test_pi_diagnostic_rejects_stale_loaded_marker

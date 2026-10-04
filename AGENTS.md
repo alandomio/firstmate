@@ -83,6 +83,8 @@ config/handoff-s3    optional machine handoff: one home moving between machines 
 config/watched-tools.json  optional list of the tools this home depends on, read by the update check armed with bin/fm-tool-update-check.sh; LOCAL, gitignored, firstmate-maintained but human-editable, and NOT inherited by secondmate homes; see docs/configuration.md "Watched tool updates"
 config/pal-council.json  optional pal-council tiers, list prices, default budget, and timing; LOCAL, gitignored, NOT inherited; absent uses the tracked docs/examples/pal-council.json; see docs/configuration.md "Pal council"
 config/jev-timeout  optional Jev request timeout in seconds for either backend (default 5); LOCAL, gitignored, NOT inherited
+config/jev-timeout-streak  optional count of consecutive Jev request timeouts that starts a timed pause (default 3); LOCAL, gitignored, NOT inherited
+config/jev-timeout-pause  optional length in minutes of that timed pause (default 60); LOCAL, gitignored, NOT inherited
 config/jev-daily-cap  optional USD daily spend cap for Jev shadow wake triage's OpenRouter backend (default 1); LOCAL, gitignored, NOT inherited
 config/jev-endpoint  optional loopback base URL selecting Jev shadow wake triage's local backend (e.g. Rizzo Flow's `rizzo serve`) over OpenRouter, no key needed; LOCAL, gitignored, NOT inherited; see docs/configuration.md "Jev shadow wake triage"
 config/jev-max-load  optional 1-minute load-average ceiling for that local backend (default 8); LOCAL, gitignored, NOT inherited
@@ -132,7 +134,7 @@ state/               runtime records and signals; gitignored
   decision-bindings/ private records marking a captured-answer source as feeding the keyed-answer intake, with a legacy origin on pre-collapse records; written only by bin/fm-captain-hold.sh bind, dropped by unbind and by source retirement (section 13; docs/captain-hold-lifecycle.md)
   when/              private condition->action watch specs, their trust bindings, and single-fire markers; written only by bin/fm-procevent-when.sh (section 13's process-event-sources trigger)
   inbox/             captain notes captured out of band by bin/fm-inbox.sh, including the voice handover's queued requests; each note appends one `check` wake and stays pending until acknowledged with `bin/fm-inbox.sh drain --ack <id>`, which moves it to inbox/handled/ (docs/voice-relay.md)
-  jev/               opt-in Jev shadow wake-triage log, day pause, and spool, plus the absorption digest (config/jev-absorb, config/absorb-unchanged-pause, and config/absorb-presented-stale) and gate cache; bin/fm-jev.sh owns it; shadow mode never acts on a wake, and gated absorption acts only within its own documented allowlist
+  jev/               opt-in Jev shadow wake-triage log, pause state, and spool, plus the absorption digest (config/jev-absorb, config/absorb-unchanged-pause, and config/absorb-presented-stale) and gate cache; bin/fm-jev.sh owns it; shadow mode never acts on a wake, and gated absorption acts only within its own documented allowlist
   x-inbox/           generated Relay pending mention payloads; fmx-respond drains it (section 14)
   x-context/         generated Relay durable per-request reply context and one-wake offer markers, keyed by request_id; survives inbox cleanup and expires within seven days (section 14; bin/fm-x-lib.sh)
   x-outbox/          generated Relay dry-run reply and dismiss previews; inspect it when FMX_DRY_RUN is set (section 14)

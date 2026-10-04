@@ -6,8 +6,10 @@
 # or how fast it returns, the limits (timeout, API error, missing cost, daily
 # cap, next-day resume) for the OpenRouter backend and (no key, missing cost is
 # not an error, loopback-only enforcement, no day pause on load/timeout/API
-# error - only invalid-endpoint still pauses - native /v1/decisions with
-# abstention mapped to doubt) for the local backend, what leaves the machine
+# error - only invalid-endpoint still pauses for the day - native /v1/decisions
+# with abstention mapped to doubt) for the local backend, the timed timeout
+# pause on both (N consecutive timeouts, reset by a success, self-clearing,
+# backing off, never past the day, legacy file read safely), what leaves the machine
 # (masking, only two state fields, the key never in argv or on disk), and the
 # ground-truth report over a fixture log.
 # tests/fm-jev-local-rizzo-live.test.sh is the opt-in live counterpart against
@@ -22,7 +24,8 @@ DRAIN="$ROOT/bin/fm-wake-drain.sh"
 FAKE_KEY=sk-or-v1-fmjevtestkey0123456789
 
 TMP_ROOT=$(fm_test_tmproot fm-jev-tests)
-unset OPENROUTER_API_KEY FM_JEV_FOREGROUND
+# FM_CONFIG_OVERRIDE would point the classifier at a real home's config instead of each case's own.
+unset OPENROUTER_API_KEY FM_JEV_FOREGROUND FM_CONFIG_OVERRIDE
 
 # jev_case <name> [with-key]: a home with its own state dir, a fake curl, and
 # (optionally) an opted-in .env. Prints the home path.
@@ -218,23 +221,231 @@ test_timeout_is_configurable() {
   pass "config/jev-timeout overrides the 5 second default and invalid values keep it"
 }
 
-test_timeout_pauses_until_the_next_day() {
+# A timeout drain: <home> <first-seq> <rows> [mode]; one heartbeat row per seq,
+# every request answered by the fake network in <mode> (default timeout).
+timeout_drain() {
+  local home=$1 first=$2 rows=$3 mode=${4:-timeout} i
+  for ((i = first; i < first + rows; i++)); do queue_row "$home" "$i" check "inbox:$i" "check: captain inbox note $i - hi"; done
+  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE="$mode" FM_JEV_LOAD_OVERRIDE=0.1 "$DRAIN" >/dev/null 2>&1 \
+    || fail "drain failed on $mode"
+}
+
+# The pause-until epoch recorded in state/jev/disabled (third field); empty for
+# the legacy day-long format.
+pause_until() {  # <home>
+  cut -f3 "$1/state/jev/disabled" 2>/dev/null
+}
+
+test_one_timeout_does_not_pause_jev() {
   local home
-  home=$(jev_case timeout with-key)
-  queue_row "$home" 1 heartbeat heartbeat heartbeat
-  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_CURL_MODE=timeout "$DRAIN" >/dev/null 2>&1 || fail "drain failed on a timeout"
+  home=$(jev_case timeout1 with-key)
+  timeout_drain "$home" 1 1
   jev_events "$home" 'select(.outcome == "skipped" and .why == "timeout")' | grep -q . || fail "timeout was not logged"
-  [ "$(cut -f1 "$home/state/jev/disabled")" = "$(date +%F)" ] || fail "a timeout did not pause Jev for today"
-  queue_row "$home" 2 heartbeat heartbeat heartbeat
-  in_home "$home" env FM_JEV_FOREGROUND=1 "$DRAIN" >/dev/null 2>&1 || fail "drain failed while paused"
-  [ "$(calls "$home")" = 1 ] || fail "a paused Jev still called the network"
-  jev_events "$home" 'select(.id == "1790000000:2" and .why == "disabled")' | grep -q . || fail "the paused wake was not logged as skipped"
-  assert_contains "$(in_home "$home" "$JEV" status)" 'paused until tomorrow: timeout' "status did not report the pause"
-  printf '2000-01-01\ttimeout\n' > "$home/state/jev/disabled"
-  queue_row "$home" 3 heartbeat heartbeat heartbeat
-  in_home "$home" env FM_JEV_FOREGROUND=1 "$DRAIN" >/dev/null 2>&1 || fail "drain failed the next day"
-  [ "$(calls "$home")" = 2 ] || fail "Jev did not resume on a later day"
-  pass "a timeout skips the wake and pauses Jev until the next day"
+  assert_absent "$home/state/jev/disabled" "a single timeout paused Jev"
+  assert_contains "$(in_home "$home" "$JEV" status)" 'timeout streak: 1 of 3' "status did not report the streak"
+  timeout_drain "$home" 2 1 ok
+  [ "$(calls "$home")" = 2 ] || fail "Jev did not try again after one timeout"
+  jev_events "$home" 'select(.id == "1790000000:2" and .outcome == "classified")' | grep -q . \
+    || fail "the wake after a single timeout was not classified"
+  pass "one timeout skips only that wake and does not pause Jev"
+}
+
+test_consecutive_timeouts_pause_for_a_short_while() {
+  local home now until out
+  home=$(jev_case timeout3 with-key)
+  now=$(date +%s)
+  timeout_drain "$home" 1 4
+  [ "$(calls "$home")" = 3 ] || fail "expected three dialed requests before the pause, got $(calls "$home")"
+  [ "$(cut -f1 "$home/state/jev/disabled")" = "$(date +%F)" ] || fail "the pause was not recorded for today"
+  [ "$(cut -f2 "$home/state/jev/disabled")" = timeout ] || fail "the pause reason was not timeout"
+  until=$(pause_until "$home")
+  [[ "$until" =~ ^[0-9]+$ ]] || fail "the pause carries no until time: $(cat "$home/state/jev/disabled")"
+  [ "$until" -ge $((now + 3500)) ] && [ "$until" -le $((now + 3700)) ] || fail "the pause is not about 60 minutes: $((until - now))s"
+  jev_events "$home" 'select(.id == "1790000000:4" and .why == "disabled")' | grep -q . || fail "the paused wake was not logged as skipped"
+  out=$(in_home "$home" "$JEV" status)
+  assert_contains "$out" 'paused until' "status did not report the pause"
+  assert_contains "$out" 'timeout' "status did not report the pause reason"
+  case "$out" in *'until tomorrow'*) fail "a timeout pause was reported as lasting until tomorrow" ;; esac
+  assert_contains "$(in_home "$home" "$JEV" report)" 'disabled 1' "report did not keep counting skipped wakes by reason"
+  assert_contains "$(in_home "$home" "$JEV" report)" 'paused until' "report did not show the pause"
+  timeout_drain "$home" 5 1
+  [ "$(calls "$home")" = 3 ] || fail "a paused Jev still called the network"
+  pass "consecutive timeouts pause Jev for 60 minutes, reported by status and report"
+}
+
+test_timeout_streak_and_pause_are_configurable() {
+  local home now until
+  home=$(jev_case timeoutcfg2 with-key)
+  printf '2\n' > "$home/config/jev-timeout-streak"
+  printf '10\n' > "$home/config/jev-timeout-pause"
+  now=$(date +%s)
+  timeout_drain "$home" 1 3
+  [ "$(calls "$home")" = 2 ] || fail "a streak of 2 did not pause after two timeouts"
+  until=$(pause_until "$home")
+  [ "$until" -ge $((now + 540)) ] && [ "$until" -le $((now + 660)) ] || fail "the configured 10 minute pause was not applied: $((until - now))s"
+  printf 'abc\n' > "$home/config/jev-timeout-streak"
+  printf '0\n' > "$home/config/jev-timeout-pause"
+  out=$(in_home "$home" "$JEV" status)
+  assert_contains "$out" 'config/jev-timeout-streak value "abc"' "invalid streak not reported"
+  assert_contains "$out" 'config/jev-timeout-pause value "0"' "invalid pause not reported"
+  pass "config/jev-timeout-streak and config/jev-timeout-pause configure the pause rule and invalid values keep the defaults"
+}
+
+test_a_success_resets_the_timeout_streak() {
+  local home
+  home=$(jev_case timeoutreset with-key)
+  timeout_drain "$home" 1 2
+  assert_contains "$(in_home "$home" "$JEV" status)" 'timeout streak: 2 of 3' "streak not counted"
+  timeout_drain "$home" 3 1 ok
+  case "$(in_home "$home" "$JEV" status)" in *'timeout streak: '[1-9]*) fail "a success did not reset the streak" ;; esac
+  timeout_drain "$home" 4 2
+  assert_absent "$home/state/jev/disabled" "timeouts separated by a success paused Jev"
+  [ "$(calls "$home")" = 5 ] || fail "Jev stopped dialing, calls=$(calls "$home")"
+  pass "a successful classification resets the timeout streak"
+}
+
+test_timeout_pause_expires_on_its_own_and_backs_off() {
+  local home now until
+  home=$(jev_case timeoutexpire with-key)
+  timeout_drain "$home" 1 3
+  [ "$(calls "$home")" = 3 ] || fail "expected the pause after three timeouts"
+  # the pause runs out: Jev dials again with no human action
+  printf '%s\ttimeout\t%s\n' "$(date +%F)" "$(( $(date +%s) - 5 ))" > "$home/state/jev/disabled"
+  assert_not_contains "$(in_home "$home" "$JEV" status)" 'paused until' "an expired pause is still reported"
+  timeout_drain "$home" 4 1 ok
+  [ "$(calls "$home")" = 4 ] || fail "Jev did not resume after the pause expired"
+  jev_events "$home" 'select(.id == "1790000000:4" and .outcome == "classified")' | grep -q . || fail "the first wake after the pause was not classified"
+  # a repeat episode (no success in between) backs off to twice as long
+  home=$(jev_case timeoutbackoff with-key)
+  timeout_drain "$home" 1 3
+  printf '%s\ttimeout\t%s\n' "$(date +%F)" "$(( $(date +%s) - 5 ))" > "$home/state/jev/disabled"
+  now=$(date +%s)
+  timeout_drain "$home" 4 3
+  until=$(pause_until "$home")
+  [ "$until" -ge $((now + 7100)) ] && [ "$until" -le $((now + 7300)) ] || fail "the second pause did not back off to 120 minutes: $((until - now))s"
+  # and never beyond the end of the day, however long the configured pause
+  home=$(jev_case timeoutcap with-key)
+  printf '99999\n' > "$home/config/jev-timeout-pause"
+  now=$(date +%s)
+  timeout_drain "$home" 1 3
+  until=$(pause_until "$home")
+  [ "$until" -le $((now + 86400)) ] || fail "the pause outlasts a day: $((until - now))s"
+  pass "a timeout pause expires by itself, repeat pauses back off, and none outlasts the day"
+}
+
+test_legacy_disabled_file_is_read_safely() {
+  local home
+  home=$(jev_case legacy with-key)
+  mkdir -p "$home/state/jev"
+  # the old format paused the whole day on one timeout; that reason no longer pauses
+  printf '%s\ttimeout\n' "$(date +%F)" > "$home/state/jev/disabled"
+  assert_not_contains "$(in_home "$home" "$JEV" status)" 'paused until' "a legacy timeout record still pauses"
+  timeout_drain "$home" 1 1 ok
+  [ "$(calls "$home")" = 1 ] || fail "a legacy timeout record still blocked the network"
+  # the other legacy reasons still hold until tomorrow
+  printf '%s\tapi-error\n' "$(date +%F)" > "$home/state/jev/disabled"
+  assert_contains "$(in_home "$home" "$JEV" status)" 'paused until tomorrow: api-error' "a legacy day pause was dropped"
+  timeout_drain "$home" 2 1 ok
+  [ "$(calls "$home")" = 1 ] || fail "a legacy day pause did not hold"
+  # an older day, an empty file and garbage never pause or crash
+  printf '2000-01-01\tcap\n' > "$home/state/jev/disabled"
+  assert_not_contains "$(in_home "$home" "$JEV" status)" 'paused until' "a stale legacy day still pauses"
+  : > "$home/state/jev/disabled"
+  in_home "$home" "$JEV" status >/dev/null || fail "an empty disabled file broke status"
+  printf '%s\ttimeout\tnot-a-number\n' "$(date +%F)" > "$home/state/jev/disabled"
+  in_home "$home" "$JEV" status >/dev/null || fail "a malformed disabled file broke status"
+  pass "a legacy disabled file is read safely: old timeout records resume, other day pauses hold"
+}
+
+# The queued wakes whose key starts with <prefix> (jev-pause / jev-resume).
+queued_wakes() {  # <home> <key-prefix>
+  awk -F '\t' -v p="$2" '$3 == "check" && index($4, p) == 1' "$1/state/.wake-queue" 2>/dev/null
+}
+
+# <epoch> -> HH:MM the way the classifier prints it
+jev_clock_of() {
+  date -d "@$1" +%H:%M 2>/dev/null || date -r "$1" +%H:%M
+}
+
+test_every_pause_is_announced_once_through_a_check_wake() {
+  local home mode wake
+  home=$(jev_case announce-timeout with-key)
+  timeout_drain "$home" 1 2
+  [ -z "$(queued_wakes "$home" jev-pause:)" ] || fail "a pause was announced before any pause began"
+  timeout_drain "$home" 3 3
+  [ "$(queued_wakes "$home" jev-pause: | wc -l | tr -d ' ')" = 1 ] || fail "the timeout pause was not announced exactly once: $(queued_wakes "$home" jev-pause:)"
+  wake=$(queued_wakes "$home" jev-pause:)
+  assert_contains "$wake" 'timeout' "the pause wake does not carry the reason"
+  assert_contains "$wake" "until $(jev_clock_of "$(pause_until "$home")")" "the pause wake does not carry the pause-until time"
+  timeout_drain "$home" 6 2
+  [ "$(queued_wakes "$home" jev-pause: | wc -l | tr -d ' ')" = 1 ] || fail "wakes skipped during the pause announced it again"
+  # a day pause (spend cap, API error) is announced the same way, with "until tomorrow"
+  home=$(jev_case announce-cap with-key)
+  printf '0.000015\n' > "$home/config/jev-daily-cap"
+  queue_row "$home" 1 check inbox:1 'check: captain inbox note 1 - hi'
+  queue_row "$home" 2 check inbox:2 'check: captain inbox note 2 - hi'
+  in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_COST=0.00002 "$DRAIN" >/dev/null 2>&1 || fail "drain failed under the cap"
+  wake=$(queued_wakes "$home" jev-pause:)
+  [ "$(printf '%s\n' "$wake" | grep -c .)" = 1 ] || fail "the spend-cap pause was not announced exactly once: $wake"
+  assert_contains "$wake" 'cap' "the cap pause wake does not carry the reason"
+  assert_contains "$wake" 'until tomorrow' "the cap pause wake does not say it lasts until tomorrow"
+  for mode in http500 nocost; do
+    home=$(jev_case "announce-$mode" with-key)
+    timeout_drain "$home" 1 3 "$mode"
+    [ "$(queued_wakes "$home" jev-pause: | wc -l | tr -d ' ')" = 1 ] || fail "$mode pause was not announced exactly once"
+    assert_contains "$(queued_wakes "$home" jev-pause:)" 'api-error' "$mode pause wake does not carry the reason"
+  done
+  pass "entering any pause appends one check wake with the reason and the pause-until time"
+}
+
+test_resume_is_announced_only_for_an_announced_pause() {
+  local home mode
+  home=$(jev_case announce-resume with-key)
+  timeout_drain "$home" 1 3
+  [ "$(queued_wakes "$home" jev-pause: | wc -l | tr -d ' ')" = 1 ] || fail "no pause was announced"
+  timeout_drain "$home" 4 1
+  [ -z "$(queued_wakes "$home" jev-resume:)" ] || fail "a resume was announced while still paused"
+  # the pause running out is not a resume: nothing has been classified yet
+  printf '%s\ttimeout\t%s\n' "$(date +%F)" "$(( $(date +%s) - 5 ))" > "$home/state/jev/disabled"
+  in_home "$home" "$JEV" status >/dev/null || fail "status failed after the pause expired"
+  [ -z "$(queued_wakes "$home" jev-resume:)" ] || fail "a resume was announced on expiry alone"
+  timeout_drain "$home" 5 1
+  [ "$(calls "$home")" = 4 ] || fail "Jev did not retry after the pause expired"
+  [ -z "$(queued_wakes "$home" jev-resume:)" ] || fail "a resume was announced after a failed retry"
+  timeout_drain "$home" 6 1 ok
+  [ "$(queued_wakes "$home" jev-resume: | wc -l | tr -d ' ')" = 1 ] || fail "the resume was not announced exactly once: $(queued_wakes "$home" jev-resume:)"
+  assert_contains "$(queued_wakes "$home" jev-resume:)" 'timeout' "the resume wake does not name the pause it ended"
+  timeout_drain "$home" 7 1 ok
+  [ "$(queued_wakes "$home" jev-resume: | wc -l | tr -d ' ')" = 1 ] || fail "the resume was announced again"
+  # a pause that ends and fails straight back into a pause is a new episode, never a resume
+  for mode in timeout http500; do
+    home=$(jev_case "announce-refail-$mode" with-key)
+    timeout_drain "$home" 1 3
+    printf '%s\ttimeout\t%s\n' "$(date +%F)" "$(( $(date +%s) - 5 ))" > "$home/state/jev/disabled"
+    timeout_drain "$home" 4 3 "$mode"
+    [ -z "$(queued_wakes "$home" jev-resume:)" ] || fail "a resume was announced though the $mode retry never succeeded"
+    [ "$(queued_wakes "$home" jev-pause: | wc -l | tr -d ' ')" = 2 ] || fail "the new $mode pause was not announced as its own episode: $(queued_wakes "$home" jev-pause:)"
+  done
+  # a pause nobody was told about (an old-format file, a lost wake) is not reported as resumed
+  home=$(jev_case announce-unannounced with-key)
+  mkdir -p "$home/state/jev"
+  printf '%s\ttimeout\t%s\n' "$(date +%F)" "$(( $(date +%s) - 5 ))" > "$home/state/jev/disabled"
+  timeout_drain "$home" 1 1 ok
+  [ -z "$(queued_wakes "$home" jev-resume:)" ] || fail "a pause that was never announced was reported as resumed"
+  pass "a resume wake follows only the first successful classification after an announced pause, once"
+}
+
+test_pause_state_command_prints_only_while_paused() {
+  local home out
+  home=$(jev_case pausestate with-key)
+  [ -z "$(in_home "$home" "$JEV" pause-state)" ] || fail "pause-state printed something while running"
+  timeout_drain "$home" 1 3
+  out=$(in_home "$home" "$JEV" pause-state)
+  assert_contains "$out" 'paused until' "pause-state did not report the pause"
+  assert_contains "$out" 'timeout' "pause-state did not report the reason"
+  printf '%s\tcap\n' "$(date +%F)" > "$home/state/jev/disabled"
+  assert_contains "$(in_home "$home" "$JEV" pause-state)" 'paused until tomorrow (cap)' "pause-state did not report a day pause"
+  pass "pause-state prints one line while paused and nothing otherwise"
 }
 
 test_api_errors_pause_until_the_next_day() {
@@ -261,6 +472,8 @@ test_daily_cap_pauses_after_the_spend_is_reached() {
   in_home "$home" env FM_JEV_FOREGROUND=1 FAKE_COST=0.00001 "$DRAIN" >/dev/null 2>&1 || fail "drain failed under the cap"
   [ "$(calls "$home")" = 2 ] || fail "expected two paid requests before the cap, got $(calls "$home")"
   [ "$(cut -f2 "$home/state/jev/disabled")" = cap ] || fail "reaching the cap did not pause Jev"
+  [ -z "$(pause_until "$home")" ] || fail "the spend-cap pause is no longer a whole-day pause"
+  assert_contains "$(in_home "$home" "$JEV" status)" 'paused until tomorrow: cap' "status did not report the cap pause as lasting until tomorrow"
   jev_events "$home" 'select(.id == "1790000000:3" and .outcome == "skipped")' | grep -q . \
     || fail "the wake after the cap was not skipped"
   assert_contains "$(in_home "$home" "$JEV" status)" 'USD 0.00002' "status did not report today's spend"
@@ -426,6 +639,26 @@ test_local_backend_timeout_and_api_errors_skip_without_a_day_pause() {
   jev_events "$home" 'select(.id == "1790000000:3" and .outcome == "classified")' | grep -q . \
     || fail "the wake presented in the drain after a local timeout was not classified"
   pass "a local timeout skips the rest of that drain and an API/transport error only its row, each logged with the reason; the next drain tries again with no day pause, unlike OpenRouter"
+}
+
+test_local_backend_pauses_only_after_consecutive_timeouts() {
+  local home calls_before
+  home=$(jev_local_case local-timeoutstreak)
+  # a drain dials a stuck local server once, so each drain is one timeout in the streak
+  timeout_drain "$home" 1 2
+  timeout_drain "$home" 3 2
+  assert_absent "$home/state/jev/disabled" "two local timeouts paused Jev"
+  timeout_drain "$home" 5 1 localok
+  timeout_drain "$home" 6 1
+  timeout_drain "$home" 7 1
+  assert_absent "$home/state/jev/disabled" "a success did not reset the local timeout streak"
+  timeout_drain "$home" 8 1
+  [ "$(cut -f2 "$home/state/jev/disabled")" = timeout ] || fail "three consecutive local timeouts did not pause Jev"
+  [[ "$(pause_until "$home")" =~ ^[0-9]+$ ]] || fail "the local pause is not a timed pause"
+  calls_before=$(calls "$home")
+  timeout_drain "$home" 9 1 localok
+  [ "$(calls "$home")" = "$calls_before" ] || fail "a paused local Jev still dialed"
+  pass "the local backend pauses for a short while only after consecutive timeouts"
 }
 
 test_local_backend_status_reports_the_endpoint_and_ceiling() {
@@ -885,7 +1118,15 @@ test_foreign_state_dir_never_uses_the_key
 test_shadow_classifies_without_changing_the_presentation
 test_only_masked_reason_and_status_leave_the_machine
 test_timeout_is_configurable
-test_timeout_pauses_until_the_next_day
+test_one_timeout_does_not_pause_jev
+test_consecutive_timeouts_pause_for_a_short_while
+test_timeout_streak_and_pause_are_configurable
+test_a_success_resets_the_timeout_streak
+test_timeout_pause_expires_on_its_own_and_backs_off
+test_legacy_disabled_file_is_read_safely
+test_every_pause_is_announced_once_through_a_check_wake
+test_resume_is_announced_only_for_an_announced_pause
+test_pause_state_command_prints_only_while_paused
 test_api_errors_pause_until_the_next_day
 test_daily_cap_pauses_after_the_spend_is_reached
 test_local_backend_takes_priority_needs_no_key_and_records_the_answering_model
@@ -897,6 +1138,7 @@ test_local_backend_missing_cost_is_not_an_error
 test_local_backend_refuses_a_non_loopback_endpoint
 test_local_backend_load_ceiling_skips_without_a_day_pause
 test_local_backend_timeout_and_api_errors_skip_without_a_day_pause
+test_local_backend_pauses_only_after_consecutive_timeouts
 test_local_backend_status_reports_the_endpoint_and_ceiling
 test_drain_never_waits_for_jev
 test_hooks_record_actions_and_turn_ends_without_text

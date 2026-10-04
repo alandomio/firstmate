@@ -12,6 +12,7 @@
 #                                            (internal: called synchronously by bin/fm-watch.sh)
 #   fm-jev.sh mask                          (stdin -> the masked text that would leave the machine)
 #   fm-jev.sh observe-drain <spool> <epoch> (internal: called detached by bin/fm-jev-lib.sh)
+#   fm-jev.sh pause-state                   (internal: one line while paused, read by bin/fm-session-start.sh)
 #
 # Absorption (config/jev-absorb). Off by default, and a wholly separate act
 # from the shadow measurement above: shadow mode only ever WATCHES and never
@@ -70,7 +71,7 @@
 # 127.0.0.1/localhost/::1 with no path (jev_local_url_ok); anything else is
 # refused outright rather than dialed, logged as a skipped "invalid-endpoint"
 # row, and pauses classification for the day - the one local-backend
-# condition that still does (see Limits) - this file must never become a
+# condition that does so for the whole day (see Pauses) - this file must never become a
 # back door to a hosted API.
 #
 # Shadow contract. For every wake row a drain presents, this script asks Jev
@@ -93,23 +94,44 @@
 # seconds; override with a positive number in config/jev-timeout, an invalid
 # value keeps the default and `status` says so) - warm local requests measured
 # well under a second, so the 5 second default still stops a stuck local
-# server hanging the classify loop. The OpenRouter backend pauses
-# classification until the next local calendar day (state/jev/disabled) on
-# its timeout, an API/transport error, a response without a usage.cost, or
-# reaching its daily spend cap (USD, default 1; override with a decimal
-# number in config/jev-daily-cap), summed from the usage.cost each response
-# reports - unchanged. The local backend has no per-request cost and no
-# monotonic quota to protect, so none of its own failure reasons ever pauses
-# it for the day: a 1-minute load average at or above config/jev-max-load
-# (default 8; checked before each request), a timeout, or an API/transport
-# error each only skip that one row (why=load/timeout/api-error), and the
+# server hanging the classify loop.
+#
+# Pauses. Two kinds, both in state/jev/disabled ("<day>\t<why>" or, for a timed
+# pause, "<day>\t<why>\t<until-epoch>"). A DAY pause holds until the next local
+# calendar day: on OpenRouter an API/transport error, a response without a
+# usage.cost, or reaching the daily spend cap (USD, default 1; override with a
+# decimal number in config/jev-daily-cap, summed from the usage.cost each
+# response reports); on either backend an invalid config/jev-endpoint, which is
+# a configuration mistake to surface, not a transient condition to retry. A
+# TIMED pause covers timeouts, on either backend: the Nth consecutive timeout
+# (config/jev-timeout-streak, default 3; any successful classification resets
+# the count, kept in state/jev/timeout-streak) pauses classification for
+# config/jev-timeout-pause minutes (default 60), then Jev tries again by
+# itself. A further pause with no success in between doubles (60, 120, 240 ...
+# minutes), and no pause ever outlasts the local calendar day. A single slow
+# request therefore only skips its own wake. An invalid value in either config
+# file keeps its default and `status` says so. A "<day>\ttimeout" record with
+# no until time is the old whole-day format and is read as already over. Entering
+# any pause (either kind, any reason) appends one check wake - "check: jev-pause:
+# ..." with the reason and when it ends - and the first successful
+# classification after it ends appends one "check: jev-resume: ..." wake, but
+# only for a pause that was announced (state/jev/pause-announced); a pause that
+# ends and then fails again sends no resume, the next pause announces itself as
+# a new episode. `pause-state` prints a one-line pause
+# for the session-start digest. `status`
+# and `report` print the pause, the streak and the pause rule; every wake
+# skipped by a pause is logged with why=disabled.
+#
+# The local backend has no per-request cost and no monotonic quota to protect,
+# so apart from the timed timeout pause and an invalid endpoint none of its own
+# failure reasons ever pauses it: a 1-minute load average at or above
+# config/jev-max-load (default 8; checked before each request) or an
+# API/transport error each only skip that one row (why=load/api-error), and the
 # very next drain tries again. A timeout also skips the rest of that same
 # drain's rows (why=timeout) without dialing, so a stuck server costs one
-# timeout per drain rather than one per row, and the classify lock is never
-# held long enough for detached drains to pile up behind it. The sole exception is an invalid
-# config/jev-endpoint, which still pauses the local backend for the day
-# because that is a configuration mistake to surface, not a transient
-# condition to retry. The wake itself is untouched in every case because
+# timeout per drain rather than one per row (and counts once toward the
+# streak), and the classify lock is never held long enough for detached drains
+# to pile up behind it. The wake itself is untouched in every case because
 # shadow mode never held it.
 #
 # The local backend asks through Rizzo Flow's native /v1/decisions API (the
@@ -132,7 +154,7 @@
 #   {"ev":"ack","t","through"}           from bin/fm-wake-drain.sh --ack-through
 #   {"ev":"turn_end","t","outcome":"ack"|"message"|"unknown"}
 #                                        from bin/fm-turnend-guard.sh
-#   {"ev":"disabled","t","day","why"}
+#   {"ev":"disabled","t","day","why"[,"until"]}
 #
 # Ground truth (report). A presented wake "needed firstmate" when its handling
 # turn - from its first presentation through the first turn end after the
@@ -178,11 +200,15 @@ JEV_DIR="$STATE/jev"
 JEV_LOG="$JEV_DIR/shadow.jsonl"
 JEV_DISABLED="$JEV_DIR/disabled"
 JEV_LOCK="$JEV_DIR/.classify.lock"
+JEV_TIMEOUT_STREAK_FILE="$JEV_DIR/timeout-streak"
+JEV_PAUSE_ANNOUNCED="$JEV_DIR/pause-announced"
 JEV_OR_MODEL=typesafe/jev-1.13
 JEV_OR_ENDPOINT=https://openrouter.ai/api/alpha/decisions
 JEV_DEFAULT_TIMEOUT=5
 JEV_DEFAULT_CAP=1
 JEV_DEFAULT_MAX_LOAD=8
+JEV_DEFAULT_TIMEOUT_STREAK=3
+JEV_DEFAULT_TIMEOUT_PAUSE_MINUTES=60
 JEV_LOCAL_MIN_TOP_PROBABILITY=0.6
 JEV_ABSORB_THRESHOLD_DEFAULT=0.9
 JEV_ABSORB_MIN_SAMPLE_DEFAULT=300
@@ -326,17 +352,179 @@ jev_ge() {  # <a> <b> -> 0 when a >= b
   awk -v a="$1" -v b="$2" 'BEGIN { exit !((a + 0) >= (b + 0)) }'
 }
 
-jev_paused_today() {  # <day> -> 0 when classification is paused for <day>
-  local day
-  [ -f "$JEV_DISABLED" ] || return 1
-  day=$(cut -f1 < "$JEV_DISABLED" 2>/dev/null) || return 1
-  [ "$day" = "$1" ]
+# config/jev-timeout-streak (consecutive timeouts before a pause) and
+# config/jev-timeout-pause (minutes of the first pause): positive whole numbers
+# of at most six digits, anything else keeps the default and `status` says so.
+jev_posint_raw() {  # <config-name>
+  [ -f "$CONFIG/$1" ] && tr -d '[:space:]' < "$CONFIG/$1" 2>/dev/null
+  return 0
 }
 
-jev_pause() {  # <day> <why>
-  (umask 077 && printf '%s\t%s\n' "$1" "$2" > "$JEV_DISABLED") 2>/dev/null || true
-  _fm_jev_append "$STATE" "$(jq -cn --argjson t "$(date +%s)" --arg day "$1" --arg why "$2" \
-    '{ev: "disabled", t: $t, day: $day, why: $why}')"
+jev_posint_valid() {  # <value> -> 0 when a positive whole number
+  [[ "$1" =~ ^[1-9][0-9]{0,5}$ ]]
+}
+
+jev_posint() {  # <config-name> <default>
+  local v
+  v=$(jev_posint_raw "$1")
+  if jev_posint_valid "$v"; then
+    printf '%s\n' "$v"
+  else
+    printf '%s\n' "$2"
+  fi
+}
+
+jev_timeout_streak_limit() {
+  jev_posint jev-timeout-streak "$JEV_DEFAULT_TIMEOUT_STREAK"
+}
+
+jev_timeout_pause_minutes() {
+  jev_posint jev-timeout-pause "$JEV_DEFAULT_TIMEOUT_PAUSE_MINUTES"
+}
+
+# Epoch seconds of the end of the local calendar day (an estimate that is off
+# by an hour on a daylight-saving day; jev_paused_now also compares the day
+# itself, so a pause can never cross midnight whatever this returns).
+jev_end_of_day() {
+  local hms h m s
+  hms=$(date +%H:%M:%S)
+  IFS=: read -r h m s <<< "$hms"
+  printf '%s\n' "$(( $(date +%s) + 86400 - (10#$h * 3600 + 10#$m * 60 + 10#$s) ))"
+}
+
+jev_clock() {  # <epoch> -> HH:MM local time (GNU date, then BSD date)
+  date -d "@$1" +%H:%M 2>/dev/null || date -r "$1" +%H:%M 2>/dev/null || printf '%s\n' "$1"
+}
+
+# state/jev/disabled is "<day>\t<why>" (a pause until the next local day: the
+# spend cap, an API/transport error or a missing cost on OpenRouter, an
+# invalid config/jev-endpoint) or "<day>\t<why>\t<until-epoch>" (a timed pause
+# that clears itself). A "<day>\ttimeout" record without an until time was
+# written when one timeout paused the whole day; that reason no longer pauses,
+# so it is read as already over. Anything unreadable never pauses.
+# Sets JEV_PAUSE_DAY, JEV_PAUSE_WHY and JEV_PAUSE_UNTIL (empty for a day pause).
+jev_pause_read() {
+  JEV_PAUSE_DAY=; JEV_PAUSE_WHY=; JEV_PAUSE_UNTIL=
+  [ -f "$JEV_DISABLED" ] || return 1
+  IFS=$(printf '\t') read -r JEV_PAUSE_DAY JEV_PAUSE_WHY JEV_PAUSE_UNTIL < "$JEV_DISABLED" 2>/dev/null || true
+  [[ "$JEV_PAUSE_DAY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
+  [[ "$JEV_PAUSE_UNTIL" =~ ^[0-9]+$ ]] || JEV_PAUSE_UNTIL=
+  return 0
+}
+
+jev_paused_now() {  # <day> -> 0 when classification is paused right now
+  jev_pause_read || return 1
+  [ "$JEV_PAUSE_DAY" = "$1" ] || return 1
+  if [ -n "$JEV_PAUSE_UNTIL" ]; then
+    [ "$(date +%s)" -lt "$JEV_PAUSE_UNTIL" ]
+  else
+    [ "$JEV_PAUSE_WHY" != timeout ]
+  fi
+}
+
+# A pause is never silent: entering one from "running" appends ONE check wake
+# (jev_pause_announce) naming the reason and when it ends, and the first
+# successful classification after it ends appends ONE resume wake
+# (jev_pause_resume_notice) - only for a pause that was announced, tracked in
+# state/jev/pause-announced. A retry that fails sends no resume; the next pause
+# announces itself as a new episode and overwrites the marker. Re-writing the
+# record while a pause is already active is the same episode, never announced twice.
+jev_pause() {  # <day> <why> [until-epoch]
+  local active=1
+  jev_paused_now "$1" && active=0
+  (umask 077 && printf '%s\t%s%s\n' "$1" "$2" "${3:+$(printf '\t%s' "$3")}" > "$JEV_DISABLED") 2>/dev/null || true
+  _fm_jev_append "$STATE" "$(jq -cn --argjson t "$(date +%s)" --arg day "$1" --arg why "$2" --arg until "${3:-}" \
+    '{ev: "disabled", t: $t, day: $day, why: $why} + (if $until == "" then {} else {until: ($until | tonumber)} end)')"
+  [ "$active" -eq 0 ] || jev_pause_announce "$2" "${3:-}"
+}
+
+jev_pause_announce() {  # <why> [until-epoch]
+  local when key
+  if [ -n "${2:-}" ]; then when="until $(jev_clock "$2")"; else when="until tomorrow"; fi
+  key="jev-pause:$(date +%s):$$"
+  fm_wake_append check "$key" "check: jev-pause: Jev shadow classification paused ($1), $when; wakes still surface unchanged, only the classifier is off" || return 0
+  (umask 077 && printf '%s\t%s\n' "$key" "$1" > "$JEV_PAUSE_ANNOUNCED") 2>/dev/null || true
+}
+
+jev_pause_resume_notice() {  # <day>
+  local key why
+  [ -f "$JEV_PAUSE_ANNOUNCED" ] || return 0
+  jev_paused_now "$1" && return 0
+  IFS=$(printf '\t') read -r key why < "$JEV_PAUSE_ANNOUNCED" 2>/dev/null || true
+  rm -f "$JEV_PAUSE_ANNOUNCED" 2>/dev/null || true
+  [ -n "$key" ] || return 0
+  fm_wake_append check "jev-resume:$(date +%s):$$" "check: jev-resume: Jev shadow classification resumed after its ${why:-earlier} pause" || true
+}
+
+# The consecutive-timeout streak, per local day: "<count>\t<pause-episodes>\t<day>".
+# A day change or an unreadable file reads as zero. Sets JEV_STREAK and JEV_EPISODES.
+jev_streak_read() {
+  local c e d
+  JEV_STREAK=0; JEV_EPISODES=0
+  [ -f "$JEV_TIMEOUT_STREAK_FILE" ] || return 0
+  IFS=$(printf '\t') read -r c e d < "$JEV_TIMEOUT_STREAK_FILE" 2>/dev/null || true
+  [[ "$c" =~ ^[0-9]{1,6}$ ]] && [[ "$e" =~ ^[0-9]{1,6}$ ]] && [ "$d" = "$(date +%F)" ] || return 0
+  JEV_STREAK=$((10#$c)); JEV_EPISODES=$((10#$e))
+}
+
+jev_streak_write() {  # <count> <episodes>
+  (umask 077 && printf '%s\t%s\t%s\n' "$1" "$2" "$(date +%F)" > "$JEV_TIMEOUT_STREAK_FILE") 2>/dev/null || true
+}
+
+# A successful classification: the streak and the back-off start over.
+jev_timeout_reset() {
+  [ ! -f "$JEV_TIMEOUT_STREAK_FILE" ] || rm -f "$JEV_TIMEOUT_STREAK_FILE" 2>/dev/null || true
+}
+
+# One request timed out. Pauses only when this is the Nth consecutive timeout:
+# for config/jev-timeout-pause minutes (default 60), doubling on each further
+# pause with no success in between, and never past the end of the day. The
+# caller holds the classify lock, so the read-modify-write cannot interleave.
+jev_timeout_note() {  # <day>
+  local limit dur until eod i
+  jev_streak_read
+  JEV_STREAK=$((JEV_STREAK + 1))
+  limit=$(jev_timeout_streak_limit)
+  if [ "$JEV_STREAK" -lt "$limit" ]; then
+    jev_streak_write "$JEV_STREAK" "$JEV_EPISODES"
+    return 0
+  fi
+  JEV_EPISODES=$((JEV_EPISODES + 1))
+  dur=$(( $(jev_timeout_pause_minutes) * 60 ))
+  for ((i = 1; i < JEV_EPISODES && dur < 86400; i++)); do dur=$((dur * 2)); done
+  until=$(( $(date +%s) + dur ))
+  eod=$(jev_end_of_day)
+  [ "$until" -le "$eod" ] || until=$eod
+  jev_pause "$1" timeout "$until"
+  jev_streak_write 0 "$JEV_EPISODES"
+}
+
+# The pause and streak lines shared by `status` and `report`.
+jev_print_pause_state() {
+  local day limit minutes
+  day=$(date +%F)
+  if jev_paused_now "$day"; then
+    if [ -n "$JEV_PAUSE_UNTIL" ]; then
+      printf 'paused until %s: %s\n' "$(jev_clock "$JEV_PAUSE_UNTIL")" "$JEV_PAUSE_WHY"
+    else
+      printf 'paused until tomorrow: %s\n' "$JEV_PAUSE_WHY"
+    fi
+  fi
+  limit=$(jev_timeout_streak_limit)
+  minutes=$(jev_timeout_pause_minutes)
+  jev_streak_read
+  printf 'timeout streak: %s of %s (that many in a row pause classification for %s minutes, doubling per repeat, never past midnight; pause episodes today: %s)\n' \
+    "$JEV_STREAK" "$limit" "$minutes" "$JEV_EPISODES"
+  jev_posint_note jev-timeout-streak "$JEV_DEFAULT_TIMEOUT_STREAK"
+  jev_posint_note jev-timeout-pause "$JEV_DEFAULT_TIMEOUT_PAUSE_MINUTES"
+}
+
+jev_posint_note() {  # <config-name> <default>: say so when a present value is unusable
+  local v
+  v=$(jev_posint_raw "$1")
+  if [ -n "$v" ] && ! jev_posint_valid "$v"; then
+    printf 'config/%s value "%s" is not a positive whole number, default %s kept\n' "$1" "$v" "$2"
+  fi
 }
 
 # The task a wake row is about, when this home can name it: the status or
@@ -459,11 +647,13 @@ jev_dial_local() {  # <reason-masked> <status-masked> <endpoint-base> <timeout>
 }
 
 # One request against either backend. Prints nothing; logs a classified or
-# skipped event. Only the OpenRouter backend ever pauses for the day here
-# (timeout, API error, or a missing cost); the local backend only skips this
-# one row on any of those (a timeout also sets JEV_LOCAL_TIMED_OUT so the
-# caller skips the rest of this drain), and the caller applies its
-# load-ceiling skip before ever calling this.
+# skipped event. A timeout feeds jev_timeout_note, which can start a timed
+# pause on either backend (on the local backend it also sets
+# JEV_LOCAL_TIMED_OUT so the caller skips the rest of this drain). Day pauses
+# are only an API error, a missing cost or the spend cap on OpenRouter (the
+# caller adds an invalid endpoint); the local backend only skips this one row
+# on an API error, and the caller applies its load-ceiling skip before ever
+# calling this. A classified event also reports the end of an announced pause.
 jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-before> <cap>
   local id=$1 reason=$2 status=$3 backend=$4 spend=$5 cap=$6
   local day key model endpoint timeout body resp code rc start ms cost event
@@ -507,11 +697,8 @@ jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-be
   if [ "$rc" -eq 28 ]; then
     rm -f "$resp"
     jev_log_skip "$id" timeout "no answer within ${timeout}s" "$reason" "$status"
-    if [ "$backend" = local ]; then
-      JEV_LOCAL_TIMED_OUT=1
-    else
-      jev_pause "$day" timeout
-    fi
+    [ "$backend" != local ] || JEV_LOCAL_TIMED_OUT=1
+    jev_timeout_note "$day"
     return 0
   fi
   if [ "$rc" -ne 0 ]; then
@@ -559,12 +746,14 @@ jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-be
     return 0
   fi
   _fm_jev_append "$STATE" "$event"
+  jev_timeout_reset
   if [ "$backend" != local ]; then
     JEV_SPEND=$(awk -v a="$spend" -v b="${cost:-0}" 'BEGIN { printf "%.9f", a + b }')
     if jev_ge "$JEV_SPEND" "$cap"; then
       jev_pause "$day" cap
     fi
   fi
+  jev_pause_resume_notice "$day"
 }
 
 cmd_observe_drain() {  # <spool> <epoch>
@@ -604,6 +793,8 @@ cmd_observe_drain() {  # <spool> <epoch>
   while IFS=$(printf '\t') read -r epoch seq kind key payload; do
     case "$epoch:$seq" in *[!0-9:]*|:*|*:) continue ;; esac
     id="$epoch:$seq"
+    # Jev's own pause and resume announcements are never sent to the classifier.
+    case "$key" in jev-pause:*|jev-resume:*) continue ;; esac
     if [ -f "$JEV_LOG" ] && grep -qF "\"ev\":\"jev\",\"t\":" "$JEV_LOG" \
       && jq -n -R -e --arg id "$id" \
         'any(inputs | fromjson? | select(type == "object"); .ev == "jev" and .id == $id)' \
@@ -613,8 +804,8 @@ cmd_observe_drain() {  # <spool> <epoch>
     task=$(jev_task_for_row "$kind" "$key")
     reason=$(printf '%s' "$payload" | jev_mask)
     status=$(jev_last_status "$task" | jev_mask)
-    if jev_paused_today "$day"; then
-      jev_log_skip "$id" disabled "$(cut -f2 < "$JEV_DISABLED" 2>/dev/null)" "$reason" "$status"
+    if jev_paused_now "$day"; then
+      jev_log_skip "$id" disabled "$JEV_PAUSE_WHY" "$reason" "$status"
       continue
     fi
     if [ "$backend" = local ]; then
@@ -726,6 +917,21 @@ cmd_absorb_try() {
   return 0
 }
 
+# One line while classification is paused, nothing otherwise: the session-start
+# digest's read of the pause (bin/fm-session-start.sh), so it never prints a
+# "not paused" line into every session.
+cmd_pause_state() {
+  local day
+  day=$(date +%F)
+  jev_paused_now "$day" || return 0
+  if [ -n "$JEV_PAUSE_UNTIL" ]; then
+    printf 'Jev shadow classification is paused until %s (%s); wakes still surface unchanged, only the classifier is off.\n' \
+      "$(jev_clock "$JEV_PAUSE_UNTIL")" "$JEV_PAUSE_WHY"
+  else
+    printf 'Jev shadow classification is paused until tomorrow (%s); wakes still surface unchanged, only the classifier is off.\n' "$JEV_PAUSE_WHY"
+  fi
+}
+
 cmd_status() {
   local day cap spend backend base traw
   day=$(date +%F)
@@ -755,9 +961,7 @@ cmd_status() {
       printf 'request timeout: %ss\n' "$(jev_timeout)"
     fi
   fi
-  if jev_paused_today "$day"; then
-    printf 'paused until tomorrow: %s\n' "$(cut -f2 < "$JEV_DISABLED")"
-  fi
+  [ -z "$backend" ] || jev_print_pause_state
   printf 'shadow log: %s\n' "$JEV_LOG"
   if jev_absorb_requested; then
     if [ "$backend" != local ]; then
@@ -1002,12 +1206,14 @@ cmd_report() {
   [ -f "$log" ] || die "no shadow log at $log"
   command -v jq >/dev/null 2>&1 || die "jq is required"
   since=$((now - days * 86400))
+  [ "$log" != "$JEV_LOG" ] || jev_print_pause_state
   jq -n -R -r --argjson now "$now" --argjson since "$since" --argjson minconf "$minconf" \
     --argjson limit "$limit" "[inputs | fromjson?] | $JEV_JQ_REPORT" "$log"
 }
 
 case "${1:-}" in
   status) shift; cmd_status "$@" ;;
+  pause-state) shift; cmd_pause_state ;;
   report) shift; cmd_report "$@" ;;
   absorb-gate) shift; cmd_absorb_gate "$@" ;;
   absorb-try) shift; cmd_absorb_try "$@" ;;
