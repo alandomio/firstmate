@@ -27,8 +27,9 @@
 #                          never as a wedge, and that recheck reason names which
 #                          human the wait is on; a due PAUSED (never captain-held)
 #                          recheck first offers the deterministic unchanged-pause
-#                          rule (config/absorb-unchanged-pause), then Jev
-#                          (config/jev-absorb), one more look before it
+#                          rule (config/absorb-unchanged-pause, which also covers a
+#                          worker whose agent has exited), then Jev
+#                          (config/jev-absorb, live workers only), one more look before it
 #                          re-surfaces - both off by default, and both behind
 #                          absorb_vetoed (bin/fm-classify-lib.sh), the single
 #                          deterministic veto no absorber may override. A stale
@@ -464,8 +465,10 @@ busy_turn_over_age() {  # <task>
 # last surface (.paused-surfaced-<key>) is absorbed and logged instead, re-stamping
 # the throttle so the next comparison is one PAUSE_RESURFACE_SECS later; it surfaces
 # again only once PAUSE_REMIND_SECS pass since that surface, or the situation changes.
-# A recheck that finds the agent dead is never absorbed, so an exited worker keeps
-# surfacing on every PAUSE_RESURFACE_SECS recheck.
+# A recheck that finds the agent dead skips that legacy absorb and Jev, so an exited
+# worker surfaces on every PAUSE_RESURFACE_SECS recheck unless the opt-in
+# deterministic rule (rule_absorb_unchanged_pause) takes it: it treats an exited
+# worker like a live one, and its own FM_PAUSE_REMIND_SECS valve re-surfaces the wait.
 # 0 when Jev absorbed a declared-pause recheck that was about to re-surface -
 # called ONLY for the "paused, awaiting external" case, never for a
 # captain-held transfer (that always re-surfaces regardless of any classifier,
@@ -484,8 +487,10 @@ rule_absorb_requested() {
 }
 
 # The deterministic (no-model) twin of jev_stale_absorbed: no classifier, same
-# unchanged/open-decision eligibility. <key>'s since-marker is its own safety
-# valve, bounded by FM_PAUSE_REMIND_SECS, so one real surface still lands.
+# unchanged/open-decision eligibility, except that an exited worker is eligible too
+# (an exit since the last surface already changes <now-situation>).
+# <key>'s since-marker is its own safety valve, bounded by FM_PAUSE_REMIND_SECS,
+# so one real surface still lands.
 rule_absorb_unchanged_pause() {  # <task> <key> <now-situation> <prev-situation> <reason>
   local task=$1 key=$2 now_sit=$3 prev_sit=$4 reason=${5:-} statusf="$STATE/$1.status" last marker
   rule_absorb_requested || return 1
@@ -592,7 +597,7 @@ handle_paused_stale() {  # <window> <task> <hash> <tail40>
     elif [ -n "$prev_sit" ]; then
       reason="$reason; changed since the last recheck: $(paused_situation_change "$prev_sit" "$now_sit")"
     fi
-    if [ "$detail" = "paused, awaiting external" ] && [ "$dead_agent" -ne 0 ] \
+    if [ "$detail" = "paused, awaiting external" ] \
       && rule_absorb_unchanged_pause "$task" "$key" "$now_sit" "$prev_sit" "stale: $win ($reason)" \
       && rule_absorb_record "$task" "stale: $win ($reason)" "$(last_status_line "$statusf")"; then
       date +%s > "$throttle"
