@@ -3146,22 +3146,84 @@ test_rule_refuses_a_changed_situation_or_an_open_decision() {
   pass "the rule refuses a changed situation and a task with an open decision, surfacing both for real"
 }
 
-test_rule_never_absorbs_a_dead_agent_pause_recheck() {
-  local dir state statusf window task key
-  dir=$(make_case rule-dead-agent); state="$dir/state"
-  window="test:fm-rule-dead"; task=deadruled; statusf="$state/$task.status"
-  key=$(printf '%s' "$window" | tr ':/.' '___')
-  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$task.meta"
-  printf 'paused: waiting on upstream\n' > "$statusf"
-  backdate_file 500 "$statusf"
+# An exited worker (the pane is a bare shell, so its agent reads dead) is absorbed
+# exactly like a live one once its recheck is unchanged.
+rule_exited_case() {  # <case-name> <window> <task> [status-line]; prints the case dir
+  local dir state key
+  dir=$(make_case "$1"); state="$dir/state"
+  key=$(printf '%s' "$2" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$2" > "$state/$3.meta"
+  printf '%s\n' "${4:-paused: waiting on upstream}" > "$state/$3.status"
+  backdate_file 500 "$state/$3.status"
   printf 'bare shell after agent exit\n' > "$dir/pane.txt"
   : > "$state/.paused-$key"
   printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   jev_absorb_enable_rule "$dir"
-  paused_recheck_round "$dir" "$window" "$task" zsh surface "dead-agent recheck" FM_HOME="$dir"
-  assert_absent "$state/jev/absorbed.jsonl" "a dead-agent pause recheck was recorded as rule-absorbed"
-  pass "a dead-agent pause recheck always re-surfaces, never absorbed by the rule"
+  printf '%s' "$dir"
+}
+
+test_rule_absorbs_an_unchanged_exited_pause_recheck() {
+  local dir state window task key
+  window="test:fm-rule-exited"; task=exitedruled
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  dir=$(rule_exited_case rule-exited-unchanged "$window" "$task"); state="$dir/state"
+  paused_recheck_round "$dir" "$window" "$task" zsh surface "exited baseline recheck" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  paused_recheck_round "$dir" "$window" "$task" zsh absorb "unchanged exited recheck absorbed by the rule" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  grep -F '"source":"rule"' "$state/jev/absorbed.jsonl" >/dev/null \
+    || fail "the exited worker's unchanged recheck was not rule-absorbed: $(cat "$state/jev/absorbed.jsonl" 2>/dev/null)"
+  [ -e "$state/.rule-absorbed-since-$key" ] || fail "the rule's safety-valve marker was not recorded for an exited worker"
+  pass "the rule absorbs an unchanged declared-pause recheck of an exited worker, recorded as source=rule"
+}
+
+test_rule_surfaces_a_changed_exited_pause_recheck() {
+  local dir state window task
+  window="test:fm-rule-exited-changed"; task=exitedchanged
+  dir=$(rule_exited_case rule-exited-changed "$window" "$task"); state="$dir/state"
+  paused_recheck_round "$dir" "$window" "$task" zsh surface "exited baseline recheck" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  paused_recheck_round "$dir" "$window" "$task" zsh absorb "unchanged exited recheck absorbed" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  # The shell prints something new: the situation changed, so the rule refuses.
+  printf 'bare shell after agent exit\nsomething new appeared\n' > "$dir/pane.txt"
+  paused_recheck_round "$dir" "$window" "$task" zsh surface "changed exited recheck surfaces" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=90000
+  grep -qF "changed since the last recheck: pane text changed" "$dir/watch.out" \
+    || fail "an exited worker's changed pane was not surfaced as changed: $(cat "$dir/watch.out")"
+  # A worker that exits between two rechecks changed too, even with an identical pane.
+  local dir2 window2=test:fm-rule-just-exited task2=justexited
+  dir2=$(rule_exited_case rule-just-exited "$window2" "$task2")
+  paused_recheck_round "$dir2" "$window2" "$task2" claude surface "live baseline recheck" \
+    FM_HOME="$dir2" FM_PAUSE_REMIND_SECS=90000
+  paused_recheck_round "$dir2" "$window2" "$task2" zsh surface "recheck after the agent exited" \
+    FM_HOME="$dir2" FM_PAUSE_REMIND_SECS=90000
+  grep -qF "agent now dead" "$dir2/watch.out" \
+    || fail "an exit since the last recheck was not surfaced as a change: $(cat "$dir2/watch.out")"
+  pass "the rule refuses an exited worker whose pane or liveness changed since the last recheck"
+}
+
+test_rule_safety_valve_resurfaces_an_exited_pause_once_per_window() {
+  local dir state window task key
+  window="test:fm-rule-exited-valve"; task=exitedvalve
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  dir=$(rule_exited_case rule-exited-valve "$window" "$task"); state="$dir/state"
+  paused_recheck_round "$dir" "$window" "$task" zsh surface "exited baseline recheck" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  paused_recheck_round "$dir" "$window" "$task" zsh absorb "unchanged exited recheck absorbed" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  paused_recheck_round "$dir" "$window" "$task" zsh absorb "second unchanged exited recheck still absorbed" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  # The window lapses: the same unchanged wait surfaces once for real, and the marker resets.
+  backdate_file 500 "$state/.rule-absorbed-since-$key"
+  paused_recheck_round "$dir" "$window" "$task" zsh surface "the reminder valve re-surfaces the exited wait" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  [ ! -e "$state/.rule-absorbed-since-$key" ] || fail "the valve marker survived the forced surface of an exited worker"
+  paused_recheck_round "$dir" "$window" "$task" zsh absorb "a new window absorbs the exited wait again" \
+    FM_HOME="$dir" FM_PAUSE_REMIND_SECS=300
+  [ -e "$state/.rule-absorbed-since-$key" ] || fail "no new absorb window started after the reminder"
+  pass "an exited wait is re-surfaced once per FM_PAUSE_REMIND_SECS, then absorbed again"
 }
 
 test_rule_never_absorbs_a_captain_held_recheck() {
@@ -3183,15 +3245,26 @@ test_rule_never_absorbs_a_captain_held_recheck() {
   if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
   else touch -m -d "@$back" "$statusf"; fi
   sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
-  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
-    FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
-    watch_bg "$state" "$fakebin" "$out" FM_HOME="$dir" FM_PAUSE_RESURFACE_SECS=240
-  pid=$!
-  wait_for_exit "$pid" 100 || fail "watcher did not re-surface a captain-held recheck despite the rule being enabled"
-  grep -F "stale: $window" "$out" >/dev/null || fail "captain-held recheck did not surface: $(cat "$out")"
+  # The pane is a bare shell, so the held worker's agent has exited. Two rechecks: the
+  # second has an unchanged situation, the case the rule absorbs for a paused worker.
+  local round
+  for round in 1 2; do
+    : > "$out"
+    PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+      FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+      watch_bg "$state" "$fakebin" "$out" FM_HOME="$dir" FM_PAUSE_RESURFACE_SECS=240
+    pid=$!
+    wait_for_exit "$pid" 100 || fail "round $round: watcher did not re-surface a captain-held recheck of an exited worker despite the rule being enabled"
+    grep -F "stale: $window" "$out" >/dev/null || fail "round $round: captain-held recheck did not surface: $(cat "$out")"
+    grep -F "awaiting the captain" "$out" >/dev/null || fail "round $round: captain-held recheck lost its captain-held wording"
+    ack_stopped_cycle "$state" || fail "round $round: could not acknowledge the round"
+    backdate_file 500 "$state/.paused-resurfaced-$key"
+    backdate_file 500 "$state/.paused-surfaced-$key"
+    sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
+  done
   assert_absent "$state/jev/absorbed.jsonl" "a captain-held recheck was recorded as rule-absorbed"
   unset FM_FAKE_CREW_STATE
-  pass "a captain-held recheck always re-surfaces, never absorbed by the rule, even when enabled"
+  pass "a captain-held recheck of an exited worker always re-surfaces, never absorbed by the rule, even when enabled"
 }
 
 # The daily reminder: config/absorb-unchanged-pause's second line "daily" lets the
@@ -3710,7 +3783,9 @@ test_jev_never_absorbs_a_dead_agent_pause_recheck
 test_jev_never_absorbs_a_captain_held_recheck
 test_rule_absorbs_unchanged_pause_recheck
 test_rule_refuses_a_changed_situation_or_an_open_decision
-test_rule_never_absorbs_a_dead_agent_pause_recheck
+test_rule_absorbs_an_unchanged_exited_pause_recheck
+test_rule_surfaces_a_changed_exited_pause_recheck
+test_rule_safety_valve_resurfaces_an_exited_pause_once_per_window
 test_rule_never_absorbs_a_captain_held_recheck
 test_rule_daily_absorbs_an_unchanged_dead_agent_recheck_until_the_reminder
 test_rule_daily_is_off_without_its_second_line
