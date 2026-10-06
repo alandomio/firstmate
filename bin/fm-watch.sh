@@ -475,8 +475,9 @@ busy_turn_over_age() {  # <task>
 # last surface, with nothing else changed, for a paused: or captain-held wait.
 # 0 when Jev absorbed a declared-pause recheck that was about to re-surface -
 # called ONLY for the "paused, awaiting external" case, never for a
-# captain-held transfer (that always re-surfaces regardless of any classifier,
-# since it is a verified hold on a captain answer, not routine idling).
+# captain-held transfer (no classifier ever absorbs that, since it is a verified
+# hold on a captain answer, not routine idling; only the deterministic daily
+# reminder above can take its unchanged dead-agent recheck).
 # bin/fm-jev.sh's cmd_absorb_try owns every eligibility rule and the go-live
 # gate.
 jev_stale_absorbed() {  # <task> <reason>

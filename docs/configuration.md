@@ -690,7 +690,7 @@ With the file's first line `on` and its second non-blank line exactly `daily`, t
 It covers both a `paused:` wait and a verified `captain-held` transfer, and it requires that the situation equals the one recorded at the wait's last surface, so "dead" must already have been the state then.
 Without the second line the rule is exactly as described above, so a home that has not added it sees no change.
 Captain-held waits are included here, unlike the rule above, because a dead worker holding for the captain offers nothing new at each recheck: the first surface already told the captain, the hold stays in the open decision records and the wake drain's `OPEN DECISIONS` section, and a worker that died after that surface is a changed situation that surfaces at once.
-Measured over 2026-10-04 to 2026-10-06, 103 of 389 presented wakes in the primary home were such rechecks and 101 ended in a plain acknowledgement.
+A measured three days of presented wakes found about a quarter were such rechecks, nearly all ending in a plain acknowledgement.
 These stay immediate: the first recheck of a pause (no recorded situation), any change of status log, open decision set, liveness (alive to dead included), or pane text, and the reminder itself.
 The reminder is the safety valve: the absorb window is `FM_PAUSE_REMIND_SECS` (default one day) since the last surface, after which the recheck surfaces for real and the surface stamp restarts the window.
 Every absorption passes `absorb_vetoed` first, is skipped for a secondmate or a task with an open decision, and is counted in the same digest as `source: "rule"`; a recheck whose digest entry cannot be written surfaces instead.
