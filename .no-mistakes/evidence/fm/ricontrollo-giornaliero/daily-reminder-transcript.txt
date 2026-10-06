@@ -1,0 +1,103 @@
+# Daily reminder for an unchanged dead-agent wait - real bin/fm-watch.sh driven through due rechecks
+# target 286a252; each 'hour' is one due FM_PAUSE_RESURFACE_SECS recheck (throttle backdated); FM_POLL=1
+
+== A. dead worker on a declared pause, opted in to 'daily'
+  config/absorb-unchanged-pause: on + daily   status: paused: waiting on upstream
+  hour 1: first recheck (agent dead)                   -> WOKE THE SESSION: stale: test:fm-a-dead (paused 502s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds) 
+  hour 2: nothing changed                              -> ABSORBED (watcher polled on for 8s, printed nothing)
+                                                          digest source=rule entries:  -> 1
+  hour 3: nothing changed                              -> ABSORBED (watcher polled on for 8s, printed nothing)
+                                                          digest source=rule entries: 1 -> 2
+  past FM_PAUSE_REMIND_SECS since the last surface     -> WOKE THE SESSION: stale: test:fm-a-dead (paused 535s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 501s ago) 
+  hour after the reminder: nothing changed             -> ABSORBED (watcher polled on for 8s, printed nothing)
+                                                          digest source=rule entries: 2 -> 3
+  triage log:
+    [2026-10-06T22:35:49+0200] absorbed paused recheck via rule, daily reminder (paused, awaiting external, dead agent unchanged since its last surface 3s ago): test:fm-a-dead
+    [2026-10-06T22:36:05+0200] absorbed paused recheck via rule, daily reminder (paused, awaiting external, dead agent unchanged since its last surface 19s ago): test:fm-a-dead
+    [2026-10-06T22:36:21+0200] absorbed paused recheck via rule, daily reminder (paused, awaiting external, dead agent unchanged since its last surface 2s ago): test:fm-a-dead
+  absorption digest (state/jev/absorbed.jsonl):
+    {"source":"rule","kind":"stale","task":"a-dead","reason":"stale: test:fm-a-dead (paused 505s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 3s ago)"}
+    {"source":"rule","kind":"stale","task":"a-dead","reason":"stale: test:fm-a-dead (paused 521s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 19s ago)"}
+    {"source":"rule","kind":"stale","task":"a-dead","reason":"stale: test:fm-a-dead (paused 538s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 2s ago)"}
+
+== B. same wait, home with only the first line 'on' (not opted in)
+  config/absorb-unchanged-pause: on   status: paused: waiting on upstream
+  hour 1: first recheck (agent dead)                   -> WOKE THE SESSION: stale: test:fm-b-off (paused 501s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds) 
+  hour 2: nothing changed                              -> WOKE THE SESSION: stale: test:fm-b-off (paused 502s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 1s ago) 
+  hour 3: nothing changed                              -> WOKE THE SESSION: stale: test:fm-b-off (paused 504s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 1s ago) 
+  absorption digest: (no entries)
+
+== C. captain-held transfer, dead worker, 'daily'
+  config/absorb-unchanged-pause: on + daily   status: captain-held: awaiting the captain's decision
+  hour 1: first recheck (agent dead)                   -> WOKE THE SESSION: stale: test:fm-c-held (captain-held 500s, awaiting the captain - verified hold transfer, rechecked on a long cadence not a wedge; answer the held decision or release the hold) 
+  hour 2: nothing changed                              -> ABSORBED (watcher polled on for 8s, printed nothing)
+                                                          digest source=rule entries:  -> 1
+  triage log:
+    [2026-10-06T22:36:40+0200] absorbed paused recheck via rule, daily reminder (captain-held, awaiting the captain, dead agent unchanged since its last surface 1s ago): test:fm-c-held
+  absorption digest (state/jev/absorbed.jsonl):
+    {"source":"rule","kind":"stale","task":"c-held","reason":"stale: test:fm-c-held (captain-held 502s, awaiting the captain - verified hold transfer, rechecked on a long cadence not a wedge; answer the held decision or release the hold; unchanged since the last recheck 1s ago)"}
+
+== D. 'paused: waiting for the captain ...', dead worker, 'daily'
+  config/absorb-unchanged-pause: on + daily   status: paused: waiting for the captain to approve the release
+  hour 1: first recheck (agent dead)                   -> WOKE THE SESSION: stale: test:fm-d-captain (paused 501s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds) 
+  hour 2: nothing changed                              -> ABSORBED (watcher polled on for 8s, printed nothing)
+                                                          digest source=rule entries:  -> 1
+  triage log:
+    [2026-10-06T22:36:58+0200] absorbed paused recheck via rule, daily reminder (paused, awaiting external, dead agent unchanged since its last surface 3s ago): test:fm-d-captain
+  absorption digest (state/jev/absorbed.jsonl):
+    {"source":"rule","kind":"stale","task":"d-captain","reason":"stale: test:fm-d-captain (paused 503s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 3s ago)"}
+
+== E. changes of situation stay immediate ('daily')
+  config/absorb-unchanged-pause: on + daily   status: paused: waiting on upstream
+  hour 1: first recheck (agent alive)                  -> WOKE THE SESSION: stale: test:fm-e-change (paused 501s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds) 
+  hour 2: worker exited since the last surface         -> WOKE THE SESSION: stale: test:fm-e-change (paused 506s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; changed since the last recheck: agent now dead) 
+  hour 3: dead and unchanged                           -> ABSORBED (watcher polled on for 8s, printed nothing)
+                                                          digest source=rule entries:  -> 1
+  hour 4: pane text changed                            -> WOKE THE SESSION: stale: test:fm-e-change (paused 521s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; changed since the last recheck: pane text changed) 
+  hour 5: dead and unchanged                           -> ABSORBED (watcher polled on for 8s, printed nothing)
+                                                          digest source=rule entries: 1 -> 2
+  hour 6: new status line                              -> WOKE THE SESSION: stale: test:fm-e-change (paused 501s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; changed since the last recheck: status log updated) 
+  hour 7: dead and unchanged                           -> ABSORBED (watcher polled on for 8s, printed nothing)
+                                                          digest source=rule entries: 2 -> 3
+  triage log:
+    [2026-10-06T22:37:19+0200] absorbed paused recheck via rule, daily reminder (paused, awaiting external, dead agent unchanged since its last surface 2s ago): test:fm-e-change
+    [2026-10-06T22:37:36+0200] absorbed paused recheck via rule, daily reminder (paused, awaiting external, dead agent unchanged since its last surface 3s ago): test:fm-e-change
+    [2026-10-06T22:37:49+0200] absorbed paused recheck via rule, daily reminder (paused, awaiting external, dead agent unchanged since its last surface 2s ago): test:fm-e-change
+  absorption digest (state/jev/absorbed.jsonl):
+    {"source":"rule","kind":"stale","task":"e-change","reason":"stale: test:fm-e-change (paused 508s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 2s ago)"}
+    {"source":"rule","kind":"stale","task":"e-change","reason":"stale: test:fm-e-change (paused 525s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 3s ago)"}
+    {"source":"rule","kind":"stale","task":"e-change","reason":"stale: test:fm-e-change (paused 503s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 2s ago)"}
+
+== F. open decision never absorbed ('daily')
+  config/absorb-unchanged-pause: on + daily   status: paused: waiting on upstream
+  hour 1: first recheck (agent dead)                   -> WOKE THE SESSION: stale: test:fm-f-decision (paused 502s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds) 
+  hour 2: nothing changed, decision still open         -> WOKE THE SESSION: stale: test:fm-f-decision (paused 504s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 3s ago) 
+  absorption digest: (no entries)
+
+== G. absorb_vetoed wins: an unread note ('daily')
+  config/absorb-unchanged-pause: on + daily   status: paused: waiting on upstream
+  hour 1: first recheck (agent dead)                   -> WOKE THE SESSION: stale: test:fm-g-veto (paused 501s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds) 
+  hour 2: unchanged, but the note is unread again      -> WOKE THE SESSION: stale: test:fm-g-veto (paused 504s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 3s ago) 
+  hour 3: unchanged, note presented                    -> ABSORBED (watcher polled on for 8s, printed nothing)
+                                                          digest source=rule entries:  -> 1
+  triage log:
+    [2026-10-06T22:38:15+0200] absorbed paused recheck via rule, daily reminder (paused, awaiting external, dead agent unchanged since its last surface 2s ago): test:fm-g-veto
+  absorption digest (state/jev/absorbed.jsonl):
+    {"source":"rule","kind":"stale","task":"g-veto","reason":"stale: test:fm-g-veto (paused 507s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 2s ago)"}
+
+== H. secondmate: the daily rule records nothing (its liveness is never read; only the pre-existing live-agent comparison applies)
+  config/absorb-unchanged-pause: on + daily   status: paused: waiting on upstream
+  hour 1: first recheck                                -> WOKE THE SESSION: stale: test:fm-h-mate (paused 501s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds) 
+  hour 2: nothing changed                              -> ABSORBED (watcher polled on for 8s, printed nothing)
+  triage log:
+    [2026-10-06T22:38:30+0200] absorbed paused recheck (paused, awaiting external, unchanged since its last surface 2s ago): test:fm-h-mate
+  absorption digest: (no entries)
+
+#### Comparison: the same dead-worker wait on the base commit's watcher
+
+== BASE cfa4ac9 - dead worker on a declared pause, config 'on' + 'daily' (line ignored before the change)
+  config/absorb-unchanged-pause: on + daily   status: paused: waiting on upstream
+  hour 1: first recheck (agent dead)                   -> WOKE THE SESSION: stale: test:fm-basedead (paused 502s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds) 
+  hour 2: nothing changed                              -> WOKE THE SESSION: stale: test:fm-basedead (paused 506s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 3s ago) 
+  hour 3: nothing changed                              -> WOKE THE SESSION: stale: test:fm-basedead (paused 511s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds; unchanged since the last recheck 4s ago) 
+  absorption digest: (no entries)
