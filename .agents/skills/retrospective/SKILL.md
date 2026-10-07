@@ -158,7 +158,7 @@ Fits nowhere -> session trivia. Leave it in the report only.
 
 **No-ops audit.** Scan the always-loaded steering files this session touched for instructions that did not change behaviour (no receipt, already enforced by a check, or only relevant in a nameable situation). Propose deleting them, or moving them to a skill, doc or review standard. Prefer pruning to adding.
 This audit and any pruning go through the same show-diff-then-wait gate as every other `CLAUDE.md` edit in Step 5, and are left pending on the unattended path.
-Idea sources for this step: Matt Pocock's `/retro`.
+Classification, no-ops audit and information-access ideas adapted from Matt Pocock's `/retro`.
 
 **Axis B — persistent memory**, routed by **blast radius**. Ask "who needs to know this?" before "which tool saves this?":
 
