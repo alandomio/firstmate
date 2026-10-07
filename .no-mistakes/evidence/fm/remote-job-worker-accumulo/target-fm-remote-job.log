@@ -1,0 +1,37 @@
+ok - default queue and execution bounds independently cover long polls
+ok - operator PATH excludes a symlinked local bin
+ok - operator PATH honors nvm defaults with a deterministic fallback
+ok - operator PATH resolves the authorized Nix profile bin link
+ok - the worker preserves bounded argv and stdin in an empty environment
+ok - active jobs keep the worker ready for concurrent requests
+ok - a stale heartbeat never starts another server beside a live lock owner
+ok - a worker whose identity cannot be proven is never signalled
+ok - the owner proof does not depend on the caller's locale or timezone
+ok - ensure replaces a live worker after its code changes
+ok - worker identity binds the canonical configured code root
+ok - stale ownership is reclaimed without signaling a reused pid
+ok - a worker fences itself out after losing ownership to a replacement
+ok - a worker that loses ownership mid-job stops the running command
+ok - the worker enforces the job timeout and publishes its result
+ok - the worker expires queued jobs before they can mutate
+ok - queued jobs receive a fresh bounded execution window
+ok - a queued short command preempts a running long poll instead of waiting its window
+ok - a poll re-armed after preemption reads the same cursor with nothing lost
+ok - sibling polls never preempt each other into a re-arm churn loop
+ok - worker shutdown terminates the active command tree before replacement
+ok - Linux supervision recovers crashes and stops orphaned commands
+ok - pre-execution validation obeys the job timeout
+ok - the worker drains bounded output without changing command results
+ok - the worker refuses symlinked job fields before command execution
+ok - failed shutdown quarantines ownership against replacement workers
+ok - quarantine clears only after recorded execution has stopped
+ok - a repeatedly signalled shutdown still releases ownership for the next worker
+ok - idle heartbeat and reap run on their own cadence, not on every poll tick
+ok - an idle worker retires itself and releases ownership after a bounded interval
+ok - a job staged as the worker retires restarts the worker while waiting
+ok - an aged lock with no readable owner record is reclaimed
+ok - a deleted state root fails the worker fast instead of being recreated by the reap sweep
+ok - the stale sweep never recreates a state root deleted after the worker's heartbeat
+ok - a heartbeat cadence outside the probe freshness window is refused before the worker serves
+ALL TESTS PASSED
+bash tests/$t.test.sh  10,11s user 16,38s system 39% cpu 1:06,83 total

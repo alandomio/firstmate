@@ -1,0 +1,16 @@
+### BASE ac50aa5 (prior main behavior)
+1. first caller ensures a worker                           worker processes=2 (serving=1) owner pid=2238687
+2. five callers arrive while its heartbeat is stale        worker processes=7 (serving=3) owner pid=2238687
+   job exit=0 stdout=job ran
+3. a job completed, client now goes away                   worker processes=2 (serving=1) owner pid=2238687
+4. 8s later (idle timeout configured to 3s)                worker processes=2 (serving=1) owner pid=2238687
+   worker.lock: still held
+/home/alan/.no-mistakes/evidence/01M4BCC1PC1F4T5EVCSF7TNP6X/worker-leak-demo.sh: line 39: 2238593 Killed                  nohup env HOME="$account_home" FM_ROOT_OVERRIDE="$root" FM_REMOTE_JOB_STATE_ROOT="$FM_REMOTE_JOB_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE="${FM_REMOTE_JOB_PLATFORM_OVERRIDE:-}" "$worker" >> "$FM_REMOTE_JOB_STATE/logs/$FM_REMOTE_JOB_LABEL.log" 2>&1 < /dev/null
+
+### TARGET 97eee69 (this change)
+1. first caller ensures a worker                           worker processes=2 (serving=1) owner pid=2258343
+2. five callers arrive while its heartbeat is stale        worker processes=2 (serving=1) owner pid=2258343
+   job exit=0 stdout=job ran
+3. a job completed, client now goes away                   worker processes=2 (serving=1) owner pid=2280150
+4. 8s later (idle timeout configured to 3s)                worker processes=0 (serving=0) owner pid=none
+   worker.lock: released
