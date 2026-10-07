@@ -1,0 +1,101 @@
+diff --git a/.agents/skills/retrospective/SKILL.md b/.agents/skills/retrospective/SKILL.md
+index df7fb72..964dfd2 100644
+--- a/.agents/skills/retrospective/SKILL.md
++++ b/.agents/skills/retrospective/SKILL.md
+@@ -50,11 +50,11 @@ Run the free part of Step 2 FIRST — `git status --short`, `git diff --stat`, `
+ - a decision was made that a future session would need explained;
+ - the diff touches >=3 files, or the branch carries >=1 commit;
+ 
+-Otherwise take the **quick** path: pre-flight recall (Step 1), one `memory_lesson_save`, a **short dated report** (sections 1, 4 and 5 only), and a short chat summary. No org-store write, no `CLAUDE.md` proposal, no ADR.
++Otherwise take the **quick** path: pre-flight recall (Step 1), one `memory_lesson_save`, the org-store items a colleague could use drafted and proposed through the Step 5 batch (usually one or none), a **short dated report** (sections 1, 4 and 5 only), and a short chat summary. No `CLAUDE.md` proposal, no ADR.
+ 
+ **Flags override the detector**: `/retrospective --full` or `/retrospective --quick`.
+ 
+-**The quick path is where knowledge goes to die, so it is not silent, and it never claims an unverified write.** State what is being skipped and quote the identifier you got back: *"Quick retrospective — lesson `lsn_…` saved, no org-store write. Say `--full` for the write-up."* If the save returned no id, say the save failed. If a failure receipt turns up after quick was chosen, **stop and escalate**: *"This has a failure worth recording — switch to full, or confirm quick?"* Never downgrade silently.
++**The quick path is where knowledge goes to die, so it is not silent, and it never claims an unverified write.** State what is being skipped and quote the identifier you got back: *"Quick retrospective — lesson `lsn_…` saved; N org-store items proposed for your approval. Say `--full` for the write-up."* If the save returned no id, say the save failed. If nothing colleague-relevant was found, say `0 org-store items proposed` rather than omitting the clause. If a failure receipt turns up after quick was chosen, **stop and escalate**: *"This has a failure worth recording — switch to full, or confirm quick?"* Never downgrade silently.
+ 
+ ## Resolve the org store first
+ 
+@@ -73,8 +73,8 @@ Query what is already known first, so learnings *reinforce* rather than duplicat
+ - `memory_recall(query, format: 'compact')` — past session observations on the same files/concepts.
+ - `memory_lesson_recall(query, minConfidence: 0.1)` — lessons already learned. A hit means **re-save the identical content** (duplicates auto-strengthen confidence) rather than writing a near-duplicate variant.
+ - `memory_patterns(project)` — recurring cross-session patterns; this is what turns "it happened" into "it keeps happening".
+-- The org store's recall verb for its `backend` (`reference.md`). Company conventions here supersede in-repo docs, so a hit often means "follow the existing convention", not "add a new `CLAUDE.md` rule".
+-- **The most recent prior report** for the target repo (path in Step 6) — the newest one only, not the whole directory. It carries the last run's Next Steps and any unresolved pending writes. If there is none, say "no prior report" rather than implying a continuity that does not exist.
++- The org store's recall verb for its `backend` (`reference.md`). Company conventions here supersede in-repo docs, so a hit often means "follow the existing convention", not "add a new `CLAUDE.md` rule". After a good hit, call the store's related-items verb 2 or 3 times (on the hit and its best neighbours) before concluding: a neighbour that is superseded, contradicted or stale is a correction to draft in Step 5, and one that already covers a learning means link to it instead of adding a duplicate.
++- **The most recent prior report** for the target repo (path in Step 6) — the newest dated report only, not the whole directory. If there is none, say "no prior report" rather than implying a continuity that does not exist. **Carry forward its pending org-store writes:** take every item in its section 4 marked pending, plus any unchecked Next Step that names an org-store write, and check each against the store itself (search by title). Written since -> drop it; recorded as declined -> drop it; anything else is re-proposed in this run's Step 5 batch, marked carried-forward from that report. A pending item stays in section 4 of every report until it is written or declined, so the newest report alone is enough and nothing silently dies.
+ 
+ Record whether recall changed anything; the kill criterion below measures it.
+ 
+@@ -156,11 +156,13 @@ The failure is asymmetric and silent both ways. agentmemory writes **never reach
+ 
+ **Axis A artifacts are code changes** and follow the same discipline as any other edit. `CLAUDE.md`: show the diff, wait for an answer, then apply — amend an existing rule rather than appending a near-duplicate, link to the org store if it already documents the convention, and never write a rule into a repo this session did not touch. For `.claude/skills/`, `docs/`, `llm/kb/` and ADRs, each has its own contribution convention — see `reference.md`; hand ADRs to `adr-draft`.
+ 
++**Draft org-store items by default.** The org store is where a colleague's session finds what this one learned, so a retrospective that proposes nothing there has to say why. Draft one item for every colleague-relevant learning: a session case record whenever anything non-trivial happened, patterns and gotchas, runbook or service-card deltas, and a correction for every stale or wrong item found during Step 1 recall. Give each draft its tags and its links (`supersedes` for a correction or replacement, `relates_to` for neighbours); search first so an existing item is updated or linked rather than forked. Add the Step 1 carried-forward items, then present everything as **one batched list** and ask once. On approval write all of them, using the verbs in `reference.md`; a draft the human strikes is recorded as declined.
++
+ **The approval gates. These are this skill's safety boundary; everything else in Step 5 is mechanics.**
+ 
+ - **Show before writing** any `feedback` or `user` memory file — those change how future sessions behave, and a wrong one bends your working style invisibly for months. Inside a firstmate home this maps to `data/captain.md`: same gate, same reason. Never write `data/captain-shared.md` from this skill — it is primary-owned; route a shared-preference finding to the primary the way `stow` does.
+ - **Show a diff before any overwrite** of an existing memory file, whatever its type.
+-- **Ask before any org-store write.** Local files and agentmemory are note-taking; the org store is publication to the whole company.
++- **Ask before any org-store write, once, for the whole batch.** Local files and agentmemory are note-taking; the org store is publication to the whole company. With no human reachable, nothing is written: each draft goes verbatim into section 4 as pending.
+ - `project` and `reference` creations proceed automatically and are reported after.
+ 
+ **Three judgment calls, and they are the only judgment here.** *Blast radius* picks the layer via the Step 4 table — wrong is silent in both directions. *Confidence* on a lesson: **0.5** single observation, **0.7** reproduced twice or user-confirmed, **0.8+** only with a failing-to-passing test; do not inflate, because confidence decays unused and an over-confident wrong lesson outranks a correct cautious one. *Sensitivity* before any org-store write: no employee or HR data, no named B2C/parker personal data, no raw plates — use the `plateId`; revenue and B2B operator information are fine, and raw log output belongs in the local report.
+@@ -187,7 +189,7 @@ Use the template below.
+ 
+ ## Step 7 — Close the loop
+ 
+-In chat: the report path, Axis A artifacts changed, Axis B writes with identifiers, and the Next Steps.
++In chat: the report path, Axis A artifacts changed, Axis B writes with identifiers, org-store items still pending and who must approve them, and the Next Steps.
+ 
+ ## Report template
+ 
+@@ -222,7 +224,7 @@ In chat: the report path, Axis A artifacts changed, Axis B writes with identifie
+ 
+ **Axis A** — CLAUDE.md: [rule, or No + why] · Skills: [paths] · Docs: [paths] · ADRs: [path or "offered, declined"]
+ 
+-**Axis B** — Harness auto-memory: [files + shown-first confirmations, or none] · agentmemory: [ids with confidence] · Org store ([name]): [identifiers, or "not approved" / "unreachable — pending: ..."] · Promotion candidates: [local learnings that belong in the org store later, or none]
++**Axis B** — Harness auto-memory: [files + shown-first confirmations, or none] · agentmemory: [ids with confidence] · Org store ([name]): [one line per item - identifier, "declined", or "pending: <title> (draft verbatim below; carried forward from <report> if so)"; "unreachable" when the store was] · Promotion candidates: [local learnings that belong in the org store later, or none]
+ 
+ ## 5. Recall Effectiveness (kill-criterion ledger)
+ - **Did Step 1 change the output?** [yes — how | no]
+@@ -245,6 +247,7 @@ In chat: the report path, Axis A artifacts changed, Axis B writes with identifie
+ |---|---|
+ | "Nothing really failed — this was straightforward." | Check the transcript for retried commands, corrected assumptions, and user corrections. A session containing a user correction is a high-value retrospective, not a quiet one. |
+ | "This lesson is obviously right — 0.9." | Confidence decays when unused and strengthens on reinforcement. An inflated wrong lesson outranks a correct cautious one. 0.5 unless reproduced or confirmed. |
++| "A colleague wouldn't need this, agentmemory is enough." | Ask the Step 4 question honestly: would someone on another machine hit this? Propose it; the batch approval, not your guess, decides. |
+ | "Quick path is fine, it was a small session." | Small sessions containing a correction are exactly the ones worth recording. State what you are skipping and let the user override. |
+ | "This is a `project` fact, not `feedback` — no need to show it." | If the content tells a future session how to behave — "always", "prefer", "never", "ask before" — it is `feedback` whatever the frontmatter says, and it gets shown first. Type is decided by what the text does, not by which label avoids the prompt. |
+ 
+diff --git a/.agents/skills/retrospective/reference.md b/.agents/skills/retrospective/reference.md
+index 1965a28..7c2a9b0 100644
+--- a/.agents/skills/retrospective/reference.md
++++ b/.agents/skills/retrospective/reference.md
+@@ -81,6 +81,7 @@ Search before writing in every backend: the convention is to link, not fork.
+   `user_roles` sets who can read it; keep it internal (for example `admin,dev`), never public.
+ - The identifier to record in the report is the `slug` the call accepted, or whatever id it returned; no id back means the write is not claimed.
+ - Keep `chunk_text` focused, key information first; point at the canonical file.
++- No update, link or related-items verb is known for this backend: skip the related-recall step, and draft a correction as a new item that names the stale `slug`.
+ 
+ ### `backend=pp-brain` — PP Brain
+ 
+@@ -89,8 +90,16 @@ Search before writing in every backend: the convention is to link, not fork.
+   key information **first**, because it is sentence-truncated server-side), body >= 50. Tags are
+   namespaced: `type:pattern`, `domain:payment`. Default `sync: true` returns
+   `{ok, id, slug, permalink}` for the report.
+-- Link it — `links: [{targetSlug, linkType}]` on create, or `link_knowledge` afterwards. An
+-  unlinked Brain item is nearly invisible.
++- Link it — `links: [{targetSlug, linkType}]` on create, or `link_knowledge(sourceSlug, targetSlug, linkType)`
++  afterwards. An unlinked Brain item is nearly invisible. A correction or replacement carries a
++  `supersedes` link to the item it replaces.
++- Session case record: title `CASE: YYYY-MM-DD — <subject>`, tags `type:case` and `date:YYYY-MM-DD`
++  plus the usual `domain:` / `service:` tags.
++- Correction: `update_knowledge(slug, updates, changeReason)` with only the changed fields; pass
++  `structuredSummary` with a changed `body`. Show the before/after in the batch list; changed text is
++  re-screened by the sensitivity gate.
++- Related recall: `get_related_knowledge(slug)` on a good hit and its best neighbours;
++  `get_knowledge(slug)` before citing or correcting one.
+ - Very large payloads have failed JSON validation; keep the body focused and point at the canonical file.
+ - A 422 is the sensitivity gate. What it refuses is in `SKILL.md`.
+ 
