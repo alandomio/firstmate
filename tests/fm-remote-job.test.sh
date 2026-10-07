@@ -941,7 +941,7 @@ pass "an idle worker retires itself and releases ownership after a bounded inter
 # restart the single-flight worker instead of polling an unserved queue until
 # the bounded wait expires.
 (
-  export FM_REMOTE_JOB_STATE_ROOT="$IDLE_EXPIRY_STATE"
+  FM_REMOTE_JOB_STATE_ROOT="$IDLE_EXPIRY_STATE"
   FM_REMOTE_JOB_QUEUE_TIMEOUT=4
   FM_REMOTE_JOB_TIMEOUT=4
   FM_REMOTE_JOB_WAIT_GRACE=1
@@ -964,7 +964,7 @@ for UNPUBLISHED_KIND in missing empty malformed; do
   UNPUBLISHED_STATE="$TMP_ROOT/unpublished-$UNPUBLISHED_KIND-jobs"
   mkdir -p "$UNPUBLISHED_HOME"
   chmod 700 "$UNPUBLISHED_HOME"
-  ( export FM_REMOTE_JOB_STATE_ROOT="$UNPUBLISHED_STATE"
+  ( FM_REMOTE_JOB_STATE_ROOT="$UNPUBLISHED_STATE"
     fm_remote_job_prepare_state "$UNPUBLISHED_HOME" ) || fail "the unpublished-lock fixture state could not be prepared"
   ( umask 077; mkdir "$UNPUBLISHED_STATE/worker.lock" )
   printf '1\n' > "$UNPUBLISHED_STATE/worker.lock/.pid.leftover"
