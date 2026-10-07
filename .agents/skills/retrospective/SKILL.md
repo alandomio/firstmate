@@ -8,7 +8,7 @@ metadata:
 
 # Session Retrospective Protocol
 
-Extracts what this session learned, routes each learning to the substrate whose reach matches it, and writes a dated report. The point is to stop "NPC Mode" — the failure where every session re-derives what a previous session already learned.
+Extracts what this session learned, routes each learning to the substrate whose reach matches it, and writes a dated report, so no session re-derives what an earlier one learned ("NPC Mode").
 
 Run the steps in order. Step 0 decides how many of them apply.
 
@@ -42,12 +42,9 @@ shared repo or an unapproved publication to the org.
 
 ## Step 0 — Cheap evidence scan, then triage
 
-Depth cannot be chosen before the evidence that decides it exists. So run the free part of Step 2 FIRST — `git status --short`, `git diff --stat`, `git log --oneline <base>..HEAD`, and a scan of the transcript for errors and corrections — then decide. This costs a handful of read-only calls on any path.
+Run the free part of Step 2 FIRST — `git status --short`, `git diff --stat`, `git log --oneline <base>..HEAD`, and a transcript scan for errors and corrections — then decide.
 
-
-**Triage is deterministic — there is no question to ask.** It is decided from the evidence
-above, because a judgment made at the end of a long session is worse than the diff. Take the
-**full** path if ANY of these is observably true:
+**Triage is deterministic**, decided from that evidence. Take the **full** path if ANY of these is observably true:
 
 - a failure receipt exists — a command that errored, an assumption corrected, a user correction;
 - a decision was made that a future session would need explained;
@@ -79,7 +76,7 @@ Query what is already known first, so learnings *reinforce* rather than duplicat
 - The org store's recall verb for its `backend` (`reference.md`). Company conventions here supersede in-repo docs, so a hit often means "follow the existing convention", not "add a new `CLAUDE.md` rule".
 - **The most recent prior report** for the target repo (path in Step 6) — the newest one only, not the whole directory. It carries the last run's Next Steps and any unresolved pending writes. If there is none, say "no prior report" rather than implying a continuity that does not exist.
 
-Record whether recall actually changed anything. That is what the kill criterion at the bottom of this file measures.
+Record whether recall changed anything; the kill criterion below measures it.
 
 ## Step 2 — Collect session evidence
 
@@ -98,42 +95,23 @@ Record whether recall actually changed anything. That is what the kill criterion
 
 ## Step 3b — Repetition audit: what did this session pay for twice?
 
-Steps 1–3 ask *what went wrong*. This asks a different and orthogonal question: **what was needlessly expensive?** Sessions leak tokens on work that was never a judgment call — the same read issued twenty times, a four-call sequence assembled by hand to answer one recurring question, output parsed by eye that a script could parse once and correctly.
-
-Scan the transcript for **shape repetition**, not topic repetition:
+Steps 1–3 ask *what went wrong*; this asks *what was needlessly expensive?* Scan the transcript for **shape repetition**, not topic repetition, and **count it, do not estimate**:
 
 - The same command or API sequence run **3+ times** with only an argument changing.
-- A multi-step derivation you performed more than once to answer the *same kind* of question.
-- Output you read and interpreted by hand where the interpretation followed a fixed rule.
-- A fact re-derived that a command could simply print.
+- A multi-step derivation repeated to answer the *same kind* of question.
+- Output read by hand where the interpretation followed a fixed rule, or a fact re-derived that a command could print.
 
-**Count them. Do not estimate.** "It was only a few calls" is how this stays invisible; the transcript has the real number.
-
-### The bar a candidate must clear
-
-A script is code someone has to maintain, and a *wrong* script is worse than a slow manual check because it is trusted. So promote a repetition to a script only when all three hold:
+Promote a repetition to a script only when all three hold, because a wrong script is trusted and so worse than a slow manual check:
 
 1. **Repeated at least three times**, or once but certain to recur every session.
-2. **Mechanically decidable** — the answer follows a fixed rule with no judgment in it. If answering requires reasoning about context, a script gives false confidence and belongs nowhere near this step. *Never script judgment.*
-3. **A wrong answer would be visible**, not silent. Where a wrong answer would pass unnoticed, the script must encode the check that catches it, or it makes things worse.
+2. **Mechanically decidable** — a fixed rule with no judgment in it. *Never script judgment.*
+3. **A wrong answer would be visible**, not silent; otherwise the script must encode the check that catches it.
 
-### The payoff is usually correctness, not tokens
-
-This is the part worth internalising. Repetition done by hand is repetition done *differently each time*, and the variance is where errors live. A script encodes the trap **once**.
-
-Worked receipt (2026-09-03): a supervision session hand-rolled `glab api … | jq` to answer "is this merge request merged, approved, conflicted, and green?" dozens of times. It reported four merge requests as green that were not — because GitLab's `head_pipeline` is often a merge-result run against a synthetic commit, so a green badge can sit on a branch head that failed or was never tested. A ~100-line `mrstat` script replaced the whole pattern with one line per merge request and, more importantly, made the trap unmissable: it always reports whether a run existed against the **real head** (`green(head)`, `FAILED(head)`, `manual(head)`, `NO-HEAD-RUN`, merge-result-only). Two further hand-errors got encoded for free — scrubbing control characters that break `jq` mid-parse, and reading approval from merge status so an "approved" flag that really means *no approval was required* cannot mislead.
-
-Tokens were the presenting symptom. The defect was that a fixed rule was being re-applied from memory, badly.
+The payoff is usually correctness, not tokens: hand repetition varies, and the variance is where errors live. Receipt (2026-09-03): hand-rolled `glab api … | jq` reported four merge requests green that were not, because `head_pipeline` is often a merge-result run, not the real head. A small `mrstat` script replaced it and always reports whether a run existed against the real head.
 
 ### Route it
 
-A promoted repetition is an **Axis A** artifact in Step 4 — a script or a skill, not a memory entry. Prefer:
-
-- a small executable on `PATH` for something used across projects;
-- a repo script where it depends on that repo's layout;
-- a `.claude/skills/` procedure where the repetition is a *sequence of judgments* rather than a command (that is the case where scripting is wrong and a written procedure is right).
-
-Record the candidates you **rejected** and why, in one line each. A rejected candidate with its reason stops the next session re-proposing it, and "this needs judgment" is the most valuable rejection to have written down.
+A promoted repetition is an **Axis A** artifact in Step 4: an executable on `PATH` (cross-project), a repo script (layout-dependent), or a `.claude/skills/` procedure where the repetition is a *sequence of judgments*. Record each **rejected** candidate and why in one line, so the next session does not re-propose it.
 
 ## Step 4 — Route each learning
 
@@ -209,7 +187,7 @@ Use the template below.
 
 ## Step 7 — Close the loop
 
-In chat: the report path, which Axis A artifacts changed, which Axis B layers were written with their identifiers, and the Next Steps. The report holds the detail.
+In chat: the report path, Axis A artifacts changed, Axis B writes with identifiers, and the Next Steps.
 
 ## Report template
 
@@ -256,9 +234,9 @@ In chat: the report path, which Axis A artifacts changed, which Axis B layers we
 ## Guardrails
 
 - **Never** commit or push unless asked. Writing the report and updating memory is the deliverable; version control is the user's call.
-- **Never** apply `CLAUDE.md` edits without showing the diff and getting an answer; never write to the org store without approval; never write a `feedback`/`user` memory or overwrite a memory file without showing it first.
+- The Step 5 approval gates are absolute; nothing here relaxes them.
 - Do not fabricate error logs, test results, commit ranges, memory writes, or an identifier the org-store write did not return. If the build was never run, write "not run" — an invented green checkmark poisons every future session that reads the report.
-- Keep it specific. "Improved error handling" is worthless; "wrapped the Prisma call in a transaction because the retry re-inserted the row" is the point. Doubly so for lessons, which get recalled out of context months later.
+- Keep it specific: lessons are recalled out of context months later.
 - The sensitivity gate applies to committed reports too, not only at the org-store boundary.
 
 ### Anti-rationalization
@@ -266,23 +244,18 @@ In chat: the report path, which Axis A artifacts changed, which Axis B layers we
 | The excuse | The rebuttal |
 |---|---|
 | "Nothing really failed — this was straightforward." | Check the transcript for retried commands, corrected assumptions, and user corrections. A session containing a user correction is a high-value retrospective, not a quiet one. |
-| "The user is in a hurry, skip the recall." | Recall is the entire compounding mechanism; without it this is a diary. It is four calls. |
-| "I remember what I learned, I don't need the diff." | Your recollection is a summary of a summary. The diff is the only record of what changed. |
 | "This lesson is obviously right — 0.9." | Confidence decays when unused and strengthens on reinforcement. An inflated wrong lesson outranks a correct cautious one. 0.5 unless reproduced or confirmed. |
-| "The write probably succeeded." | Report only identifiers you received back. No id, no claim. |
-| "This is generally useful, put it in the org store." | The org store reaches everyone. If it is only true on this machine, it is agentmemory. |
 | "Quick path is fine, it was a small session." | Small sessions containing a correction are exactly the ones worth recording. State what you are skipping and let the user override. |
 | "This is a `project` fact, not `feedback` — no need to show it." | If the content tells a future session how to behave — "always", "prefer", "never", "ask before" — it is `feedback` whatever the frontmatter says, and it gets shown first. Type is decided by what the text does, not by which label avoids the prompt. |
-| "It's a quick run, so I don't need to work out the repo target." | The report is written on every path, so the destination is always required. Derive it from the Step 0 diff. |
 
 ## Kill criterion (registered 2026-08-19; redesigned 2026-09-03 — do not silently drop)
 
 **What is measured.** Across the next **10 qualifying runs**, Step 1 recall must change *the work*, not the write-up, in **>= 4**. A qualifying change is: a command not run because recall said it fails; an approach chosen or abandoned on a recalled decision; a failure marked recurring and promoted to a rule; or an existing convention followed instead of a new one invented. **A lesson re-saved to strengthen it does NOT count** — this skill mandates that on every hit, so counting it would make the test self-fulfilling.
 
-**Cold starts are excluded.** A run where the store held nothing relevant to the session's subject is recorded `n/a` and does not consume one of the ten. This corrects the original registration, which counted empty-store runs as failures and so was arithmetically unreachable on a fresh machine: it tested the age of the store, not the value of recall.
+**Cold starts are excluded:** a run where the store held nothing relevant is recorded `n/a` and does not consume one of the ten.
 
 **If it fails that bar, Axis B is overhead.** Strip this skill to one lesson write plus the report, and leave the routing in `reference.md` only.
 
 **The graded party does not keep the scoreboard.** Append each run to `reports/KILL-CRITERION.md`, one row, never rewriting an earlier one, and **quote the actual recall output** that did or did not change the run — a verdict with no quoted evidence is a claim, not a verdict. The agent records evidence and a provisional read; **the verdict belongs to the human.**
 
-**Why this was redesigned rather than deleted.** An independent critique (2026-09-03, `~/firstmate/data/retro-critique-notebooklm/report.md`) argued the criterion was unsound and should be removed. Two of its objections were correct and are fixed above: no cold-start exclusion, and a success condition the skill itself guarantees. But deleting the test would have removed the accountability rather than the flaw — and the agent proposing that deletion is the graded party, which is the exact conflict this criterion was written to contain. So the design was fixed and the test kept. Recorded here so the reasoning is auditable rather than remembered.
+**Why redesigned, not deleted.** A 2026-09-03 critique (`~/firstmate/data/retro-critique-notebooklm/report.md`) rightly found no cold-start exclusion and a self-fulfilling success condition; both are fixed above. Deleting the test would have removed accountability, and the agent proposing that is the graded party.
