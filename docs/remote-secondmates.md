@@ -38,7 +38,8 @@ Linux uses the same queue and worker protocol without the Aqua-session requireme
 A per-account identity-checked lock permits only one serving worker for that queue, and every heartbeat fences out a process whose ownership moved to a replacement.
 A delayed heartbeat never causes a caller to start another server beside a live lock owner, while stale ownership is reclaimed only after the recorded process is proven gone or unrelated.
 That fencing also runs while a job executes, so a displaced worker stops its running command instead of finishing it beside the replacement.
-A lock whose owner record was never completed, the state a kill during startup leaves, names no process and is reclaimed once it has aged with no fresh heartbeat.
+The recorded process start is the kernel start tick bound to the boot id on Linux, and elsewhere `ps` pinned to the C locale and UTC, so callers in different locales or timezones reach the same verdict about the same owner.
+A lock whose owner record is missing or unreadable, the state a kill or power loss during startup leaves, names no process and is reclaimed once it has aged with no fresh heartbeat.
 A caller replaces a worker running outdated code only when that worker's recorded identity is proven; when it cannot be read the caller signals nothing and reports the worker for a retry.
 On Linux the detached worker retires after ten minutes without queued or running work, so a worker left behind by a vanished SSH client has a bounded lifetime; the next command starts it again through the same single-flight path, and a command whose job was queued just as the worker retired restarts it while waiting.
 Workers leaked on a host before this ownership record existed hold no lock and are never discovered or signalled automatically, because their identity cannot be proven; clear them once by hand, confirming each pid with `ps -o pid,lstart,command -p <pid>` before `kill <pid>`.

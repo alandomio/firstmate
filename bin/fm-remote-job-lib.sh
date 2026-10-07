@@ -54,6 +54,10 @@
 # A caller reuses an identity-checked live lock owner without relying on a fresh
 # heartbeat, and stale-lock recovery proceeds only when the recorded process is
 # provably gone or unrelated.
+# The recorded process start is a locale- and timezone-independent identity, so
+# callers in different environments reach the same verdict; an owner recorded
+# in the older ps-rendered form whose start no longer reads the same is
+# ambiguous, never stale.
 # The serving process revalidates the same ownership on every heartbeat, and on
 # Linux exits after FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS without queued or running
 # work.
@@ -735,13 +739,43 @@ fm_remote_job_worker_ready_path() { printf '%s\n' "$FM_REMOTE_JOB_STATE/worker.r
 fm_remote_job_worker_identity_path() { printf '%s\n' "$FM_REMOTE_JOB_STATE/worker.identity"; }
 fm_remote_job_worker_lock_path() { printf '%s\n' "$FM_REMOTE_JOB_STATE/worker.lock"; }
 
-fm_remote_job_process_start() {
+# The start of a process as ps renders it in the caller's own locale and
+# timezone. Only a record written before fm_remote_job_process_start carried a
+# kind prefix holds this form, so it can confirm such an owner but never prove
+# one stale.
+fm_remote_job_process_start_legacy() { # <pid>
   local pid=$1 ps_bin value
   if [ -x /bin/ps ]; then ps_bin=/bin/ps; elif [ -x /usr/bin/ps ]; then ps_bin=/usr/bin/ps; else return 1; fi
   value=$("$ps_bin" -p "$pid" -o lstart= 2>/dev/null) || return 1
   [ -n "$value" ] || return 1
   case "$value" in *$'\n'*|*$'\r'*) return 1 ;; esac
   printf '%s\n' "$value"
+}
+
+# A process-start identity that every caller renders identically whatever its
+# locale or timezone: the kernel start tick bound to the boot id where /proc
+# provides both, otherwise ps pinned to the C locale and UTC. The leading kind
+# names which source produced the value.
+fm_remote_job_process_start() { # <pid>
+  local pid=$1 ps_bin value stat boot_id
+  local -a fields
+  if [ -r "/proc/$pid/stat" ] && [ -r /proc/sys/kernel/random/boot_id ] &&
+    IFS= read -r stat < "/proc/$pid/stat" 2>/dev/null &&
+    IFS= read -r boot_id < /proc/sys/kernel/random/boot_id 2>/dev/null; then
+    read -r -a fields <<< "${stat##*) }"
+    value=${fields[19]:-}
+    case "$value" in ''|*[!0-9]*) value= ;; esac
+    case "$boot_id" in ''|*[!0-9a-f-]*) value= ;; esac
+    if [ -n "$value" ]; then
+      printf 'linux:%s:%s\n' "$boot_id" "$value"
+      return 0
+    fi
+  fi
+  if [ -x /bin/ps ]; then ps_bin=/bin/ps; elif [ -x /usr/bin/ps ]; then ps_bin=/usr/bin/ps; else return 1; fi
+  value=$(LC_ALL=C TZ=UTC0 "$ps_bin" -p "$pid" -o lstart= 2>/dev/null) || return 1
+  [ -n "$value" ] || return 1
+  case "$value" in *$'\n'*|*$'\r'*) return 1 ;; esac
+  printf 'ps:%s\n' "$value"
 }
 
 fm_remote_job_process_command() {
@@ -847,11 +881,20 @@ fm_remote_job_lock_owner_state() { # <account-home>; 0=live, 1=stale, 2=ambiguou
   FM_REMOTE_JOB_OWNER_PID=$pid
   kill -0 "$pid" 2>/dev/null || return 1
   recorded_start=$(fm_remote_job_read_single_line "$lock/start" 256) || return 2
-  actual_start=$(fm_remote_job_process_start "$pid") || return 2
-  [ "$recorded_start" = "$actual_start" ] || return 1
   recorded_command=$(fm_remote_job_read_single_line "$lock/command" 8192) || return 2
   actual_command=$(fm_remote_job_process_command "$pid") || return 2
   [ "$recorded_command" = "$actual_command" ] || return 1
+  case "$recorded_start" in
+    linux:*|ps:*)
+      actual_start=$(fm_remote_job_process_start "$pid") || return 2
+      [ "${recorded_start%%:*}" = "${actual_start%%:*}" ] || return 2
+      [ "$recorded_start" = "$actual_start" ] || return 1
+      ;;
+    *)
+      actual_start=$(fm_remote_job_process_start_legacy "$pid") || return 2
+      [ "$recorded_start" = "$actual_start" ] || return 2
+      ;;
+  esac
   return 0
 }
 

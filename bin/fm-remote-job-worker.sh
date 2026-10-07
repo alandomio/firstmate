@@ -31,7 +31,7 @@
 # A caller treats an identity-checked owner as live even when its heartbeat is
 # delayed, and stale recovery removes a lock only when its recorded process is
 # provably gone or its pid belongs to an unrelated process.
-# A lock whose owner record was never completed names no process to prove, so
+# A lock whose owner record is missing or unreadable names no process to prove, so
 # it is reclaimed once it has aged with no fresh heartbeat. A running job is
 # stopped as soon as a heartbeat finds this worker's ownership gone.
 # On Linux an idle worker exits after FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS, 600
@@ -172,11 +172,13 @@ worker_lock_recent() {
 }
 
 worker_lock_owner_unpublished() { # <account-home>
-  local field
+  local pid
   fm_remote_job_probe "$1" && return 1
-  for field in pid start command; do
-    [ -e "$WORKER_LOCK/$field" ] || [ -L "$WORKER_LOCK/$field" ] || return 0
-  done
+  pid=$(fm_remote_job_read_single_line "$WORKER_LOCK/pid" 64 2>/dev/null) || return 0
+  case "$pid" in *[!0-9]*) return 0 ;; esac
+  [ "$pid" -gt 1 ] || return 0
+  fm_remote_job_read_single_line "$WORKER_LOCK/start" 256 >/dev/null 2>&1 || return 0
+  fm_remote_job_read_single_line "$WORKER_LOCK/command" 8192 >/dev/null 2>&1 || return 0
   return 1
 }
 
@@ -739,7 +741,7 @@ worker_process_once() { # <account-home>
       continue
     }
     worker_run_job "$account_home" "$job"
-    [ "$SECONDS" -lt "$next_heartbeat" ] || worker_refresh_heartbeat
+    worker_refresh_heartbeat
   done
 }
 

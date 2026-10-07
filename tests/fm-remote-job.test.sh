@@ -303,6 +303,31 @@ kill -0 "$UNPROVEN_WORKER_PID" 2>/dev/null \
   || fail "an ambiguous owner inspection changed the serving worker"
 pass "a worker whose identity cannot be proven is never signalled"
 
+# Callers reach the worker under different locales and timezones, so the owner
+# proof must read the same in all of them, and an owner recorded in the older
+# ps-rendered form that no longer reads the same must stay ambiguous, not stale.
+OWNER_STATE=0
+TZ=Asia/Tokyo LC_ALL=C fm_remote_job_lock_owner_state "$ACCOUNT_HOME" || OWNER_STATE=$?
+[ "$OWNER_STATE" -eq 0 ] || fail "a caller in another timezone read the live owner as state $OWNER_STATE"
+OWNER_STATE=0
+TZ=UTC0 LC_ALL=POSIX fm_remote_job_lock_owner_state "$ACCOUNT_HOME" || OWNER_STATE=$?
+[ "$OWNER_STATE" -eq 0 ] || fail "a caller in another locale read the live owner as state $OWNER_STATE"
+[ "$(TZ=Asia/Tokyo fm_remote_job_process_start "$$")" = "$(TZ=America/Lima fm_remote_job_process_start "$$")" ] \
+  || fail "the process-start identity changed with the caller's timezone"
+LEGACY_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
+kill -STOP "$LEGACY_WORKER_PID"
+cp "$STATE_ROOT/worker.lock/start" "$TMP_ROOT/lock-start.modern"
+printf 'Thu Jan  1 00:00:00 1970\n' > "$STATE_ROOT/worker.lock/start"
+OWNER_STATE=0
+fm_remote_job_lock_owner_state "$ACCOUNT_HOME" || OWNER_STATE=$?
+OWNER_RECLAIMABLE=no
+! fm_remote_job_lock_owner_reclaimable "$ACCOUNT_HOME" || OWNER_RECLAIMABLE=yes
+cat "$TMP_ROOT/lock-start.modern" > "$STATE_ROOT/worker.lock/start"
+kill -CONT "$LEGACY_WORKER_PID"
+[ "$OWNER_STATE" -eq 2 ] || fail "a ps-rendered start that reads differently gave state $OWNER_STATE instead of ambiguous"
+[ "$OWNER_RECLAIMABLE" = no ] || fail "a live owner with a ps-rendered start record was reclaimable"
+pass "the owner proof does not depend on the caller's locale or timezone"
+
 OLD_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
 printf '\n' >> "$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
 fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" \
@@ -934,34 +959,44 @@ pass "a job staged as the worker retires restarts the worker while waiting"
 # A worker killed between creating the lock and recording its owner leaves a
 # lock that names no process. Once aged with no heartbeat it must be reclaimed
 # rather than wedging every later start.
-UNPUBLISHED_HOME="$TMP_ROOT/unpublished-account"
-UNPUBLISHED_STATE="$TMP_ROOT/unpublished-jobs"
-mkdir -p "$UNPUBLISHED_HOME"
-chmod 700 "$UNPUBLISHED_HOME"
-( export FM_REMOTE_JOB_STATE_ROOT="$UNPUBLISHED_STATE"
-  fm_remote_job_prepare_state "$UNPUBLISHED_HOME" ) || fail "the unpublished-lock fixture state could not be prepared"
-( umask 077; mkdir "$UNPUBLISHED_STATE/worker.lock" )
-printf '1\n' > "$UNPUBLISHED_STATE/worker.lock/.pid.leftover"
-touch -t 200001010000 "$UNPUBLISHED_STATE/worker.lock"
-HOME="$UNPUBLISHED_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
-  FM_REMOTE_JOB_STATE_ROOT="$UNPUBLISHED_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
-  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
-  > "$TMP_ROOT/unpublished.out" 2> "$TMP_ROOT/unpublished.err" &
-UNPUBLISHED_PID=$!
-for _ in $(seq 1 100); do
-  [ -f "$UNPUBLISHED_STATE/worker.ready" ] && break
-  kill -0 "$UNPUBLISHED_PID" 2>/dev/null || break
-  sleep 0.05
+for UNPUBLISHED_KIND in missing empty malformed; do
+  UNPUBLISHED_HOME="$TMP_ROOT/unpublished-$UNPUBLISHED_KIND-account"
+  UNPUBLISHED_STATE="$TMP_ROOT/unpublished-$UNPUBLISHED_KIND-jobs"
+  mkdir -p "$UNPUBLISHED_HOME"
+  chmod 700 "$UNPUBLISHED_HOME"
+  ( export FM_REMOTE_JOB_STATE_ROOT="$UNPUBLISHED_STATE"
+    fm_remote_job_prepare_state "$UNPUBLISHED_HOME" ) || fail "the unpublished-lock fixture state could not be prepared"
+  ( umask 077; mkdir "$UNPUBLISHED_STATE/worker.lock" )
+  printf '1\n' > "$UNPUBLISHED_STATE/worker.lock/.pid.leftover"
+  case "$UNPUBLISHED_KIND" in
+    empty) : > "$UNPUBLISHED_STATE/worker.lock/pid" ;;
+    malformed)
+      printf 'not-a-pid\n' > "$UNPUBLISHED_STATE/worker.lock/pid"
+      printf 'linux:0:0\n' > "$UNPUBLISHED_STATE/worker.lock/start"
+      : > "$UNPUBLISHED_STATE/worker.lock/command"
+      ;;
+  esac
+  touch -t 200001010000 "$UNPUBLISHED_STATE/worker.lock"
+  HOME="$UNPUBLISHED_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+    FM_REMOTE_JOB_STATE_ROOT="$UNPUBLISHED_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+    "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
+    > "$TMP_ROOT/unpublished.out" 2> "$TMP_ROOT/unpublished.err" &
+  UNPUBLISHED_PID=$!
+  for _ in $(seq 1 100); do
+    [ -f "$UNPUBLISHED_STATE/worker.ready" ] && break
+    kill -0 "$UNPUBLISHED_PID" 2>/dev/null || break
+    sleep 0.05
+  done
+  UNPUBLISHED_OWNER=$(cat "$UNPUBLISHED_STATE/worker.lock/pid" 2>/dev/null || true)
+  UNPUBLISHED_LEFTOVER=absent
+  [ ! -e "$UNPUBLISHED_STATE/worker.lock/.pid.leftover" ] || UNPUBLISHED_LEFTOVER=present
+  kill "$UNPUBLISHED_PID" 2>/dev/null || true
+  wait "$UNPUBLISHED_PID" 2>/dev/null || true
+  [ "$UNPUBLISHED_OWNER" = "$UNPUBLISHED_PID" ] \
+    || fail "a lock with a $UNPUBLISHED_KIND owner record was never reclaimed: $(cat "$TMP_ROOT/unpublished.err")"
+  [ "$UNPUBLISHED_LEFTOVER" = absent ] || fail "reclaiming an unpublished lock kept its half-written owner record"
 done
-UNPUBLISHED_OWNER=$(cat "$UNPUBLISHED_STATE/worker.lock/pid" 2>/dev/null || true)
-UNPUBLISHED_LEFTOVER=absent
-[ ! -e "$UNPUBLISHED_STATE/worker.lock/.pid.leftover" ] || UNPUBLISHED_LEFTOVER=present
-kill "$UNPUBLISHED_PID" 2>/dev/null || true
-wait "$UNPUBLISHED_PID" 2>/dev/null || true
-[ "$UNPUBLISHED_OWNER" = "$UNPUBLISHED_PID" ] \
-  || fail "a lock with no recorded owner was never reclaimed: $(cat "$TMP_ROOT/unpublished.err")"
-[ "$UNPUBLISHED_LEFTOVER" = absent ] || fail "reclaiming an unpublished lock kept its half-written owner record"
-pass "an aged lock with no recorded owner is reclaimed"
+pass "an aged lock with no readable owner record is reclaimed"
 
 TRIPWIRE_HOME="$TMP_ROOT/tripwire-home"
 TRIPWIRE_STATE="$TMP_ROOT/tripwire-jobs"
