@@ -31,6 +31,9 @@
 # A caller treats an identity-checked owner as live even when its heartbeat is
 # delayed, and stale recovery removes a lock only when its recorded process is
 # provably gone or its pid belongs to an unrelated process.
+# A lock whose owner record was never completed names no process to prove, so
+# it is reclaimed once it has aged with no fresh heartbeat. A running job is
+# stopped as soon as a heartbeat finds this worker's ownership gone.
 # On Linux an idle worker exits after FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS, 600
 # seconds by default, so a detached worker left by a vanished SSH client has a
 # bounded lifetime after its last queued or running job.
@@ -99,9 +102,8 @@ worker_write_heartbeat() {
 }
 
 worker_refresh_heartbeat() {
-  local ownership_status
-  worker_ownership_intact
-  ownership_status=$?
+  local ownership_status=0
+  worker_ownership_intact || ownership_status=$?
   case "$ownership_status" in
     0) ;;
     2) worker_error "worker ownership moved to another process; stopping displaced worker"; exit 0 ;;
@@ -169,6 +171,15 @@ worker_lock_recent() {
   [ $((now - mtime)) -le 10 ]
 }
 
+worker_lock_owner_unpublished() { # <account-home>
+  local field
+  fm_remote_job_probe "$1" && return 1
+  for field in pid start command; do
+    [ -e "$WORKER_LOCK/$field" ] || [ -L "$WORKER_LOCK/$field" ] || return 0
+  done
+  return 1
+}
+
 worker_quarantined_execution_stopped() { # <account-home>
   local account_home=$1 job state kind file pid
   fm_remote_job_regular_bounded "$WORKER_LOCK/quarantine" 256 || return 1
@@ -207,13 +218,15 @@ worker_acquire_lock() {
       continue
     fi
     if fm_remote_job_lock_owner_matches_process "$account_home"; then return 2; fi
-    if worker_lock_recent || ! fm_remote_job_lock_owner_reclaimable "$account_home"; then
+    if worker_lock_recent ||
+      { ! fm_remote_job_lock_owner_reclaimable "$account_home" && ! worker_lock_owner_unpublished "$account_home"; }; then
       attempt=$((attempt + 1))
       sleep 0.1
       continue
     fi
     [ ! -L "$WORKER_LOCK/pid" ] && [ ! -L "$WORKER_LOCK/start" ] && [ ! -L "$WORKER_LOCK/command" ] || return 1
-    rm -f -- "$WORKER_LOCK/pid" "$WORKER_LOCK/start" "$WORKER_LOCK/command" || return 1
+    rm -f -- "$WORKER_LOCK/pid" "$WORKER_LOCK/start" "$WORKER_LOCK/command" \
+      "$WORKER_LOCK"/.pid.* "$WORKER_LOCK"/.start.* "$WORKER_LOCK"/.command.* || return 1
     rmdir "$WORKER_LOCK" || return 1
   done
   return 1
@@ -517,7 +530,7 @@ worker_run_with_timeout() { # <job-dir> <seconds> <command> [args...]
       break
     fi
     if [ "$SECONDS" -ge "$next_heartbeat" ]; then
-      if ! worker_write_heartbeat; then
+      if ! worker_ownership_intact || ! worker_write_heartbeat; then
         worker_signal_process_or_group group TERM "$group_pid"
         worker_signal_process_or_group group KILL "$group_pid"
         heartbeat_failed=1
@@ -726,6 +739,7 @@ worker_process_once() { # <account-home>
       continue
     }
     worker_run_job "$account_home" "$job"
+    [ "$SECONDS" -lt "$next_heartbeat" ] || worker_refresh_heartbeat
   done
 }
 
