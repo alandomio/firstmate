@@ -86,12 +86,14 @@ Record whether recall actually changed anything. That is what the kill criterion
 - **Git**: `git status --short`, `git diff --stat`, `git log --oneline <base>..HEAD` against the main branch (`dev` or `main`). Not just the working tree — a session that committed as it went shows an empty diff.
 - **Transcript**: commands run, errors hit, how they were resolved.
 - **Build/tests**: run the repo's own commands (read `CLAUDE.md` / `package.json` / `Makefile`). Never invent one. If nothing was run, that is "not run" — see Guardrails.
+  Also note the repo's guardrails: a repo with no hook or CI job running its own lint, typecheck or tests is itself a finding, and so is an existing check that nothing runs. Read its check command first, so an unwired check is reported as unwired rather than as missing.
 - **The substantive questions**: now ask the user **1 or 2** targeted questions, and only what the diff cannot answer — their goal, their satisfaction, a judgment call you cannot infer.
 
 ## Step 3 — Extract learnings with failure receipts
 
 - Save the **exact** failing command or compiler error alongside its resolution. Abstract advice ages badly; concrete receipts do not.
 - Mark each learning **new** or **recurring** against Step 1. Recurring earns a `CLAUDE.md` rule and a confidence bump; new usually earns just a lesson.
+- **Information access** is its own category: places the session lacked a source it needed (read-only service access, logs, metrics) or was blocked from one. Record each with the receipt, e.g. an auto-mode production-read block, or a metric the monitoring tool does not carry. The fix is usually access, not a rule.
 - A retrospective with no failures recorded is almost always incomplete. Look harder before concluding there were none.
 
 ## Step 3b — Repetition audit: what did this session pay for twice?
@@ -147,6 +149,16 @@ Two independent axes. Do not conflate them — they share a shape and mean diffe
 | an ADR | a fork in the road with alternatives rejected. Hand off to the `adr-draft` skill rather than hand-rolling |
 
 Fits nowhere -> session trivia. Leave it in the report only.
+
+**Before a learning becomes a `CLAUDE.md` / `AGENTS.md` rule, classify it:**
+
+- **Mechanical** (a fixed syntactic pattern, banned API, import shape, file-location rule) -> a lint rule, pre-commit hook or CI job, routed as an Axis A artifact. Prose is the wrong enforcement.
+- **Review-time** (a check that matters only when a change is judged) -> give it to the reviewer (review standards, a review skill) rather than the always-loaded file, which every session pays for.
+- **Judgement call every session needs** -> only then a written rule.
+
+**No-ops audit.** Scan the always-loaded steering files this session touched for instructions that did not change behaviour (no receipt, already enforced by a check, or only relevant in a nameable situation). Propose deleting them, or moving them to a skill, doc or review standard. Prefer pruning to adding.
+This audit and any pruning go through the same show-diff-then-wait gate as every other `CLAUDE.md` edit in Step 5, and are left pending on the unattended path.
+Idea sources for this step: Matt Pocock's `/retro`.
 
 **Axis B — persistent memory**, routed by **blast radius**. Ask "who needs to know this?" before "which tool saves this?":
 
