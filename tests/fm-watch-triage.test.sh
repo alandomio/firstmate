@@ -1287,7 +1287,7 @@ paused_recheck_round() {  # <case-dir> <window> <task> <agent-command> <expect> 
   pid=$!
   if [ "$expect" = surface ]; then
     wait_for_exit "$pid" 100 || fail "$label: the due recheck did not surface"
-    grep -qF "stale: $window (paused" "$out" || fail "$label: surfaced without the declared-pause recheck reason: $(cat "$out")"
+    grep -qF "stale: $window (${PAUSE_ROUND_REASON:-paused}" "$out" || fail "$label: surfaced without the declared-pause recheck reason: $(cat "$out")"
   else
     if ! wait_poll_cycle "$state" "$pid"; then
       reap "$pid"; fail "$label: an unchanged declared pause surfaced again: $(cat "$out")"
@@ -3194,6 +3194,108 @@ test_rule_never_absorbs_a_captain_held_recheck() {
   pass "a captain-held recheck always re-surfaces, never absorbed by the rule, even when enabled"
 }
 
+# The daily reminder: config/absorb-unchanged-pause's second line "daily" lets the
+# rule also absorb an unchanged recheck whose worker is already dead at the last
+# surface, for a paused: wait and a captain-held transfer alike.
+rule_daily_case() {  # <name> <status-line> <config-second-line-or-empty>
+  local dir state window key
+  dir=$(make_case "$1"); state="$dir/state"
+  window="test:fm-$1"; key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\nharness=claude\nbackend=tmux\n' "$window" > "$state/$1.meta"
+  printf '%s\n' "$2" > "$state/$1.status"
+  backdate_file 500 "$state/$1.status"
+  printf 'bare shell after agent exit\n' > "$dir/pane.txt"
+  : > "$state/.paused-$key"
+  printf '%s' "$(hash_text "$(cat "$dir/pane.txt")")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  jev_absorb_enable_rule "$dir"
+  [ -z "$3" ] || printf '%s\n' "$3" >> "$dir/config/absorb-unchanged-pause"
+  RULE_DAILY_DIR=$dir RULE_DAILY_STATE=$state RULE_DAILY_WINDOW=$window RULE_DAILY_KEY=$key
+}
+
+rule_digest_lines() {  # <dir>
+  grep -cF '"source":"rule"' "$1/state/jev/absorbed.jsonl" 2>/dev/null || true
+}
+
+test_rule_daily_absorbs_an_unchanged_dead_agent_recheck_until_the_reminder() {
+  local task=dailydead before
+  rule_daily_case "$task" 'paused: waiting on upstream' daily
+  # The first recheck has no recorded situation: it always surfaces.
+  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh surface "first dead recheck" \
+    FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
+  before=$(rule_digest_lines "$RULE_DAILY_DIR")
+  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh absorb "unchanged dead recheck within the day" \
+    FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
+  [ "$(rule_digest_lines "$RULE_DAILY_DIR")" -eq $(( before + 1 )) ] \
+    || fail "the absorption did not add one source=rule digest entry: $(cat "$RULE_DAILY_STATE/jev/absorbed.jsonl" 2>/dev/null)"
+  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh absorb "second unchanged dead recheck within the day" \
+    FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
+  [ "$(rule_digest_lines "$RULE_DAILY_DIR")" -eq $(( before + 2 )) ] || fail "the second absorption was not counted"
+  # Past the reminder ceiling since the last surface, the recheck surfaces for real.
+  backdate_file 500 "$RULE_DAILY_STATE/.paused-surfaced-$RULE_DAILY_KEY"
+  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh surface "dead recheck past the daily reminder" \
+    FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=300
+  [ "$(rule_digest_lines "$RULE_DAILY_DIR")" -eq $(( before + 2 )) ] || fail "the reminder surface was counted as absorbed"
+  pass "daily: an unchanged dead-agent recheck is absorbed and counted as source=rule until the reminder, then surfaced"
+}
+
+test_rule_daily_is_off_without_its_second_line() {
+  local task=dailyoff
+  rule_daily_case "$task" 'paused: waiting on upstream' ""
+  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh surface "first dead recheck" \
+    FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
+  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh surface "unchanged dead recheck without the daily line" \
+    FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
+  assert_absent "$RULE_DAILY_STATE/jev/absorbed.jsonl" "an unchanged dead recheck was absorbed without the daily line"
+  pass "daily: without the second line an unchanged dead-agent recheck keeps surfacing at every recheck"
+}
+
+test_rule_daily_surfaces_an_alive_to_dead_transition_at_once() {
+  local task=dailyflip
+  rule_daily_case "$task" 'paused: waiting on upstream' daily
+  printf 'idle, waiting on upstream\n' > "$RULE_DAILY_DIR/pane.txt"
+  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" claude surface "live baseline recheck" \
+    FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
+  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh surface "the worker exited since the last surface" \
+    FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
+  grep -qF "agent now dead" "$RULE_DAILY_DIR/watch.out" || fail "the exit was not named: $(cat "$RULE_DAILY_DIR/watch.out")"
+  assert_absent "$RULE_DAILY_STATE/jev/absorbed.jsonl" "the alive-to-dead transition was recorded as absorbed"
+  pass "daily: an alive to dead transition surfaces at once, and a changed pane or status line does too"
+  # Dead and unchanged is now the recorded situation, so the next recheck is absorbed ...
+  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh absorb "now-dead unchanged recheck"  \
+    FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
+  # ... while any pane change after that surfaces again.
+  printf 'a new dialog appeared\n' > "$RULE_DAILY_DIR/pane.txt"
+  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh surface "pane changed on a dead worker" \
+    FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
+  grep -qF "pane text changed" "$RULE_DAILY_DIR/watch.out" || fail "the pane change was not named: $(cat "$RULE_DAILY_DIR/watch.out")"
+}
+
+test_rule_daily_covers_a_captain_held_wait() {
+  local task=dailyheld before
+  rule_daily_case "$task" "captain-held: awaiting the captain's decision" daily
+  PAUSE_ROUND_REASON=captain-held paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh surface "first captain-held recheck" \
+    FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
+  before=$(rule_digest_lines "$RULE_DAILY_DIR")
+  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh absorb "unchanged dead captain-held recheck" \
+    FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
+  [ "$(rule_digest_lines "$RULE_DAILY_DIR")" -eq $(( before + 1 )) ] || fail "the captain-held absorption was not counted as source=rule"
+  pass "daily: a dead captain-held wait is absorbed and counted like a plain declared pause"
+}
+
+test_rule_daily_never_absorbs_a_task_with_an_open_decision() {
+  local task=dailydecision
+  rule_daily_case "$task" 'paused: waiting on upstream' daily
+  printf 'needs-decision: pick a base branch\npaused: waiting on upstream\n' > "$RULE_DAILY_STATE/$task.status"
+  backdate_file 500 "$RULE_DAILY_STATE/$task.status"
+  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh surface "first recheck with an open decision" \
+    FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
+  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh surface "unchanged dead recheck with an open decision" \
+    FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
+  assert_absent "$RULE_DAILY_STATE/jev/absorbed.jsonl" "a task with an open decision was recorded as absorbed"
+  pass "daily: a task with an open decision still surfaces at every recheck"
+}
+
 test_rule_surfaces_when_its_digest_entry_cannot_be_built() {
   local dir state statusf window task key
   dir=$(make_case rule-no-digest); state="$dir/state"
@@ -3610,6 +3712,11 @@ test_rule_absorbs_unchanged_pause_recheck
 test_rule_refuses_a_changed_situation_or_an_open_decision
 test_rule_never_absorbs_a_dead_agent_pause_recheck
 test_rule_never_absorbs_a_captain_held_recheck
+test_rule_daily_absorbs_an_unchanged_dead_agent_recheck_until_the_reminder
+test_rule_daily_is_off_without_its_second_line
+test_rule_daily_surfaces_an_alive_to_dead_transition_at_once
+test_rule_daily_covers_a_captain_held_wait
+test_rule_daily_never_absorbs_a_task_with_an_open_decision
 test_rule_surfaces_when_its_digest_entry_cannot_be_built
 test_rule_surfaces_when_its_digest_entry_cannot_be_written
 test_rule_safety_valve_forces_a_real_surface_then_resets
