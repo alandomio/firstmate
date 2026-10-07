@@ -49,6 +49,14 @@
 # it to stop itself once its root is pruned, and
 # bin/fm-remote-job-reap-orphans.sh uses it to reap workers that were already
 # orphaned that way.
+#
+# Linux startup is single-flight per account state root.
+# A caller reuses an identity-checked live lock owner without relying on a fresh
+# heartbeat, and stale-lock recovery proceeds only when the recorded process is
+# provably gone or unrelated.
+# The serving process revalidates the same ownership on every heartbeat, and on
+# Linux exits after FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS without queued or running
+# work.
 
 FM_REMOTE_JOB_LABEL=dev.firstmate.remote-job
 FM_REMOTE_JOB_MAX_BYTES=${FM_REMOTE_JOB_MAX_BYTES:-1048576}
@@ -59,6 +67,7 @@ FM_REMOTE_JOB_POLL_SECONDS=${FM_REMOTE_JOB_POLL_SECONDS:-0.05}
 FM_REMOTE_JOB_REAP_SECONDS=${FM_REMOTE_JOB_REAP_SECONDS:-3600}
 FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=${FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS:-3}
 FM_REMOTE_JOB_REAP_INTERVAL_SECONDS=${FM_REMOTE_JOB_REAP_INTERVAL_SECONDS:-60}
+FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS=${FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS:-600}
 # The single owner of fm_remote_job_probe's freshness window, so the heartbeat
 # interval bound below cannot silently drift out of sync with what a prober
 # actually tolerates.
@@ -102,6 +111,8 @@ fm_remote_job_validate_settings() {
   case "$FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS" in ''|*[!0-9]*|0) return 1 ;; esac
   [ "$FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS" -lt "$FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS" ] || return 1
   case "$FM_REMOTE_JOB_REAP_INTERVAL_SECONDS" in ''|*[!0-9]*|0) return 1 ;; esac
+  case "$FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS" in ''|*[!0-9]*|0) return 1 ;; esac
+  [ "$FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS" -le 86400 ] || return 1
   return 0
 }
 
@@ -799,25 +810,42 @@ fm_remote_job_read_single_line() {
   printf '%s\n' "$value"
 }
 
-fm_remote_job_lock_owner_matches_process() {
+fm_remote_job_lock_owner_state() { # <account-home>; 0=live, 1=stale, 2=ambiguous
   local account_home=$1 lock pid recorded_start actual_start recorded_command actual_command
-  fm_remote_job_prepare_state "$account_home" || return 1
+  FM_REMOTE_JOB_OWNER_PID=
+  fm_remote_job_prepare_state "$account_home" || return 2
   lock=$(fm_remote_job_worker_lock_path)
-  [ -d "$lock" ] && [ ! -L "$lock" ] || return 1
-  pid=$(fm_remote_job_read_single_line "$lock/pid" 64) || return 1
-  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-  [ "$pid" -gt 1 ] || return 1
-  recorded_start=$(fm_remote_job_read_single_line "$lock/start" 256) || return 1
-  actual_start=$(fm_remote_job_process_start "$pid") || return 1
-  [ "$recorded_start" = "$actual_start" ] || return 1
-  recorded_command=$(fm_remote_job_read_single_line "$lock/command" 8192) || return 1
-  actual_command=$(fm_remote_job_process_command "$pid") || return 1
-  [ "$recorded_command" = "$actual_command" ] || return 1
+  [ -d "$lock" ] && [ ! -L "$lock" ] || return 2
+  pid=$(fm_remote_job_read_single_line "$lock/pid" 64) || return 2
+  case "$pid" in ''|*[!0-9]*) return 2 ;; esac
+  [ "$pid" -gt 1 ] || return 2
   FM_REMOTE_JOB_OWNER_PID=$pid
+  kill -0 "$pid" 2>/dev/null || return 1
+  recorded_start=$(fm_remote_job_read_single_line "$lock/start" 256) || return 2
+  actual_start=$(fm_remote_job_process_start "$pid") || return 2
+  [ "$recorded_start" = "$actual_start" ] || return 1
+  recorded_command=$(fm_remote_job_read_single_line "$lock/command" 8192) || return 2
+  actual_command=$(fm_remote_job_process_command "$pid") || return 2
+  [ "$recorded_command" = "$actual_command" ] || return 1
+  return 0
+}
+
+fm_remote_job_lock_owner_matches_process() {
+  fm_remote_job_lock_owner_state "$1"
+}
+
+# A complete lock may be reclaimed only when its recorded process identity is
+# provably gone or its pid has been reused. An unreadable process inspection is
+# ambiguous, not evidence that a live owner is stale.
+fm_remote_job_lock_owner_reclaimable() { # <account-home>
+  local account_home=$1 owner_state
+  fm_remote_job_lock_owner_state "$account_home"
+  owner_state=$?
+  [ "$owner_state" -eq 1 ]
 }
 
 fm_remote_job_worker_owned_alive() {
-  local root=$1 account_home=$2 lock pid pid_file identity_file command ps_bin
+  local root=$1 account_home=$2 lock pid pid_file identity_file command ps_bin owner_state
   [ "${FM_REMOTE_JOB_ACTIVE:-}" != 1 ] || return 0
   fm_remote_job_prepare_state "$account_home" || return 1
   lock=$(fm_remote_job_worker_lock_path)
@@ -828,15 +856,16 @@ fm_remote_job_worker_owned_alive() {
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   identity_file=$(fm_remote_job_worker_identity_path)
   fm_remote_job_regular_bounded "$identity_file" 256 || return 1
-  fm_remote_job_probe "$account_home" || return 1
-  if fm_remote_job_lock_owner_matches_process "$account_home"; then
-    [ "$pid" = "$FM_REMOTE_JOB_OWNER_PID" ] || return 1
-    return 0
+  fm_remote_job_lock_owner_state "$account_home"
+  owner_state=$?
+  if [ "$pid" = "${FM_REMOTE_JOB_OWNER_PID:-}" ]; then
+    case "$owner_state" in 0|2) return 0 ;; esac
   fi
   [ ! -e "$lock/pid" ] && [ ! -L "$lock/pid" ] &&
     [ ! -e "$lock/start" ] && [ ! -L "$lock/start" ] &&
     [ ! -e "$lock/command" ] && [ ! -L "$lock/command" ] || return 1
   if [ -x /bin/ps ]; then ps_bin=/bin/ps; elif [ -x /usr/bin/ps ]; then ps_bin=/usr/bin/ps; else return 1; fi
+  fm_remote_job_probe "$account_home" || return 1
   command=$("$ps_bin" -p "$pid" -o command= 2>/dev/null) || return 1
   case "$command" in *"$root/bin/fm-remote-job-worker.sh"*) FM_REMOTE_JOB_OWNER_PID=$pid; return 0 ;; esac
   return 1
@@ -973,6 +1002,7 @@ fm_remote_job_start_linux_worker() { # <remote-root> <account-home>
     FM_ROOT_OVERRIDE="$root" \
     FM_REMOTE_JOB_STATE_ROOT="$FM_REMOTE_JOB_STATE" \
     FM_REMOTE_JOB_PLATFORM_OVERRIDE="${FM_REMOTE_JOB_PLATFORM_OVERRIDE:-}" \
+    FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS="$FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS" \
     "$worker" >> "$FM_REMOTE_JOB_STATE/logs/$FM_REMOTE_JOB_LABEL.log" 2>&1 < /dev/null &
   pid=$!
   set +m

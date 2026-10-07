@@ -24,6 +24,17 @@
 # the window the library's probe tolerates, so a healthy worker between writes
 # never reads as unready.
 #
+# The worker.lock directory is the per-account single-flight authority.
+# Its pid, process start, and command bind ownership to one exact process, and
+# every heartbeat revalidates that identity so a worker displaced by stale-lock
+# recovery fences itself out instead of continuing beside the replacement.
+# A caller treats an identity-checked owner as live even when its heartbeat is
+# delayed, and stale recovery removes a lock only when its recorded process is
+# provably gone or its pid belongs to an unrelated process.
+# On Linux an idle worker exits after FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS, 600
+# seconds by default, so a detached worker left by a vanished SSH client has a
+# bounded lifetime after its last queued or running job.
+#
 # The worker is abandoned when its configured FM_ROOT stops being a genuine
 # Firstmate checkout - the state a pruned no-mistakes gate worktree, a returned
 # pooled worktree, or a removed test fixture root leaves behind. It can never
@@ -63,6 +74,9 @@ WORKER_RELEASE_OWNERSHIP=1
 WORKER_SUPERVISED_PID=
 WORKER_PREEMPTIBLE=0
 WORKER_PREEMPTED=0
+WORKER_QUEUE_ACTIVE=0
+WORKER_OWNER_START=
+WORKER_OWNER_COMMAND=
 
 worker_error() { printf 'remote-job-worker: %s\n' "$1" >&2; }
 
@@ -85,8 +99,28 @@ worker_write_heartbeat() {
 }
 
 worker_refresh_heartbeat() {
+  local ownership_status
+  worker_ownership_intact
+  ownership_status=$?
+  case "$ownership_status" in
+    0) ;;
+    2) worker_error "worker ownership moved to another process; stopping displaced worker"; exit 0 ;;
+    *) worker_error "worker state disappeared while serving"; exit 1 ;;
+  esac
   worker_write_heartbeat || { worker_error "cannot update worker heartbeat"; exit 1; }
   next_heartbeat=$((SECONDS + FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS))
+}
+
+worker_ownership_intact() {
+  local owner_pid recorded_start recorded_command
+  [ -d "$FM_REMOTE_JOB_STATE" ] && [ ! -L "$FM_REMOTE_JOB_STATE" ] || return 1
+  [ -d "$WORKER_LOCK" ] && [ ! -L "$WORKER_LOCK" ] || return 1
+  owner_pid=$(fm_remote_job_read_single_line "$WORKER_LOCK/pid" 64 2>/dev/null || true)
+  [ "$owner_pid" = "${BASHPID:-$$}" ] || return 2
+  recorded_start=$(fm_remote_job_read_single_line "$WORKER_LOCK/start" 256 2>/dev/null || true)
+  [ -n "$recorded_start" ] && [ "$recorded_start" = "$WORKER_OWNER_START" ] || return 2
+  recorded_command=$(fm_remote_job_read_single_line "$WORKER_LOCK/command" 8192 2>/dev/null || true)
+  [ -n "$recorded_command" ] && [ "$recorded_command" = "$WORKER_OWNER_COMMAND" ] || return 2
 }
 
 worker_publish_pid() {
@@ -120,9 +154,11 @@ worker_publish_lock_owner() {
   printf '%s\n' "$start" > "$start_tmp" || { rm -f -- "$pid_tmp" "$start_tmp" "$command_tmp"; return 1; }
   printf '%s\n' "$command" > "$command_tmp" || { rm -f -- "$pid_tmp" "$start_tmp" "$command_tmp"; return 1; }
   chmod 600 "$pid_tmp" "$start_tmp" "$command_tmp" || { rm -f -- "$pid_tmp" "$start_tmp" "$command_tmp"; return 1; }
-  mv -f -- "$command_tmp" "$WORKER_LOCK/command" || { rm -f -- "$pid_tmp" "$start_tmp" "$command_tmp"; return 1; }
-  mv -f -- "$start_tmp" "$WORKER_LOCK/start" || { rm -f -- "$pid_tmp" "$start_tmp" "$WORKER_LOCK/command"; return 1; }
-  mv -f -- "$pid_tmp" "$WORKER_LOCK/pid" || { rm -f -- "$pid_tmp" "$WORKER_LOCK/start" "$WORKER_LOCK/command"; return 1; }
+  mv -f -- "$pid_tmp" "$WORKER_LOCK/pid" || { rm -f -- "$pid_tmp" "$start_tmp" "$command_tmp"; return 1; }
+  mv -f -- "$start_tmp" "$WORKER_LOCK/start" || { rm -f -- "$start_tmp" "$command_tmp" "$WORKER_LOCK/pid"; return 1; }
+  mv -f -- "$command_tmp" "$WORKER_LOCK/command" || { rm -f -- "$command_tmp" "$WORKER_LOCK/pid" "$WORKER_LOCK/start"; return 1; }
+  WORKER_OWNER_START=$start
+  WORKER_OWNER_COMMAND=$command
 }
 
 worker_lock_recent() {
@@ -171,7 +207,7 @@ worker_acquire_lock() {
       continue
     fi
     if fm_remote_job_lock_owner_matches_process "$account_home"; then return 2; fi
-    if fm_remote_job_probe "$account_home" || worker_lock_recent; then
+    if worker_lock_recent || ! fm_remote_job_lock_owner_reclaimable "$account_home"; then
       attempt=$((attempt + 1))
       sleep 0.1
       continue
@@ -647,6 +683,7 @@ worker_run_job() { # <account-home> <job-dir>
 
 worker_process_once() { # <account-home>
   local account_home=$1 job id state queue_deadline timeout deadline
+  WORKER_QUEUE_ACTIVE=0
   for job in "$FM_REMOTE_JOB_JOBS"/job-*; do
     [ -d "$job" ] && [ ! -L "$job" ] || continue
     id=${job##*/}
@@ -656,6 +693,7 @@ worker_process_once() { # <account-home>
     state=$(fm_remote_job_read_state "$job" 2>/dev/null || true)
     case "$state" in
       queued)
+        WORKER_QUEUE_ACTIVE=1
         worker_clear_dead_claim "$job" || continue
         queue_deadline=$(fm_remote_job_read_number "$job" queue_deadline 2>/dev/null || true)
         case "$queue_deadline" in ''|*[!0-9]*) worker_publish_result "$job" 126 || true; continue ;; esac
@@ -665,6 +703,7 @@ worker_process_once() { # <account-home>
         fi
         ;;
       running)
+        WORKER_QUEUE_ACTIVE=1
         worker_recover_orphaned_job "$job" || true
         continue
         ;;
@@ -691,11 +730,12 @@ worker_process_once() { # <account-home>
 }
 
 main() {
-  local account_home lock_status next_heartbeat next_reap
+  local account_home lock_status next_heartbeat next_reap last_activity platform
   account_home=$(worker_account_home) || { worker_error "cannot resolve account home"; exit 1; }
   FM_ROOT=$(fm_remote_job_canonical_existing_dir "$FM_ROOT") || { worker_error "configured FM_ROOT is unsafe"; exit 1; }
   [ -f "$FM_ROOT/AGENTS.md" ] && [ ! -L "$FM_ROOT/AGENTS.md" ] || { worker_error "FM_ROOT is not a Firstmate checkout"; exit 1; }
   fm_remote_job_prepare_state "$account_home" || { worker_error "$FM_REMOTE_JOB_ERROR"; exit 1; }
+  platform=$(fm_remote_job_platform)
   WORKER_LOCK=$(fm_remote_job_worker_lock_path)
   trap worker_exit_cleanup EXIT
   worker_acquire_lock "$account_home"
@@ -711,6 +751,7 @@ main() {
   worker_publish_pid || { worker_error "cannot publish worker pid"; exit 1; }
   worker_refresh_heartbeat
   next_reap=$SECONDS
+  last_activity=$SECONDS
   while :; do
     if [ "$SECONDS" -ge "$next_heartbeat" ]; then
       worker_refresh_heartbeat
@@ -734,6 +775,12 @@ main() {
       next_reap=$((SECONDS + FM_REMOTE_JOB_REAP_INTERVAL_SECONDS))
     fi
     worker_process_once "$account_home"
+    if [ "$WORKER_QUEUE_ACTIVE" -eq 1 ]; then
+      last_activity=$SECONDS
+    elif [ "$platform" = linux ] && [ $((SECONDS - last_activity)) -ge "$FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS" ]; then
+      worker_error "idle timeout reached; stopping remote job worker"
+      exit 0
+    fi
     sleep "$FM_REMOTE_JOB_POLL_SECONDS"
   done
 }

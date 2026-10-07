@@ -35,6 +35,9 @@ After that bootstrap every non-doctor `fm-on.sh` target runs through that worker
 The worker runs one staged job at a time and preempts a running reply long-poll as soon as any command other than another reply long-poll is queued, so interactive commands and startup checks are never serialized behind a poll window.
 `bin/fm-remote-job-lib.sh` owns that preemption contract and distinguishes preemption from a wait window that closes with no data, so only a genuinely quiet window proves channel freshness while either outcome can re-arm without losing data.
 Linux uses the same queue and worker protocol without the Aqua-session requirement.
+A per-account identity-checked lock permits only one serving worker for that queue, and every heartbeat fences out a process whose ownership moved to a replacement.
+A delayed heartbeat never causes a caller to start another server beside a live lock owner, while stale ownership is reclaimed only after the recorded process is proven gone or unrelated.
+On Linux the detached worker retires after ten minutes without queued or running work, so a worker left behind by a vanished SSH client has a bounded lifetime; the next command starts it again through the same single-flight path.
 A worker stops itself once its configured code root stops being a Firstmate checkout, so a worker started from a worktree cannot outlive that worktree, and `bin/fm-remote-job-reap-orphans.sh` clears any worker already left behind that way without ever touching one whose checkout still exists.
 The remote account must provide the required toolchain, the selected worker runtime, the selected session backend, and credentials that work on that host.
 The origin URL named for each project must be reachable from the remote account because projects are cloned on that host rather than copied from the primary.
