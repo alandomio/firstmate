@@ -3314,13 +3314,15 @@ test_rule_daily_absorbs_an_unchanged_dead_agent_recheck_until_the_reminder() {
 
 test_rule_daily_is_off_without_its_second_line() {
   local task=dailyoff
-  rule_daily_case "$task" 'paused: waiting on upstream' ""
-  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh surface "first dead recheck" \
+  # Plain `on` already absorbs an unchanged exited paused: wait (see the exited-worker
+  # tests); what the second line adds is the captain-held transfer.
+  rule_daily_case "$task" "captain-held: awaiting the captain's decision" ""
+  PAUSE_ROUND_REASON=captain-held paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh surface "first dead captain-held recheck" \
     FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
-  paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh surface "unchanged dead recheck without the daily line" \
+  PAUSE_ROUND_REASON=captain-held paused_recheck_round "$RULE_DAILY_DIR" "$RULE_DAILY_WINDOW" "$task" zsh surface "unchanged dead captain-held recheck without the daily line" \
     FM_HOME="$RULE_DAILY_DIR" FM_PAUSE_REMIND_SECS=90000
-  assert_absent "$RULE_DAILY_STATE/jev/absorbed.jsonl" "an unchanged dead recheck was absorbed without the daily line"
-  pass "daily: without the second line an unchanged dead-agent recheck keeps surfacing at every recheck"
+  assert_absent "$RULE_DAILY_STATE/jev/absorbed.jsonl" "an unchanged dead captain-held recheck was absorbed without the daily line"
+  pass "daily: without the second line an unchanged dead-agent captain-held recheck keeps surfacing at every recheck"
 }
 
 test_rule_daily_surfaces_an_alive_to_dead_transition_at_once() {

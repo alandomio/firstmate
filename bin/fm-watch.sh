@@ -475,7 +475,8 @@ busy_turn_over_age() {  # <task>
 # paused: recheck of an exited worker is absorbed exactly like a live worker's
 # (rule_absorb_unchanged_pause, its own PAUSE_REMIND_SECS valve); with the second line
 # "daily" (rule_absorb_unchanged_wait) a dead agent that was already dead at the last
-# surface, with nothing else changed, is also absorbed for a captain-held wait.
+# surface, with nothing else changed, is absorbed for a paused: or captain-held wait,
+# and that rule alone owns every dead-agent recheck so its reminder is not stretched.
 # 0 when Jev absorbed a declared-pause recheck that was about to re-surface -
 # called ONLY for the "paused, awaiting external" case, never for a
 # captain-held transfer (no classifier ever absorbs that, since it is a verified
@@ -642,6 +643,7 @@ handle_paused_stale() {  # <window> <task> <hash> <tail40>
       date +%s > "$throttle"
       triage_log "absorbed paused recheck via rule, daily reminder ($detail, dead agent unchanged since its last surface $(age_of "$surfaced")s ago): $win"
     elif [ "$detail" = "paused, awaiting external" ] \
+      && { [ "$dead_agent" -ne 0 ] || ! rule_daily_requested; } \
       && rule_absorb_unchanged_pause "$task" "$key" "$now_sit" "$prev_sit" "stale: $win ($reason)" \
       && rule_absorb_record "$task" "stale: $win ($reason)" "$(last_status_line "$statusf")"; then
       date +%s > "$throttle"
