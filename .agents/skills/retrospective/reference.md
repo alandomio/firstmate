@@ -81,6 +81,7 @@ Search before writing in every backend: the convention is to link, not fork.
   `user_roles` sets who can read it; keep it internal (for example `admin,dev`), never public.
 - The identifier to record in the report is the `slug` the call accepted, or whatever id it returned; no id back means the write is not claimed.
 - Keep `chunk_text` focused, key information first; point at the canonical file.
+- No update, link or related-items verb is known for this backend: skip the related-recall step, and draft a correction as a new item that names the stale `slug`.
 
 ### `backend=pp-brain` — PP Brain
 
@@ -89,8 +90,16 @@ Search before writing in every backend: the convention is to link, not fork.
   key information **first**, because it is sentence-truncated server-side), body >= 50. Tags are
   namespaced: `type:pattern`, `domain:payment`. Default `sync: true` returns
   `{ok, id, slug, permalink}` for the report.
-- Link it — `links: [{targetSlug, linkType}]` on create, or `link_knowledge` afterwards. An
-  unlinked Brain item is nearly invisible.
+- Link it — `links: [{targetSlug, linkType}]` on create, or `link_knowledge(sourceSlug, targetSlug, linkType)`
+  afterwards. An unlinked Brain item is nearly invisible. A correction or replacement carries a
+  `supersedes` link to the item it replaces.
+- Session case record: title `CASE: YYYY-MM-DD — <subject>`, tags `type:case` and `date:YYYY-MM-DD`
+  plus the usual `domain:` / `service:` tags.
+- Correction: `update_knowledge(slug, updates, changeReason)` with only the changed fields; pass
+  `structuredSummary` with a changed `body`. Show the before/after in the batch list; changed text is
+  re-screened by the sensitivity gate.
+- Related recall: `get_related_knowledge(slug)` on a good hit and its best neighbours;
+  `get_knowledge(slug)` before citing or correcting one.
 - Very large payloads have failed JSON validation; keep the body focused and point at the canonical file.
 - A 422 is the sensitivity gate. What it refuses is in `SKILL.md`.
 
