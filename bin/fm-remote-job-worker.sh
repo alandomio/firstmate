@@ -113,16 +113,24 @@ worker_refresh_heartbeat() {
   next_heartbeat=$((SECONDS + FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS))
 }
 
-worker_ownership_intact() {
+worker_owner_record_matches() {
   local owner_pid recorded_start recorded_command
+  owner_pid=$(fm_remote_job_read_single_line "$WORKER_LOCK/pid" 64 2>/dev/null || true)
+  [ "$owner_pid" = "${BASHPID:-$$}" ] || return 1
+  recorded_start=$(fm_remote_job_read_single_line "$WORKER_LOCK/start" 256 2>/dev/null || true)
+  [ -n "$recorded_start" ] && [ "$recorded_start" = "$WORKER_OWNER_START" ] || return 1
+  recorded_command=$(fm_remote_job_read_single_line "$WORKER_LOCK/command" 8192 2>/dev/null || true)
+  [ -n "$recorded_command" ] && [ "$recorded_command" = "$WORKER_OWNER_COMMAND" ] || return 1
+}
+
+# Returns 1 when the state tree is gone and 2 when another process owns it.
+# The tree is examined only after the record fails to match: checked first, a
+# root deleted between that check and the reads would pass for displacement.
+worker_ownership_intact() {
+  worker_owner_record_matches && return 0
   [ -d "$FM_REMOTE_JOB_STATE" ] && [ ! -L "$FM_REMOTE_JOB_STATE" ] || return 1
   [ -d "$WORKER_LOCK" ] && [ ! -L "$WORKER_LOCK" ] || return 1
-  owner_pid=$(fm_remote_job_read_single_line "$WORKER_LOCK/pid" 64 2>/dev/null || true)
-  [ "$owner_pid" = "${BASHPID:-$$}" ] || return 2
-  recorded_start=$(fm_remote_job_read_single_line "$WORKER_LOCK/start" 256 2>/dev/null || true)
-  [ -n "$recorded_start" ] && [ "$recorded_start" = "$WORKER_OWNER_START" ] || return 2
-  recorded_command=$(fm_remote_job_read_single_line "$WORKER_LOCK/command" 8192 2>/dev/null || true)
-  [ -n "$recorded_command" ] && [ "$recorded_command" = "$WORKER_OWNER_COMMAND" ] || return 2
+  return 2
 }
 
 worker_publish_pid() {
