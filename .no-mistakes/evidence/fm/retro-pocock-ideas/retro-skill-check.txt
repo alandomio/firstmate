@@ -1,0 +1,14 @@
+ .agents/skills/retrospective/SKILL.md     | 73 ++++++++++++-------------------
+ .agents/skills/retrospective/reference.md | 18 +++-----
+ 2 files changed, 34 insertions(+), 57 deletions(-)
+SKILL.md before:      276 after:      261
+reference.md before:      108 after:      100
+21:  its own work). Same as above: ask the questions, wait for the answers.
+86:  Also note the repo's guardrails: a repo with no hook or CI job running its own lint, typecheck or tests is itself a finding, and so is an existing check that nothing runs. Read its check command first, so an unwired check is reported as unwired rather than as missing.
+93:- **Information access** is its own category: places the session lacked a source it needed (read-only service access, logs, metrics) or was blocked from one. Record each with the receipt, e.g. an auto-mode production-read block, or a metric the monitoring tool does not carry. The fix is usually access, not a rule.
+133:- **Mechanical** (a fixed syntactic pattern, banned API, import shape, file-location rule) -> a lint rule, pre-commit hook or CI job, routed as an Axis A artifact. Prose is the wrong enforcement.
+134:- **Review-time** (a check that matters only when a change is judged) -> give it to the reviewer (review standards, a review skill) rather than the always-loaded file, which every session pays for.
+137:**No-ops audit.** Scan the always-loaded steering files this session touched for instructions that did not change behaviour (no receipt, already enforced by a check, or only relevant in a nameable situation). Propose deleting them, or moving them to a skill, doc or review standard. Prefer pruning to adding.
+138:This audit and any pruning go through the same show-diff-then-wait gate as every other `CLAUDE.md` edit in Step 5, and are left pending on the unattended path.
+139:Classification, no-ops audit and information-access ideas adapted from Matt Pocock's `/retro`.
+157:**Axis A artifacts are code changes** and follow the same discipline as any other edit. `CLAUDE.md`: show the diff, wait for an answer, then apply — amend an existing rule rather than appending a near-duplicate, link to the org store if it already documents the convention, and never write a rule into a repo this session did not touch. For `.claude/skills/`, `docs/`, `llm/kb/` and ADRs, each has its own contribution convention — see `reference.md`; hand ADRs to `adr-draft`.
