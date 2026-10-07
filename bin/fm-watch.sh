@@ -27,8 +27,9 @@
 #                          never as a wedge, and that recheck reason names which
 #                          human the wait is on; a due PAUSED (never captain-held)
 #                          recheck first offers the deterministic unchanged-pause
-#                          rule (config/absorb-unchanged-pause), then Jev
-#                          (config/jev-absorb), one more look before it
+#                          rule (config/absorb-unchanged-pause, which also covers a
+#                          worker whose agent has exited), then Jev
+#                          (config/jev-absorb, live workers only), one more look before it
 #                          re-surfaces - both off by default, and both behind
 #                          absorb_vetoed (bin/fm-classify-lib.sh), the single
 #                          deterministic veto no absorber may override. With
@@ -469,10 +470,13 @@ busy_turn_over_age() {  # <task>
 # the throttle so the next comparison is one PAUSE_RESURFACE_SECS later; it surfaces
 # again only once PAUSE_REMIND_SECS pass since that surface, or the situation changes.
 # A recheck that finds the agent dead is never absorbed by that legacy comparison, so
-# an exited worker keeps surfacing on every PAUSE_RESURFACE_SECS recheck - unless the
-# opt-in daily reminder (config/absorb-unchanged-pause, second line "daily";
-# rule_absorb_unchanged_wait) takes it: a dead agent that was already dead at the
-# last surface, with nothing else changed, for a paused: or captain-held wait.
+# an exited worker keeps surfacing on every PAUSE_RESURFACE_SECS recheck - unless an
+# opt-in rule of config/absorb-unchanged-pause takes it: with only "on", the unchanged
+# paused: recheck of an exited worker is absorbed exactly like a live worker's
+# (rule_absorb_unchanged_pause, its own PAUSE_REMIND_SECS valve); with the second line
+# "daily" (rule_absorb_unchanged_wait) a dead agent that was already dead at the last
+# surface, with nothing else changed, is absorbed for a paused: or captain-held wait,
+# and that rule alone owns every dead-agent recheck so its reminder is not stretched.
 # 0 when Jev absorbed a declared-pause recheck that was about to re-surface -
 # called ONLY for the "paused, awaiting external" case, never for a
 # captain-held transfer (no classifier ever absorbs that, since it is a verified
@@ -492,8 +496,10 @@ rule_absorb_requested() {
 }
 
 # The deterministic (no-model) twin of jev_stale_absorbed: no classifier, same
-# unchanged/open-decision eligibility. <key>'s since-marker is its own safety
-# valve, bounded by FM_PAUSE_REMIND_SECS, so one real surface still lands.
+# unchanged/open-decision eligibility, except that an exited worker is eligible too
+# (an exit since the last surface already changes <now-situation>).
+# <key>'s since-marker is its own safety valve, bounded by FM_PAUSE_REMIND_SECS,
+# so one real surface still lands.
 rule_absorb_unchanged_pause() {  # <task> <key> <now-situation> <prev-situation> <reason>
   local task=$1 key=$2 now_sit=$3 prev_sit=$4 reason=${5:-} statusf="$STATE/$1.status" last marker
   rule_absorb_requested || return 1
@@ -636,7 +642,8 @@ handle_paused_stale() {  # <window> <task> <hash> <tail40>
       && rule_absorb_record "$task" "stale: $win ($reason)" "$(last_status_line "$statusf")"; then
       date +%s > "$throttle"
       triage_log "absorbed paused recheck via rule, daily reminder ($detail, dead agent unchanged since its last surface $(age_of "$surfaced")s ago): $win"
-    elif [ "$detail" = "paused, awaiting external" ] && [ "$dead_agent" -ne 0 ] \
+    elif [ "$detail" = "paused, awaiting external" ] \
+      && { [ "$dead_agent" -ne 0 ] || ! rule_daily_requested; } \
       && rule_absorb_unchanged_pause "$task" "$key" "$now_sit" "$prev_sit" "stale: $win ($reason)" \
       && rule_absorb_record "$task" "stale: $win ($reason)" "$(last_status_line "$statusf")"; then
       date +%s > "$throttle"
