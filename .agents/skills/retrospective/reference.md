@@ -1,7 +1,6 @@
 # retrospective — reference
 
-Looked up, not memorised. `SKILL.md` holds the decisions and the safety gates; this file holds
-the mechanics. If something here is needed to make a *judgment*, it is in the wrong file.
+Mechanics, looked up not memorised. `SKILL.md` holds the decisions and safety gates.
 
 ## Axis A contribution conventions
 
@@ -24,9 +23,6 @@ project constraints (`project`, with relative dates converted to absolute).
 Check for an existing file on the same fact and update it rather than duplicating. Do not write
 what the repo already records.
 
-**Approval:** `feedback` and `user` files are shown before writing; any overwrite is shown as a
-diff. `project` and `reference` creations are automatic. That gate lives in `SKILL.md`.
-
 ### Firstmate-home override
 
 Resolve `home_root` the way `stow` does: `$FM_HOME` when set, else the Firstmate code root. The
@@ -38,9 +34,7 @@ override in `SKILL.md` applies only when `home_root/.agents/skills/stow/SKILL.md
 - `project` / `reference`-shaped finding -> append to `home_root/data/learnings.md`, auto-create,
   no gate — same as the generic case. Stamp it `<!--a:YYYY-MM-DD-->` (today) unless the finding
   names a checkable expiry condition (a backlog id, a version floor, a dated expectation), in
-  which case stamp `<!--p:YYYY-MM-DD-->` and put that condition in the prose. Both the letter
-  choice and the format are `stow`'s marking rules, not this skill's own; on any doubt, default to
-  `<!--a:...-->` and let the next `/stow` pass re-tier it.
+  which case stamp `<!--p:YYYY-MM-DD-->` and put that condition in the prose. The marking rules are `stow`'s; on any doubt, default to `<!--a:...-->`.
 - Never write `data/captain-shared.md` — read-only from here, exactly as `stow` treats it in a
   secondmate home. A shared-preference finding routes to the primary through whatever channel this
   session already uses to reach it (a marked status line, a document pointer) — this skill does
@@ -61,8 +55,7 @@ Workstation-local, cross-project, confidence-scored, decaying.
 - `memory_lesson_recall(query, minConfidence)` / `memory_recall(query, format)` /
   `memory_smart_search` / `memory_patterns(project)` — the recall verbs. More than one; the lesson
   store alone misses things.
-- `memory_reflect(project)` — synthesises across concept clusters. Worth one call after a
-  substantial session; skip it when the store is nearly empty, since clustering noise yields noise.
+- `memory_reflect(project)` — worth one call after a substantial session; skip on a near-empty store.
 - `memory_consolidate(tier)` — runs agentmemory's **own** four tiers
   (working -> episodic -> semantic -> procedural). **Unrelated to Axis A** despite the matching
   count; never report one as the other.
@@ -87,7 +80,7 @@ Search before writing in every backend: the convention is to link, not fork.
   Also set `file_path` (a stable logical path such as `retrospective/<repo>/<slug>`), a `slug`, `tags`, and `document_date` (today), so the item is findable and linkable later.
   `user_roles` sets who can read it; keep it internal (for example `admin,dev`), never public.
 - The identifier to record in the report is the `slug` the call accepted, or whatever id it returned; no id back means the write is not claimed.
-- Keep `chunk_text` focused with the key information first, and point at the canonical file rather than embedding it wholesale.
+- Keep `chunk_text` focused, key information first; point at the canonical file.
 
 ### `backend=pp-brain` — PP Brain
 
@@ -98,8 +91,7 @@ Search before writing in every backend: the convention is to link, not fork.
   `{ok, id, slug, permalink}` for the report.
 - Link it — `links: [{targetSlug, linkType}]` on create, or `link_knowledge` afterwards. An
   unlinked Brain item is nearly invisible.
-- Very large payloads have failed JSON validation. Keep the body focused and point at the canonical
-  file rather than embedding it wholesale.
+- Very large payloads have failed JSON validation; keep the body focused and point at the canonical file.
 - A 422 is the sensitivity gate. What it refuses is in `SKILL.md`.
 
 ### `backend=other`
