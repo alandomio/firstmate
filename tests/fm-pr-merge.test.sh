@@ -27,7 +27,14 @@
 #   (r) a project with CI disabled (either signal) merges with no head pipeline
 #   (s) a project that can run CI still refuses a request with no pipeline
 #   (t) a failed or stale-commit pipeline still refuses on a CI-disabled project
-#   (u) a pipeline that already succeeded at head never queries project capability
+#   (u) a branch pipeline that already succeeded at head merges unchanged and
+#       never queries the forge further
+#   (v) a green merge-result pipeline built for the current head merges
+#   (w) a merge-result pipeline built for an older head is refused
+#   (x) a failed or running merge-result pipeline is refused without trusting it
+#   (y) a green merge-result badge over a failed branch run at head is refused
+#   (z) a merge-result pipeline whose build cannot be read, or that belongs to
+#       another merge request, is refused
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -46,6 +53,10 @@ MR_PROJECT_URL="https://$MR_HOST/$MR_PATH"
 MR_URL="$MR_PROJECT_URL/-/merge_requests/7"
 MR_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 MR_STALE_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+# A merge-result pipeline's synthetic merge commit and the target tip it was
+# built on, whose parents are [target tip, merge request head] on GitLab.
+MR_MERGE_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+MR_TARGET_TIP=ffffffffffffffffffffffffffffffffffffffff
 
 JQ_BIN=$(command -v jq) || fail "these tests read glab's JSON with the real jq, which was not found"
 
@@ -112,7 +123,9 @@ SH
 
 # glab mock recording every invocation together with the GITLAB_HOST it was
 # given, so a test can prove the instance came from the URL. `mr view` answers
-# from the case's JSON payload; marker files in the case dir drive the failure
+# from the case's JSON payload, and `api` answers by endpoint from the case's
+# commit.json, pipelines.json, or project.json; an absent commit.json is a
+# commit the forge cannot find. Marker files in the case dir drive the failure
 # modes, so no test has to leak environment into a shared runner.
 add_glab_mock() {
   local case_dir=$1
@@ -134,7 +147,17 @@ esac
 case "${1:-}" in
   api)
     [ ! -e "$case_dir/glab-api-fails" ] || exit 1
-    [ ! -f "$case_dir/project.json" ] || cat "$case_dir/project.json"
+    case "${2:-}" in
+      */repository/commits/*)
+        [ -f "$case_dir/commit.json" ] || { echo '{"message":"404 Commit Not Found"}' ; exit 1 ; }
+        cat "$case_dir/commit.json"
+        ;;
+      */merge_requests/*/pipelines*)
+        [ ! -e "$case_dir/glab-pipelines-fails" ] || exit 1
+        if [ -f "$case_dir/pipelines.json" ]; then cat "$case_dir/pipelines.json"; else echo '[]'; fi
+        ;;
+      *) [ ! -f "$case_dir/project.json" ] || cat "$case_dir/project.json" ;;
+    esac
     exit 0
     ;;
 esac
@@ -152,6 +175,7 @@ write_mr_json() {
   local file=$1 kv key value
   local state=opened detail=mergeable conflicts=false discussions=true
   local head=$MR_HEAD pipeline_sha=$MR_HEAD pipeline_status=success pipeline=present
+  local pipeline_source='' pipeline_ref='' extra=''
   shift
   for kv in "$@"; do
     key=${kv%%=*}
@@ -165,11 +189,15 @@ write_mr_json() {
       pipeline_sha) pipeline_sha=$value ;;
       pipeline_status) pipeline_status=$value ;;
       pipeline) pipeline=$value ;;
+      pipeline_source) pipeline_source=$value ;;
+      pipeline_ref) pipeline_ref=$value ;;
       *) fail "write_mr_json: unknown field '$key'" ;;
     esac
   done
+  [ -z "$pipeline_source" ] || extra="$extra,\"source\":\"$pipeline_source\""
+  [ -z "$pipeline_ref" ] || extra="$extra,\"ref\":\"$pipeline_ref\""
   if [ "$pipeline" = present ]; then
-    pipeline=$(printf '{"sha":"%s","status":"%s"}' "$pipeline_sha" "$pipeline_status")
+    pipeline=$(printf '{"sha":"%s","status":"%s"%s}' "$pipeline_sha" "$pipeline_status" "$extra")
   fi
   printf '{"iid":7,"state":"%s","detailed_merge_status":"%s","has_conflicts":%s,' \
     "$state" "$detail" "$conflicts" > "$file"
@@ -185,6 +213,20 @@ write_project_json() {
   local file=$1 jobs_enabled=$2 builds_access_level=$3
   printf '{"jobs_enabled":%s,"builds_access_level":"%s"}\n' \
     "$jobs_enabled" "$builds_access_level" > "$file"
+}
+
+# make_merge_result_case <name> <built-for-head> [<field>=<value> ...]: a
+# merge request whose head pipeline is its own merge-result run on
+# MR_MERGE_SHA, with that synthetic commit's parents recorded as the target tip
+# and the head it was built for. Echoes the case dir.
+make_merge_result_case() {
+  local name=$1 built_for=$2 case_dir
+  shift 2
+  case_dir=$(make_gitlab_case "$name" "pipeline_sha=$MR_MERGE_SHA" \
+    pipeline_source=merge_request_event pipeline_ref=refs/merge-requests/7/merge "$@")
+  printf '{"id":"%s","parent_ids":["%s","%s"]}\n' \
+    "$MR_MERGE_SHA" "$MR_TARGET_TIP" "$built_for" > "$case_dir/commit.json"
+  printf '%s\n' "$case_dir"
 }
 
 # make_gitlab_case <name> [<field>=<value> ...]: a case dir with both forge
@@ -830,6 +872,137 @@ test_gitlab_pipeline_success_at_head_skips_capability_check() {
   pass "fm-pr-merge does not query project capability when the head pipeline already succeeded"
 }
 
+# A project that runs only merge-result pipelines never has a pipeline whose
+# sha is the head, so the head is proved through the synthetic merge commit's
+# second parent instead. Every shape the old sha comparison caught is still
+# refused: a run built for an older head, a run that is not green, and a run
+# whose build cannot be confirmed.
+test_gitlab_merge_result_for_current_head_merges() {
+  local case_dir rc merge_line
+  case_dir=$(make_merge_result_case gitlab-merge-result-current "$MR_HEAD")
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "gitlab-merge-result-current: a green merge-result pipeline built for the head should merge"
+  assert_grep "api projects/group%2Fsubgroup%2Fproject/repository/commits/$MR_MERGE_SHA --hostname $MR_HOST" \
+    "$case_dir/glab.log" "gitlab-merge-result-current: the merge commit's parents were not read from the URL's host"
+  assert_grep "successful merge-result pipeline ($MR_MERGE_SHA) built for head $MR_HEAD" "$case_dir/stderr" \
+    "gitlab-merge-result-current: the accepted shape was not reported"
+  merge_line=$(glab_merge_line "$case_dir/glab.log")
+  [ "$merge_line" = "GITLAB_HOST=$MR_HOST mr merge 7 -R $MR_PROJECT_URL --sha $MR_HEAD --yes" ] \
+    || fail "gitlab-merge-result-current: unexpected merge invocation: '$merge_line'"
+  pass "fm-pr-merge merges when a green merge-result pipeline was built for the current head"
+}
+
+test_gitlab_merge_result_for_stale_head_refuses() {
+  local case_dir rc
+  case_dir=$(make_merge_result_case gitlab-merge-result-stale "$MR_STALE_HEAD")
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "gitlab-merge-result-stale: a merge-result pipeline built for an older head must refuse"
+  assert_grep "the head pipeline is a merge-result run built for \"$MR_STALE_HEAD\", not for the current head $MR_HEAD" \
+    "$case_dir/stderr" "gitlab-merge-result-stale: the stale build was not named"
+  [ -z "$(glab_merge_line "$case_dir/glab.log")" ] \
+    || fail "gitlab-merge-result-stale: a merge was attempted despite the refusal"
+  pass "fm-pr-merge refuses a merge-result pipeline built for an older head"
+}
+
+test_gitlab_merge_result_not_green_refuses() {
+  local case_dir rc status
+  for status in failed running; do
+    case_dir=$(make_merge_result_case "gitlab-merge-result-$status" "$MR_HEAD" "pipeline_status=$status")
+
+    set +e
+    run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+      > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+
+    expect_code 1 "$rc" "gitlab-merge-result-$status: a $status merge-result pipeline must refuse"
+    assert_grep "the head pipeline status is \"$status\", not success" "$case_dir/stderr" \
+      "gitlab-merge-result-$status: the pipeline status was not reported"
+    [ -z "$(glab_merge_line "$case_dir/glab.log")" ] \
+      || fail "gitlab-merge-result-$status: a merge was attempted despite the refusal"
+  done
+  pass "fm-pr-merge refuses a failed or running merge-result pipeline even when built for the head"
+}
+
+test_gitlab_merge_result_over_failed_branch_run_refuses() {
+  local case_dir rc
+  case_dir=$(make_merge_result_case gitlab-merge-result-red-head "$MR_HEAD" detail=not_approved)
+  # Newest first by id: the older branch run passed and the newer one failed,
+  # and an external status at the head is not this project's CI either way.
+  printf '[%s,%s,%s,%s]\n' \
+    "{\"id\":40,\"sha\":\"$MR_MERGE_SHA\",\"ref\":\"refs/merge-requests/7/merge\",\"source\":\"merge_request_event\",\"status\":\"success\"}" \
+    "{\"id\":30,\"sha\":\"$MR_HEAD\",\"ref\":\"refs/merge-requests/7/head\",\"source\":\"merge_request_event\",\"status\":\"failed\"}" \
+    "{\"id\":50,\"sha\":\"$MR_HEAD\",\"ref\":\"feature\",\"source\":\"external\",\"status\":\"success\"}" \
+    "{\"id\":20,\"sha\":\"$MR_HEAD\",\"ref\":\"feature\",\"source\":\"push\",\"status\":\"success\"}" \
+    > "$case_dir/pipelines.json"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "gitlab-merge-result-red-head: a failed branch run at the head must refuse"
+  assert_grep "a branch pipeline at the current head $MR_HEAD is \"failed\", not success" "$case_dir/stderr" \
+    "gitlab-merge-result-red-head: the failed branch run was not reported"
+  assert_grep 'detailed_merge_status is "not_approved", not mergeable' "$case_dir/stderr" \
+    "gitlab-merge-result-red-head: the other failing condition was not also reported"
+  [ -z "$(glab_merge_line "$case_dir/glab.log")" ] \
+    || fail "gitlab-merge-result-red-head: a merge was attempted despite the refusal"
+  pass "fm-pr-merge refuses a green merge-result badge over a failed branch run at the head"
+}
+
+test_gitlab_merge_result_unconfirmed_refuses() {
+  local case_dir rc name expected
+  for name in commit-missing one-parent pipelines-unreadable other-request; do
+    case "$name" in
+      other-request)
+        case_dir=$(make_merge_result_case "gitlab-merge-result-$name" "$MR_HEAD" \
+          pipeline_ref=refs/merge-requests/8/merge)
+        expected="the head pipeline ran at \"$MR_MERGE_SHA\", not at the current head $MR_HEAD"
+        ;;
+      pipelines-unreadable)
+        case_dir=$(make_merge_result_case "gitlab-merge-result-$name" "$MR_HEAD")
+        : > "$case_dir/glab-pipelines-fails"
+        expected="could not read whether a branch pipeline ran at the current head $MR_HEAD"
+        ;;
+      *)
+        case_dir=$(make_merge_result_case "gitlab-merge-result-$name" "$MR_HEAD")
+        if [ "$name" = commit-missing ]; then
+          rm -f "$case_dir/commit.json"
+        else
+          printf '{"id":"%s","parent_ids":["%s"]}\n' "$MR_MERGE_SHA" "$MR_HEAD" > "$case_dir/commit.json"
+        fi
+        expected="could not read which head the merge-result pipeline at \"$MR_MERGE_SHA\" was built for"
+        ;;
+    esac
+
+    set +e
+    run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+      > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+
+    expect_code 1 "$rc" "gitlab-merge-result-$name: an unconfirmed merge-result pipeline must refuse"
+    assert_grep "$expected" "$case_dir/stderr" "gitlab-merge-result-$name: the refusal reason was not reported"
+    [ -z "$(glab_merge_line "$case_dir/glab.log")" ] \
+      || fail "gitlab-merge-result-$name: a merge was attempted despite the refusal"
+  done
+  pass "fm-pr-merge refuses a merge-result pipeline it cannot prove was built for this request's head"
+}
+
 test_gitlab_unreadable_state_refuses() {
   local case_dir rc name
   for name in view-fails not-an-object split-value; do
@@ -972,6 +1145,11 @@ test_gitlab_ci_enabled_no_pipeline_still_refuses
 test_gitlab_ci_disabled_does_not_relax_a_failed_pipeline
 test_gitlab_ci_disabled_does_not_relax_a_stale_pipeline
 test_gitlab_pipeline_success_at_head_skips_capability_check
+test_gitlab_merge_result_for_current_head_merges
+test_gitlab_merge_result_for_stale_head_refuses
+test_gitlab_merge_result_not_green_refuses
+test_gitlab_merge_result_over_failed_branch_run_refuses
+test_gitlab_merge_result_unconfirmed_refuses
 test_gitlab_unreadable_state_refuses
 test_gitlab_invalid_head_refuses
 test_gitlab_missing_tool_refuses_before_recording

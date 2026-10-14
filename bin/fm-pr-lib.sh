@@ -213,6 +213,20 @@ fm_pr_head_valid() {
   [[ "$head" =~ ^[0-9a-f]{40}$|^[0-9a-f]{64}$ ]]
 }
 
+# True when a GitLab pipeline ref names a merge-result run, which GitLab builds
+# on refs/merge-requests/<iid>/merge against a synthetic merge commit rather
+# than the branch head. The ref is matched whole, never by substring, so a
+# source branch called fix/merge-foo is not mistaken for one. With an iid, only
+# that merge request's own merge-result ref matches.
+fm_pr_gitlab_ref_is_merge_result() {  # <ref> [<iid>]
+  local ref=${1-} iid=${2-}
+  if [ -n "$iid" ]; then
+    [ "$ref" = "refs/merge-requests/$iid/merge" ]
+    return
+  fi
+  [[ "$ref" =~ ^refs/merge-requests/[^/]+/merge$ ]]
+}
+
 fm_pr_file_mode() {
   if [ "$(uname)" = Darwin ]; then
     stat -f %Lp "$1" 2>/dev/null
