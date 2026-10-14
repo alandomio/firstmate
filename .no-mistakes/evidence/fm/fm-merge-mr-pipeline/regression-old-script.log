@@ -1,0 +1,5 @@
+ok - fm-pr-merge propagates a real merge failure without silently succeeding
+ok - fm-pr-merge propagates a real glab merge failure without silently succeeding
+ok - fm-pr-merge reports every failing GitLab condition, not only the first
+ok - fm-pr-merge never relaxes a pipeline that ran and failed, even on a CI-disabled project
+not ok - gitlab-merge-result-current: a green merge-result pipeline built for the head should merge: expected exit 0, got 1

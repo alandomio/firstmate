@@ -1,0 +1,35 @@
+ok - fm-pr-merge records pr= and pr_head= before invoking gh-axi pr merge
+ok - fm-pr-merge propagates a real merge failure without silently succeeding
+ok - fm-pr-merge forwards extra flags to gh-axi pr merge after the -- separator
+ok - fm-pr-merge refuses before merging when task meta is missing
+ok - fm-pr-merge refuses malformed PR URLs before calling gh-axi
+ok - fm-pr-merge refuses unsafe PR URL segments before recording state
+ok - fm-pr-merge refuses repo override args before recording state
+ok - fm-pr-merge refuses a bundled short-option repo override and forwards other short flags
+ok - fm-pr-merge does not add default --squash when the caller passes an explicit merge method
+ok - fm-pr-merge respects --method=<value> as an explicit merge method
+ok - fm-pr-merge parses a GitHub PR URL into gh-axi number and --repo arguments
+ok - fm-pr-merge leaves GitHub extra-arg handling unchanged, including --sha
+ok - fm-pr-merge merges a GitLab merge request through glab instead of refusing it
+ok - fm-pr-merge takes the GitLab instance from the URL rather than assuming one
+ok - fm-pr-merge imposes no merge method on GitLab, leaving the project's own one
+ok - fm-pr-merge forwards extra flags to glab mr merge after the -- separator
+ok - fm-pr-merge propagates a real glab merge failure without silently succeeding
+ok - fm-pr-merge refuses on each GitLab pre-merge condition independently
+ok - fm-pr-merge reports every failing GitLab condition, not only the first
+ok - fm-pr-merge reports a stale recorded head and verifies the live one
+ok - fm-pr-merge merges a GitLab merge request with no pipeline when jobs_enabled is false
+ok - fm-pr-merge treats builds_access_level=disabled the same as jobs_enabled=false
+ok - fm-pr-merge still refuses a pipeline-less GitLab merge request when the project can run CI
+ok - fm-pr-merge never relaxes a pipeline that ran and failed, even on a CI-disabled project
+ok - fm-pr-merge never relaxes a pipeline that succeeded at a stale commit, even on a CI-disabled project
+ok - fm-pr-merge does not query project capability when the head pipeline already succeeded
+ok - fm-pr-merge merges when a green merge-result pipeline was built for the current head
+ok - fm-pr-merge refuses a merge-result pipeline built for an older head
+ok - fm-pr-merge refuses a failed or running merge-result pipeline even when built for the head
+ok - fm-pr-merge refuses a green merge-result badge over a failed branch run at the head
+ok - fm-pr-merge refuses a merge-result pipeline it cannot prove was built for this request's head
+ok - fm-pr-merge refuses an unreadable GitLab merge request state rather than merging blind
+ok - fm-pr-merge refuses a GitLab head commit it cannot validate
+ok - fm-pr-merge refuses before recording anything when glab or jq is absent
+ok - fm-pr-merge refuses a GitLab head override before recording state
