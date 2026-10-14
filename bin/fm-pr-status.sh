@@ -299,16 +299,12 @@ EOF
   praw=$(fm_prstat_api "projects/$enc/merge_requests/$iid/pipelines?per_page=30") || prc=$?
   plook=$(printf '%s' "$praw" | python3 -c '
 import json,sys
-want,badge_ref,badge_source,badge_sha=sys.argv[1:5]
+import re
+want=sys.argv[1]
 def is_merge_result(ref):
-    # Merge-result runs carry refs/merge-requests/<iid>/merge exactly; a
-    # substring test would also discard a source branch called fix/merge-foo.
-    ref=str(ref or "")
-    return ref.startswith("refs/merge-requests/") and ref.endswith("/merge")
-if badge_sha == "-": kind="none"
-elif badge_source == "external": kind="external"
-elif is_merge_result(badge_ref): kind="merge-result"
-else: kind=badge_source
+    # The per-run twin of fm_pr_gitlab_ref_is_merge_result in bin/fm-pr-lib.sh,
+    # which classifies the badge below; keep the two patterns identical.
+    return re.fullmatch(r"refs/merge-requests/[^/]+/merge", str(ref or "")) is not None
 ci="-"; ext=[]; ok=True
 try: rs=json.load(sys.stdin)
 except Exception: ok=False
@@ -330,16 +326,18 @@ if ok:
         if ci == "-": ci=str(r.get("status") or "?")
 print(ci if ok else "UNREADABLE")
 print(", ".join(ext))
-print(kind)
-' "$sha" "$pipe_ref" "$pipe_source" "$pipe_sha" 2>/dev/null)
+' "$sha" 2>/dev/null)
   ci_status=$(printf '%s\n' "$plook" | sed -n 1p)
   ext_red=$(printf '%s\n' "$plook" | sed -n 2p)
-  pipe_kind=$(printf '%s\n' "$plook" | sed -n 3p)
   if [ "$prc" -ne 0 ] || [ -z "$plook" ] || [ "$ci_status" = UNREADABLE ]; then
     lookup_ok=no
     ext_red=""
   fi
-  [ -n "$pipe_kind" ] || pipe_kind="-"
+  if [ "$pipe_sha" = "-" ]; then pipe_kind=none
+  elif [ "$pipe_source" = external ]; then pipe_kind=external
+  elif fm_pr_gitlab_ref_is_merge_result "$pipe_ref"; then pipe_kind=merge-result
+  else pipe_kind=$pipe_source
+  fi
 
   # Say what the badge actually is. Only a merge-result ref makes it a
   # merge-result run; a stale push or schedule run on an older commit is a

@@ -15,12 +15,24 @@
 # A GitLab merge is refused unless every pre-merge condition holds, each read
 # live at merge time rather than taken from recorded metadata: the merge request
 # is open, detailed_merge_status is mergeable, has_conflicts is false,
-# blocking_discussions_resolved is true, and the head pipeline succeeded at the
-# exact current head commit. The pipeline condition has one live-checked
-# exception: a merge request with no head pipeline at all is refused unless the
-# project's own jobs_enabled/builds_access_level settings, read fresh from the
-# forge, confirm CI cannot run there for any commit; a pipeline that ran and
-# failed, is still running, or ran at a stale commit is always refused
+# blocking_discussions_resolved is true, and the head pipeline succeeded for the
+# exact current head commit. That pipeline is accepted in one of two shapes:
+#   - a branch pipeline that ran at the current head itself, or
+#   - a merge-result pipeline, the only kind some projects run: source
+#     merge_request_event and ref exactly refs/merge-requests/<iid>/merge, the
+#     shape bin/fm-pr-status.sh reports as "badge is merge-result", classified
+#     by the shared predicate in bin/fm-pr-lib.sh. Its synthetic merge commit,
+#     read live from the repository, must have exactly two parents with the
+#     current head second, proving the run was built for this head and not an
+#     older one, and no branch pipeline at the current head may be anything but
+#     success, so a green merge-result badge never hides a red head run. Its
+#     first parent, the target tip it was built on, is not compared, just as a
+#     branch pipeline at head is not re-run when the target moves.
+# The pipeline condition has one live-checked exception: a merge request with
+# no head pipeline at all is refused unless the project's own
+# jobs_enabled/builds_access_level settings, read fresh from the forge, confirm
+# CI cannot run there for any commit; a pipeline that ran and failed, is still
+# running, or ran at or was built for a stale commit is always refused
 # regardless of that project setting, because a pipeline plainly can run there.
 # Every failing condition is reported, not just the first. The verified head is
 # then passed to glab as --sha, so a push that lands between that read and the
@@ -177,6 +189,53 @@ gitlab_ci_disabled_at_project_level() {
   return 1
 }
 
+# Whether a successful merge-result head pipeline was built for live_head, read
+# live from the forge. Appends to the caller's refusals for every reason it
+# was not, and leaves them untouched when it was. The synthetic merge commit's
+# parents are [target tip, source head], so its second parent names the head
+# the run tested. A branch pipeline at the live head is read too, because a
+# green merge-result badge can sit on top of a failed run of the head itself.
+gitlab_check_merge_result_head() {  # <pipeline-sha> <live-head>
+  local merge_sha=$1 head=$2 encoded commit_json built_for pipelines_json runs ref status
+  if ! encoded=$(jq -rn --arg v "$FM_PR_PATH" '$v|@uri' 2>/dev/null) \
+    || ! commit_json=$(glab api "projects/$encoded/repository/commits/$merge_sha" --hostname "$FM_PR_HOST" 2>/dev/null) \
+    || ! built_for=$(printf '%s' "$commit_json" | jq -r '
+        if type == "object" and (.parent_ids | type) == "array" and (.parent_ids | length) == 2
+        then (.parent_ids[1] | tostring) else error("not a two-parent merge commit") end
+        ' 2>/dev/null) \
+    || ! fm_pr_head_valid "$built_for"; then
+    refusals="$refusals  - could not read which head the merge-result pipeline at \"$merge_sha\" was built for
+"
+  elif [ "$built_for" != "$head" ]; then
+    refusals="$refusals  - the head pipeline is a merge-result run built for \"$built_for\", not for the current head $head
+"
+  fi
+  # Newest first, external statuses dropped: those are third-party tools
+  # reporting through the commit status API, not this project's own CI.
+  if ! pipelines_json=$(glab api "projects/$encoded/merge_requests/$PR_NUMBER/pipelines?per_page=100" --hostname "$FM_PR_HOST" 2>/dev/null) \
+    || ! runs=$(printf '%s' "$pipelines_json" | jq -r --arg head "$head" '
+        if type == "array" then
+          [.[] | select(type == "object" and (.sha | tostring) == $head
+                        and (.source | tostring) != "external")]
+          | sort_by(.id) | reverse | .[]
+          | ((.ref // "") | tostring | gsub("[\t\n]"; " ")) + "\t" + ((.status // "") | tostring)
+        else error("not a list") end' 2>/dev/null); then
+    refusals="$refusals  - could not read whether a branch pipeline ran at the current head $head
+"
+    return
+  fi
+  while IFS=$(printf '\t') read -r ref status; do
+    [ -n "$ref$status" ] || continue
+    fm_pr_gitlab_ref_is_merge_result "$ref" && continue
+    [ "$status" = success ] \
+      || refusals="$refusals  - a branch pipeline at the current head $head is \"${status:-unreadable}\", not success
+"
+    break
+  done <<RUNS
+$runs
+RUNS
+}
+
 # Pre-merge conditions for a GitLab merge request, read from one live view of
 # the merge request. Sets FM_PR_MERGE_HEAD to the verified head on success and
 # returns non-zero after reporting every condition that failed.
@@ -185,7 +244,8 @@ gitlab_verify_mergeable() {
   local json fields line
   local total=0 named=0 refusals=''
   local state='' detail='' conflicts='' discussions=''
-  local live_head='' pipeline_sha='' pipeline_status=''
+  local live_head='' pipeline_sha='' pipeline_status='' pipeline_source='' pipeline_ref=''
+  local accepted_shape=''
 
   # GITLAB_HOST is set to the same host the project URL already carries, so the
   # instance is taken from the parsed URL by both signals and never from the
@@ -207,7 +267,9 @@ gitlab_verify_mergeable() {
         "discussions=" + (.blocking_discussions_resolved | tostring),
         "head=" + ((.sha // "") | tostring),
         "pipeline_sha=" + ((.head_pipeline.sha // "") | tostring),
-        "pipeline_status=" + ((.head_pipeline.status // "") | tostring)
+        "pipeline_status=" + ((.head_pipeline.status // "") | tostring),
+        "pipeline_source=" + ((.head_pipeline.source // "") | tostring),
+        "pipeline_ref=" + ((.head_pipeline.ref // "") | tostring)
       else
         error("merge request payload is not an object")
       end' 2>/dev/null); then
@@ -224,6 +286,8 @@ gitlab_verify_mergeable() {
       head=*) live_head=${line#head=} ;;
       pipeline_sha=*) pipeline_sha=${line#pipeline_sha=} ;;
       pipeline_status=*) pipeline_status=${line#pipeline_status=} ;;
+      pipeline_source=*) pipeline_source=${line#pipeline_source=} ;;
+      pipeline_ref=*) pipeline_ref=${line#pipeline_ref=} ;;
       *) continue ;;
     esac
     named=$((named + 1))
@@ -233,7 +297,7 @@ FIELDS
   # Every field named exactly once and no unnamed line: a value carrying a
   # newline would split into a line no name matches, so it is refused here
   # rather than silently truncated into a value a check could accept.
-  if [ "$named" -ne 7 ] || [ "$total" -ne 7 ]; then
+  if [ "$named" -ne 9 ] || [ "$total" -ne 9 ]; then
     echo "error: could not read the GitLab merge request state before merging" >&2
     return 1
   fi
@@ -271,9 +335,21 @@ FIELDS
     [ "$pipeline_status" = success ] \
       || refusals="$refusals  - the head pipeline status is \"${pipeline_status:-none}\", not success
 "
-    [ "$pipeline_sha" = "$live_head" ] \
-      || refusals="$refusals  - the head pipeline ran at \"${pipeline_sha:-none}\", not at the current head $live_head
+    if [ "$pipeline_sha" = "$live_head" ]; then
+      accepted_shape="a successful pipeline at head $live_head"
+    elif [ "$pipeline_source" = merge_request_event ] \
+      && fm_pr_gitlab_ref_is_merge_result "$pipeline_ref" "$PR_NUMBER" \
+      && fm_pr_head_valid "$pipeline_sha"; then
+      # Read only for a green run: a failed or running merge-result pipeline is
+      # already refused above, and its parents cannot change that.
+      if [ "$pipeline_status" = success ]; then
+        gitlab_check_merge_result_head "$pipeline_sha" "$live_head"
+      fi
+      accepted_shape="a successful merge-result pipeline ($pipeline_sha) built for head $live_head"
+    else
+      refusals="$refusals  - the head pipeline ran at \"${pipeline_sha:-none}\", not at the current head $live_head
 "
+    fi
   fi
 
   if [ -n "$refusals" ]; then
@@ -282,8 +358,7 @@ FIELDS
     return 1
   fi
   if [ -n "$pipeline_status" ]; then
-    printf 'verified: %s is open and mergeable, with a successful pipeline at head %s\n' \
-      "$URL" "$live_head" >&2
+    printf 'verified: %s is open and mergeable, with %s\n' "$URL" "$accepted_shape" >&2
   else
     printf 'verified: %s is open and mergeable at head %s; merging with no pipeline check, per the notice above\n' \
       "$URL" "$live_head" >&2
