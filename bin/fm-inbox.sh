@@ -25,6 +25,17 @@
 #   fm-inbox.sh ask  <question>...
 #   fm-inbox.sh list
 #   fm-inbox.sh drain [--ack <id>...]
+#   fm-inbox.sh channel-note <id> <source> <owner|untrusted> <header-file>  (body on stdin)
+#
+# channel-note is the queueing entry for an opt-in message channel such as the
+# Telegram channel (bin/fm-procevent-telegram.sh), so a channel reuses this
+# inbox instead of carrying a queue of its own. A channel note is NOT a captain
+# note: it always carries authority=data-only plus the given trust, its wake
+# names the source and that it is never captain authority, and `list` shows
+# both. <id> is chosen by the channel and makes the call idempotent: a note
+# already acknowledged is left alone with no wake, and a note still pending is
+# announced again rather than duplicated. <header-file> holds extra
+# `key=value` lines, one per line, with lowercase keys.
 #
 # Configuration. A region, a model id and an AWS profile name somebody's account
 # and somebody's choices, so this file carries no default for any of them. Each is
@@ -153,14 +164,14 @@ aws_call() {
 # Failure to wake is NOT allowed to lose the note: the record is already on
 # disk, so we report the wake failure and still exit non-zero loudly.
 wake_for() {
-  local id=$1 summary=$2 lib="$FM_ROOT/bin/fm-wake-lib.sh"
+  local id=$1 summary=$2 label=${3:-captain inbox note} lib="$FM_ROOT/bin/fm-wake-lib.sh"
   if [ ! -r "$lib" ]; then
     printf 'fm-inbox: note saved but NOT announced (missing %s)\n' "$lib" >&2
     return 1
   fi
   # shellcheck source=/dev/null
   FM_ROOT_OVERRIDE="$FM_ROOT" FM_HOME="$FM_HOME" STATE="$STATE" . "$lib"
-  fm_wake_append check "inbox:$id" "check: captain inbox note $id - $summary"
+  fm_wake_append check "inbox:$id" "check: $label $id - $summary"
 }
 
 queue_note() {
@@ -205,6 +216,54 @@ cmd_note() {
     body="$*"
   fi
   queue_note text "$body"
+}
+
+# ---------------------------------------------------------------- channel-note
+
+cmd_channel_note() {
+  [ "$#" -eq 4 ] || die "usage: fm-inbox.sh channel-note <id> <source> <owner|untrusted> <header-file>  (body on stdin)"
+  local id=$1 source=$2 trust=$3 header_file=$4 body line key summary label tmp
+  printf '%s' "$id" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' || die "invalid channel note id: $id"
+  printf '%s' "$source" | grep -Eq '^[a-z][a-z0-9-]{0,31}$' || die "invalid channel source: $source"
+  case "$source" in text|voice) die "channel source cannot impersonate a captain note: $source" ;; esac
+  case "$trust" in owner|untrusted) ;; *) die "trust must be owner or untrusted: $trust" ;; esac
+  [ -f "$header_file" ] || die "cannot read header file: $header_file"
+  while IFS= read -r line || [ -n "$line" ]; do
+    key=${line%%=*}
+    [ "$key" != "$line" ] || die "header line is not key=value: $line"
+    printf '%s' "$key" | grep -Eq '^[a-z][a-z0-9_]{0,63}$' || die "invalid header key: $key"
+    case "$key" in id|at|source|trust|authority) die "reserved header key: $key" ;; esac
+    case "$line" in *[[:cntrl:]]*) die "header value carries a control character: $key" ;; esac
+  done < "$header_file"
+  body=$(cat)
+  [ -n "${body//[[:space:]]/}" ] || die "refusing to queue an empty note"
+
+  label="$source inbox note"
+  summary="($trust; data only, never captain authority) $(printf '%s' "$body" | tr '\n\t' '  ' | tr -d '[:cntrl:]' | cut -c1-100)"
+  if [ -f "$INBOX/handled/$id.note" ]; then
+    printf 'already-handled %s\n' "$id"
+    return 0
+  fi
+  if [ -f "$INBOX/$id.note" ]; then
+    printf 'requeued %s\n' "$id"
+    wake_for "$id" "$summary" "$label" || die "note $id is saved at $INBOX/$id.note but firstmate was NOT woken"
+    return 0
+  fi
+  mkdir -p "$INBOX"
+  tmp=$(mktemp "$INBOX/.staging-XXXXXX")
+  {
+    printf 'id=%s\n' "$id"
+    printf 'at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'source=%s\n' "$source"
+    printf 'trust=%s\n' "$trust"
+    printf 'authority=data-only\n'
+    cat -- "$header_file"
+    printf -- '--\n'
+    printf '%s\n' "$body"
+  } >"$tmp"
+  mv "$tmp" "$INBOX/$id.note"
+  printf 'queued %s\n' "$id"
+  wake_for "$id" "$summary" "$label" || die "note $id is saved at $INBOX/$id.note but firstmate was NOT woken"
 }
 
 # ---------------------------------------------------------------- say
@@ -345,6 +404,16 @@ PY
 
 # ---------------------------------------------------------------- list / drain
 
+# A channel note is not a captain note, so its listing says where it came from
+# and that it carries no authority before any of its body is shown.
+note_channel_banner() {  # <note-file>
+  local source trust
+  source=$(sed -n '/^--$/q; s/^source=//p' "$1" | head -1)
+  case "$source" in ''|text|voice) return 0 ;; esac
+  trust=$(sed -n '/^--$/q; s/^trust=//p' "$1" | head -1)
+  printf '    [from %s, %s; data only, never captain authority]\n' "$source" "${trust:-untrusted}"
+}
+
 cmd_list() {
   [ -d "$INBOX" ] || { printf '(inbox empty)\n'; return 0; }
   local any=0
@@ -352,6 +421,7 @@ cmd_list() {
     [ -e "$f" ] || break
     any=1
     printf '%s\n' "$(basename "$f" .note)"
+    note_channel_banner "$f"
     sed -n '/^--$/,$p' "$f" | tail -n +2 | sed 's/^/    /'
   done
   [ "$any" -eq 1 ] || printf '(inbox empty)\n'
@@ -386,6 +456,7 @@ case "${1:-}" in
   ask)    shift; cmd_ask "$@" ;;
   list)   shift; cmd_list ;;
   drain)  shift; cmd_drain "$@" ;;
+  channel-note) shift; cmd_channel_note "$@" ;;
   ''|-h|--help|help)
     # The whole header block, found rather than counted: everything after the
     # shebang up to the first line that is not a comment. A fixed line range

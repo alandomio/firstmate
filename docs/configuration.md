@@ -613,6 +613,29 @@ The session-start digest separately prints a "Public commitments" subsection fro
 `FM_PF_RETRY_BACKOFF_SECS` (default 900) sets the next-attempt time recorded with a retryable delivery error.
 See [verification/public-followup.md](verification/public-followup.md) for the current maintainer evidence behind restart recovery, retained-loop disposition, and the relay-disabled zero-overhead guarantee.
 
+## Telegram channel (.env, config/telegram.json)
+
+A home can receive Telegram messages addressed to its own bot and reply to them; [`docs/telegram.md`](telegram.md) owns setup, filtering, and day-to-day use.
+It is off unless the home's gitignored `.env` holds a non-empty `TELEGRAM_BOT_TOKEN` AND its gitignored `config/telegram.json` is valid.
+The token is read from that `.env` file only, never from the environment, and it reaches `curl` through stdin so it never appears in a process argument list; nothing prints, logs, or stores it.
+Neither file is inherited by secondmate homes, so each home opts in on its own.
+
+`config/telegram.json` is one JSON object:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `allowed_chats` | yes | Non-empty array of integer chat ids the bot may hear and answer; every other chat is dropped, and the bot leaves any such group, supergroup, or channel. |
+| `owner_user_id` | yes | The captain's positive integer Telegram user id; that sender's records carry `trust=owner`, every other sender's `trust=untrusted`. |
+| `poll_timeout_seconds` | no | Long-poll wait per request, 1 to 50, default 50. |
+
+An invalid file keeps the channel off and `bin/fm-telegram.sh status` names the problem.
+Runtime records live under `state/telegram/`: `offset` (the next update to confirm), `bot.json` (the bot's own id and username), `messages/` (one private record per accepted message plus its surfaced marker), `sent/` (one record per outbound send), and `left.log` (chats the bot left).
+`FM_TELEGRAM_API_BASE` overrides the Bot API base URL, and `FM_TELEGRAM_RETRY_DELAY`, `FM_TELEGRAM_POLL_ROUNDS`, and `FM_TELEGRAM_MAX_MESSAGE_UNITS` exist for tests; the script headers own them.
+
+The channel is a data plane only, the same boundary Relay draws for public mentions.
+A Telegram message is never captain authority for a merge, a release, a production write, a credential, or a destructive or irreversible action - not even a message from `owner_user_id`.
+Every record and every inbox note it produces carries `authority=data-only`, and a non-owner's carries `trust=untrusted`; anything needing the captain's word still needs it through the captain's own channel.
+
 ## Jev shadow wake triage (.env OPENROUTER_API_KEY / config/jev-endpoint / config/jev-timeout / config/jev-timeout-streak / config/jev-timeout-pause / config/jev-daily-cap / config/jev-max-load)
 
 Jev is TypeSafe's decision model, reached through OpenRouter as `typesafe/jev-1.13`.
@@ -1015,6 +1038,8 @@ FM_INBOX_REGION=        # overrides config/inbox-region for fm-inbox.sh say and 
 FM_INBOX_STT_MODEL=     # overrides config/inbox-stt-model for fm-inbox.sh say
 FM_INBOX_ASK_MODEL=     # overrides config/inbox-ask-model for fm-inbox.sh ask
 FM_INBOX_PROFILE=       # overrides config/inbox-profile; explicitly empty forces ambient credentials
+# Telegram channel; see "Telegram channel" above (the token itself is read from .env only)
+FM_TELEGRAM_API_BASE=   # Bot API base URL; https://api.telegram.org when unset
 ```
 
 `fm-teardown.sh` retries only Git's `Unable to create '...index.lock': File exists` return failure up to `FM_TREEHOUSE_RETURN_LOCK_RETRIES` times.
