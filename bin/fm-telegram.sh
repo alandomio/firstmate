@@ -158,7 +158,7 @@ split_text() {  # <dir> <units>
     my $n = 0;
     for my $p (@parts) {
       $n++;
-      open my $fh, ">", "$dir/part.$n" or exit 2;
+      open my $fh, ">:encoding(UTF-8)", "$dir/part.$n" or exit 2;
       print $fh $p; close $fh or exit 2;
     }
     print "$n\n";

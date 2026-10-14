@@ -277,6 +277,9 @@ test_send_allowlist_split_and_record() {
   grep 'sendMessage' "$home/fake/calls.log" | tail -1 | grep -q '"text":"hello \*world\*"' || fail "text is sent verbatim"
   ! grep 'sendMessage' "$home/fake/calls.log" | tail -1 | grep -q parse_mode || fail "plain text is the default"
   grep 'sendMessage' "$home/fake/calls.log" | tail -1 | grep -q '"reply_parameters":{"message_id":1300' || fail "the reply target is set"
+  printf 'perché sì\n' > "$home/it.txt"
+  tg "$home" send --chat "$GROUP" --file "$home/it.txt" >/dev/null
+  grep 'sendMessage' "$home/fake/calls.log" | tail -1 | grep -q '"text":"perché sì"' || fail "accented text is sent intact as UTF-8"
   printf 'aaaa bbbb\ncccc dddd eeee\n' > "$home/long.txt"
   rm -f "$home/state/telegram/sent"/*.json
   out=$(FM_TELEGRAM_MAX_MESSAGE_UNITS=10 tg "$home" send --chat "$OWNER" --reply-to 5 --parse-mode HTML --file "$home/long.txt")

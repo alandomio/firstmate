@@ -278,8 +278,9 @@ leave_chat() {  # <chat-id> <chat-type>
 # Apply one response: record accepted messages, leave foreign chats, and only
 # then persist the next offset. Prints the keys of records still to surface.
 apply_updates() {  # <response-file>
-  local line action key rec max=-1 id chat type
+  local line action key rec max=-1 id chat type decisions
   local -a fresh=()
+  decisions=$(decide_updates "$1") || return 2
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     id=$(printf '%s' "$line" | jq -r '.update_id')
@@ -303,7 +304,7 @@ apply_updates() {  # <response-file>
         leave_chat "$chat" "$type"
         ;;
     esac
-  done < <(decide_updates "$1")
+  done <<<"$decisions"
   if [ "$max" -ge 0 ]; then
     printf '%s\n' "$((max + 1))" | fm_tg_write_atomic "$TG_STATE/offset" || return 1
   fi
@@ -387,7 +388,12 @@ cmd_poll() {
         fi
         conflicts=0
         delay=$base_delay
-        fresh=$(apply_updates "$out") || die "cannot persist Telegram updates under $TG_STATE"
+        rc=0
+        fresh=$(apply_updates "$out") || rc=$?
+        if [ "$rc" -eq 2 ]; then
+          sleep "$delay"; delay=$(( delay * 2 > RETRY_DELAY_MAX ? RETRY_DELAY_MAX : delay * 2 )); continue
+        fi
+        [ "$rc" -eq 0 ] || die "cannot persist Telegram updates under $TG_STATE"
         if [ -n "$fresh" ]; then
           # shellcheck disable=SC2086 # keys are validated path-safe tokens
           emit_messages $fresh
