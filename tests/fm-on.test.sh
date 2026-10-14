@@ -277,7 +277,7 @@ pass "the entrypoint composes a deduplicated discovered child PATH (kept $PRESEN
 WORKER_PID=$(cat "$TMP_ROOT/remote-jobs/worker.pid")
 kill -TERM "$WORKER_PID"
 for _ in $(seq 1 100); do
-  [ ! -f "$TMP_ROOT/remote-jobs/worker.pid" ] && break
+  [ ! -f "$TMP_ROOT/remote-jobs/worker.pid" ] && [ ! -d "$TMP_ROOT/remote-jobs/worker.lock" ] && break
   sleep 0.05
 done
 assert_absent "$TMP_ROOT/remote-jobs/worker.pid" "the worker did not stop for the doctor bootstrap fixture"
@@ -503,5 +503,29 @@ set -e
 [ "$(cat "$SSH_COUNT")" -eq 1 ] || fail "ambiguous completion was retried"
 [ "$(grep -c mutation "$REMOTE_HOME/mutations")" -eq 1 ] || fail "ambiguous mutation did not execute exactly once"
 pass "unreachable and ambiguous transport failures are surfaced without retry"
+
+DEAD_CLIENT_WORKER_PID=$(cat "$TMP_ROOT/remote-jobs/worker.pid")
+kill -TERM "$DEAD_CLIENT_WORKER_PID"
+for _ in $(seq 1 100); do
+  [ ! -f "$TMP_ROOT/remote-jobs/worker.pid" ] && [ ! -d "$TMP_ROOT/remote-jobs/worker.lock" ] && break
+  sleep 0.05
+done
+assert_absent "$TMP_ROOT/remote-jobs/worker.pid" "the worker did not stop before the dead-client lifetime fixture"
+assert_absent "$TMP_ROOT/remote-jobs/worker.lock" "the stopped worker retained ownership before the dead-client lifetime fixture"
+set +e
+FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS=1 FM_FAKE_SSH_MODE=ambiguous \
+  fm_on ios fm-mutate.sh "$REMOTE_HOME/dead-client-mutation" >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" -eq 255 ] || fail "the dead-client fixture did not preserve ambiguous SSH status 255"
+for _ in $(seq 1 100); do
+  [ ! -f "$TMP_ROOT/remote-jobs/worker.pid" ] && [ ! -d "$TMP_ROOT/remote-jobs/worker.lock" ] && break
+  sleep 0.05
+done
+assert_absent "$TMP_ROOT/remote-jobs/worker.pid" "a worker launched for a dead SSH client outlived its idle backstop"
+assert_absent "$TMP_ROOT/remote-jobs/worker.lock" "a worker launched for a dead SSH client retained ownership"
+[ "$(grep -c mutation "$REMOTE_HOME/dead-client-mutation")" -eq 1 ] \
+  || fail "the dead-client fixture did not complete its already-staged job exactly once"
+pass "a worker left by a dead SSH client is reaped after its staged job and idle backstop"
 
 echo "ALL TESTS PASSED"
