@@ -1,0 +1,13 @@
+$ printf "Italian
+" > config/pr-language
+$ fm-brief.sh t-no-mistakes gl --mode no-mistakes
+exit=0
+--- lines matching 'title and description':
+104:MR title and description in Italian.
+$ fm-brief.sh t-local-only gl --mode local-only
+exit=0
+--- lines matching 'title and description':
+(none)
+$ (multi-line file) fm-brief.sh t-bad gl --mode direct-PR
+error: $FM_HOME/config/pr-language must hold exactly one non-blank line naming a language
+exit=1
