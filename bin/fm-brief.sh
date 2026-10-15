@@ -233,6 +233,19 @@ fi
 KS_NAME=$FM_KS_NAME
 KS_INSTRUCTIONS=$FM_KS_INSTRUCTIONS
 
+# Optional config/pr-language (docs/configuration.md): one language name that the
+# PR/MR title and description must be written in. Absent adds nothing to a brief;
+# a present but blank or multi-line file is refused rather than silently ignored.
+PR_LANG_LINE=""
+if [ -e "$FM_HOME/config/pr-language" ]; then
+  PR_LANG_NONBLANK=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$FM_HOME/config/pr-language" | grep -v '^$' || true)
+  PR_LANG=$(printf '%s\n' "$PR_LANG_NONBLANK" | sed -n '1p')
+  if [ -z "$PR_LANG" ] || [ "$(printf '%s\n' "$PR_LANG_NONBLANK" | wc -l)" -gt 1 ]; then
+    echo "error: $FM_HOME/config/pr-language must hold exactly one non-blank line naming a language" >&2
+    exit 1
+  fi
+fi
+
 # A needs-decision line is the source firstmate relays to the captain, so every
 # scaffold asks for the decision-card elements owned by captain-hold-lifecycle.
 decision_card_rule() {  # <link noun> <line indent>
@@ -601,6 +614,8 @@ Name the check in a `working:` status line before `done:`; if none can run here,
 EOF
 VERIFY_RULE=${VERIFY_RULE%$'\n'}
 
+[ -z "${PR_LANG:-}" ] || PR_LANG_LINE="$FORGE_ABBR title and description in $PR_LANG."
+
 PAUSE_NOTE=" If a declared wait concerns an open $FORGE_ABBR under review, describe it as awaiting a colleague's approval, never the captain's merge decision - the captain cannot approve their own $FORGE_NOUN."
 case "$MODE" in
   direct-PR)
@@ -616,7 +631,8 @@ $VERIFY_RULE
 Write the $FORGE_NOUN description yourself.
 Create the $FORGE_NOUN yourself and never wait for confirmation on a step this brief already authorizes.
 Do not include a "Generated with Claude Code" trailer or other orchestration vocabulary in the description.
-When it is implemented and committed, push your branch and open a $FORGE_NOUN with $FORGE_TOOL, then append \`done: $FORGE_ABBR {url}\` to the status file and stop.
+${PR_LANG_LINE:+$PR_LANG_LINE
+}When it is implemented and committed, push your branch and open a $FORGE_NOUN with $FORGE_TOOL, then append \`done: $FORGE_ABBR {url}\` to the status file and stop.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the $FORGE_NOUN; firstmate relays the outcome.
 EOF
     ;;
@@ -662,7 +678,8 @@ Two firstmate-specific rules layer on top of that guidance:
 Write the $FORGE_NOUN description yourself.
 Create or update the $FORGE_NOUN yourself and never wait for confirmation on a step this brief already authorizes.
 Do not include a "Generated with Claude Code" trailer or other orchestration vocabulary in the description.
-
+${PR_LANG_LINE:+$PR_LANG_LINE
+}
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: $FORGE_ABBR {url} checks green\` and stop. You are finished.
 EOF
     ;;
