@@ -1672,6 +1672,49 @@ test_crewmate_scaffolds_forbid_pool_administration() {
   pass "fm-brief.sh: every crewmate scaffold forbids administering the shared worktree pool"
 }
 
+# config/pr-language adds one language line to every PR/MR-opening ship brief
+# in its forge's vocabulary; local-only carries none, and a blank or multi-line
+# file is refused.
+test_pr_language_line() {
+  local home id brief mode proj
+  home="$TMP_ROOT/prlang-home"
+  mkdir -p "$home/data" "$home/config"
+  write_project_clone "$home" gh-proj https://github.com/acme/gh-proj.git
+  write_project_clone "$home" gl-proj https://gitlab.com/peterpark/gl-proj.git
+
+  for mode in direct-PR no-mistakes; do
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "prlang-absent-$mode" gh-proj --mode "$mode" >/dev/null 2>&1
+    assert_no_grep 'title and description in' "$home/data/prlang-absent-$mode/brief.md" \
+      "$mode brief without config/pr-language must carry no language line"
+  done
+
+  printf '  Italian  \n' > "$home/config/pr-language"
+  for mode in direct-PR no-mistakes; do
+    for proj in gh-proj gl-proj; do
+      id="prlang-$mode-$proj"
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$proj" --mode "$mode" >/dev/null 2>&1
+      brief="$home/data/$id/brief.md"
+      if [ "$proj" = gh-proj ]; then
+        assert_grep 'PR title and description in Italian.' "$brief" "$mode/GitHub brief missing the language line"
+      else
+        assert_grep 'MR title and description in Italian.' "$brief" "$mode/GitLab brief missing the language line"
+      fi
+    done
+  done
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" prlang-local gh-proj --mode local-only >/dev/null 2>&1
+  assert_no_grep 'title and description in' "$home/data/prlang-local/brief.md" \
+    "local-only brief opens no PR and must carry no language line"
+
+  : > "$home/config/pr-language"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" prlang-empty gh-proj --mode direct-PR >/dev/null 2>&1
+  expect_code 1 "$?" "empty config/pr-language must be refused"
+  printf 'Italian\nFrench\n' > "$home/config/pr-language"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" prlang-multi gh-proj --mode direct-PR >/dev/null 2>&1
+  expect_code 1 "$?" "multi-line config/pr-language must be refused"
+  pass "fm-brief.sh: config/pr-language adds the language line to PR-opening ship briefs only"
+}
+
 # Every ship brief whose mode can open a PR/MR must have the worker write the
 # description itself and pre-authorize it to create the PR/MR without waiting
 # for confirmation (agentmemory receipt 2026-09-06: two workers independently
@@ -2564,6 +2607,7 @@ test_branch_prefix_value_is_validated
 test_branch_prefix_command_is_shell_safe
 test_crewmate_scaffolds_forbid_pool_administration
 test_pr_description_rule_present
+test_pr_language_line
 test_needs_decision_asks_for_decision_card
 test_grounding_section_requires_search_and_reporting
 test_briefs_name_rag_not_pp_brain
