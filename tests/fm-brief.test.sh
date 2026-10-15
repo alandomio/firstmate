@@ -339,14 +339,6 @@ test_faster_paths_use_configured_authority_without_stacked_review() {
   pass "fm-brief.sh: faster paths use configured authority without stacked review"
 }
 
-# Every ship brief whose mode can open a PR/MR must have the worker write the
-# description itself and pre-authorize it to create the PR/MR without waiting
-# for confirmation (agentmemory receipt 2026-09-06: two workers independently
-# stalled ~2h waiting on a human handoff before this contract existed).
-# No brief may name the mr-description skill: it does not exist, so the
-# scaffold must never send a worker to it. local-only and scout never open a
-# PR/MR, so they carry no description rule at all. Covers both GitHub and
-# GitLab vocabulary so a forge-specific regression cannot go quietly past.
 test_pr_language_line() {
   local home id brief mode proj
   home="$TMP_ROOT/prlang-home"
@@ -381,12 +373,24 @@ test_pr_language_line() {
   : > "$home/config/pr-language"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" prlang-empty gh-proj --mode direct-PR >/dev/null 2>&1
   expect_code 1 "$?" "empty config/pr-language must be refused"
+  printf '\nGerman\n \n' > "$home/config/pr-language"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" prlang-padded gh-proj --mode direct-PR >/dev/null 2>&1
+  assert_grep 'PR title and description in German.' "$home/data/prlang-padded/brief.md" \
+    "config/pr-language with surrounding blank lines must use its one non-blank line"
   printf 'Italian\nFrench\n' > "$home/config/pr-language"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" prlang-multi gh-proj --mode direct-PR >/dev/null 2>&1
   expect_code 1 "$?" "multi-line config/pr-language must be refused"
   pass "fm-brief.sh: config/pr-language adds the language line to PR-opening ship briefs only"
 }
 
+# Every ship brief whose mode can open a PR/MR must have the worker write the
+# description itself and pre-authorize it to create the PR/MR without waiting
+# for confirmation (agentmemory receipt 2026-09-06: two workers independently
+# stalled ~2h waiting on a human handoff before this contract existed).
+# No brief may name the mr-description skill: it does not exist, so the
+# scaffold must never send a worker to it. local-only and scout never open a
+# PR/MR, so they carry no description rule at all. Covers both GitHub and
+# GitLab vocabulary so a forge-specific regression cannot go quietly past.
 test_pr_description_rule_present() {
   local home brief
 

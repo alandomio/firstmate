@@ -238,9 +238,9 @@ KS_INSTRUCTIONS=$FM_KS_INSTRUCTIONS
 # a present but blank or multi-line file is refused rather than silently ignored.
 PR_LANG_LINE=""
 if [ -e "$FM_HOME/config/pr-language" ]; then
-  PR_LANG=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$FM_HOME/config/pr-language" | sed -n '1p')
-  PR_LANG_LINES=$(grep -c . "$FM_HOME/config/pr-language" || true)
-  if [ -z "$PR_LANG" ] || [ "$PR_LANG_LINES" -gt 1 ]; then
+  PR_LANG_NONBLANK=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$FM_HOME/config/pr-language" | grep -v '^$' || true)
+  PR_LANG=$(printf '%s\n' "$PR_LANG_NONBLANK" | sed -n '1p')
+  if [ -z "$PR_LANG" ] || [ "$(printf '%s\n' "$PR_LANG_NONBLANK" | wc -l)" -gt 1 ]; then
     echo "error: $FM_HOME/config/pr-language must hold exactly one non-blank line naming a language" >&2
     exit 1
   fi
