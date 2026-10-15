@@ -1,13 +1,9 @@
-$ printf "Italian
-" > config/pr-language
-$ fm-brief.sh t-no-mistakes gl --mode no-mistakes
-exit=0
---- lines matching 'title and description':
-104:MR title and description in Italian.
-$ fm-brief.sh t-local-only gl --mode local-only
-exit=0
---- lines matching 'title and description':
-(none)
-$ (multi-line file) fm-brief.sh t-bad gl --mode direct-PR
-error: $FM_HOME/config/pr-language must hold exactly one non-blank line naming a language
-exit=1
+## no config
+(no language line)
+## config/pr-language=Italian, unknown forge
+rc=0
+91-Write the pull/merge request description yourself.
+92-Create the pull/merge request yourself and never wait for confirmation on a step this brief already authorizes.
+93-Do not include a "Generated with Claude Code" trailer or other orchestration vocabulary in the description.
+94:PR/MR title and description in Italian.
+95-When it is implemented and committed, push your branch and open a pull/merge request with gh-axi (GitHub) or glab (GitLab) - confirm this project's forge with `git remote -v` before choosing, then append `done: PR/MR {url}` to the status file and stop.
