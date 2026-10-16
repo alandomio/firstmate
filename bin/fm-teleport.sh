@@ -54,8 +54,10 @@
 #   5. The backlog item follows: bin/fm-backlog-handoff.sh outbound, and
 #      backlog-export plus a local tasks-axi move for --back. The adopting home
 #      already owns the task here, so an outbound handoff failure only warns
-#      (run bin/fm-backlog-handoff.sh --resume-pending, or move it by hand when
-#      no outbox was staged) and the teleport still completes.
+#      (run bin/fm-backlog-handoff.sh --resume-pending when an outbox was
+#      staged; otherwise the local item gets a parked dispatch hold and the
+#      warning names bin/fm-backlog-handoff.sh <secondmate> <task>) and the
+#      teleport still completes.
 #   6. release (sending home): only after the adopting home confirmed, stops the
 #      worker, proves the worktree still equals the snapshot, tears it down
 #      through bin/fm-teardown.sh, and deletes the sending copy of the transcript.
@@ -539,10 +541,14 @@ teleport_out() { # <task> <secondmate> <session>
   if section=$(backlog_section "$BACKLOG" "$task"); then
     [ "$section" != "## In flight" ] || tasks-axi reopen "$task" --file "$BACKLOG" >/dev/null
     if ! "$HELPERS/fm-backlog-handoff.sh" "$sm" "$task" >&2; then
-      if [ -f "$DATA/handoff/$sm.outbox.md" ]; then
+      if [ -f "$DATA/handoff/$sm.outbox.md" ] && backlog_section "$DATA/handoff/$sm.outbox.md" "$task" >/dev/null; then
         warn "$sm took over task $task, but its backlog item did not arrive; run bin/fm-backlog-handoff.sh --resume-pending to deliver it"
+      elif backlog_section "$BACKLOG" "$task" >/dev/null; then
+        tasks-axi hold "$task" --file "$BACKLOG" --kind parked --reason "teleported to $sm; backlog move pending - run fm-backlog-handoff.sh $sm $task" >/dev/null \
+          || warn "could not place a dispatch hold on $task here; do not dispatch it"
+        warn "$sm took over task $task, but its backlog item did not move and is held here; run bin/fm-backlog-handoff.sh $sm $task"
       else
-        warn "$sm took over task $task, but its backlog item did not move; move it to $sm's backlog by hand"
+        warn "$sm took over task $task, but its backlog item did not move; run bin/fm-backlog-handoff.sh $sm $task"
       fi
     else
       on "$sm" fm-teleport.sh backlog-start "$task" >/dev/null 2>&1 || warn "$sm received $task's backlog item but could not mark it in flight"

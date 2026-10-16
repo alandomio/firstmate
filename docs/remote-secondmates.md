@@ -243,7 +243,7 @@ The adopting home refuses before anything moves when it already records the task
 Teleport also refuses during an active validation run.
 Until the adopting home confirms its worker is alive, every failure rolls the adopting side back and leaves the sending task in place, its worker alive and idle and its worktree and transcript untouched.
 After takeover, the sending copy is cleaned up only when its worktree still equals the snapshot.
-Once the adopting home confirms its worker is alive it owns the task: a failed outbound backlog handoff no longer rolls anything back, the sending copy is still cleaned up, and the teleport completes with a warning to run `bin/fm-backlog-handoff.sh --resume-pending` (or to move the item by hand when no outbox was staged).
+Once the adopting home confirms its worker is alive it owns the task: a failed outbound backlog handoff no longer rolls anything back, the sending copy is still cleaned up, and the teleport completes with a warning to run `bin/fm-backlog-handoff.sh --resume-pending` when an outbox was staged; when none was, the local item gets a parked dispatch hold so it is never dispatched twice, and the warning names `bin/fm-backlog-handoff.sh <secondmate> <task-id>`.
 The remote host needs the task's project cloned in its home, the worker's harness installed and logged in, and push access to the project's origin.
 
 ### Sleep reminder

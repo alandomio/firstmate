@@ -49,6 +49,7 @@ SH
 cat > "$FAKE/fm-backlog-handoff.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'handoff %s %s\n' "$1" "$2" >> "$FAKE_LOG"
+[ "${FAKE_HANDOFF_FAIL:-}" != early ] || exit 1
 if [ -n "${FAKE_HANDOFF_FAIL:-}" ]; then
   mkdir -p "$FM_HOME/data/handoff"
   printf '## In flight\n\n## Queued\n\n## Done\n' > "$FM_HOME/data/handoff/$1.outbox.md"
@@ -289,6 +290,20 @@ assert_present "$REMOTE/state/t5.meta" "the remote keeps the task after a failed
 assert_absent "$LOCAL/state/t5.meta" "the local copy is cleaned up after a failed handoff"
 assert_absent "$LOCAL/pool/t5" "the local worktree is returned after a failed handoff"
 pass "a failed backlog handoff after takeover warns instead of rolling the remote back"
+
+# A handoff that fails before staging holds the local item.
+new_local_task t6 codex
+out=$(FAKE_HANDOFF_FAIL=early local_tp t6 2>&1) || fail "teleport with an early handoff failure should still complete: $out"
+assert_contains "$out" "fm-backlog-handoff.sh alwayson t6" "an early handoff failure names the exact command"
+assert_present "$REMOTE/state/t6.meta" "the remote keeps the task after an early handoff failure"
+assert_absent "$LOCAL/state/t6.meta" "the local copy is cleaned up after an early handoff failure"
+held=$(tasks-axi show t6 --file "$LOCAL/data/backlog.md" 2>&1)
+assert_contains "$held" "parked" "the local item carries a parked hold"
+assert_contains "$held" "teleported to alwayson" "the hold names the second mate"
+assert_contains "$held" "fm-backlog-handoff.sh alwayson t6" "the hold names the handoff command"
+ready=$(tasks-axi ready --file "$LOCAL/data/backlog.md" 2>&1 || true)
+case "$ready" in *t6*) fail "a held teleported task is still dispatchable: $ready" ;; esac
+pass "an early backlog handoff failure holds the local item instead of leaving it dispatchable"
 
 # A round trip keeps exactly one teleport note in the brief.
 out=$(local_tp t2 --back 2>&1) || fail "codex teleport back failed: $out"
