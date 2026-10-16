@@ -2,7 +2,8 @@
 
 Remote second mates place a whole persistent Firstmate home on another SSH-reachable host.
 The primary still owns routing and supervision, while the remote home owns its own projects, backlog, and workers.
-Firstmate does not support placing an individual worker remotely or failing a remote route over to a local replacement.
+A running ship or scout worker can be teleported into a remote home and back, as described in [Teleporting a task](#teleporting-a-task).
+Firstmate does not fail a remote route over to a local replacement.
 
 The remote second-mate agent itself always runs on the [Herdr backend](herdr-backend.md) in the shared `fm-remote` session, and every path that provisions or launches one refuses a host that is not ready for it.
 `fm-remote` is reserved for remote fleet work and must not be used for personal work.
@@ -216,6 +217,40 @@ Confirmed receipt removes the outbox.
 An existing outbox is the complete retry record, and `--resume-pending` safely re-delivers it.
 Bootstrap retries pending outboxes and emits `SECONDMATE_HANDOFF:` only when one remains.
 There is no two-phase journal and no additional tasks-axi release requirement.
+
+## Teleporting a task
+
+Teleport moves one running ship or scout task from this home into a remote second mate and back.
+It is manual: nothing teleports a task automatically.
+
+```sh
+bin/fm-teleport.sh <task-id> [--to <secondmate>]
+bin/fm-teleport.sh <task-id> --back [--to <secondmate>]
+```
+
+The default route is `alwayson`.
+`bin/fm-teleport.sh`'s header owns the flags, the step order, and the protocol verbs it runs on each side through `fm-on.sh`.
+
+The work travels through git, never rsync.
+The sending side interrupts the worker, waits until it reads idle, and pushes one WIP commit holding the whole worktree, tracked and untracked, to `fm/teleport/<task-id>` on the project's origin.
+The adopting home launches the worker through `fm-spawn.sh --teleport` in a fresh pooled worktree, with the branch at the worker's last commit and the WIP content as uncommitted changes, so the WIP commit never enters the branch and the ref is deleted once the move completes.
+The task's `data/<task-id>/` records travel with it, with the sending home's absolute paths rewritten to the adopting home's.
+A Claude worker resumes its own conversation: its transcript travels over the same SSH channel, is installed for the new worktree with paths rewritten, and is deleted on the sending side only after takeover.
+Any other harness, or a Claude worker whose transcript is missing, starts from its instructions plus a generated progress note.
+The backlog item follows the task: `fm-backlog-handoff.sh` on the way out, and a copy-then-remove move on the way back.
+
+The adopting home refuses before anything moves when it already records the task or its clone of the project is missing, dirty, or on another origin.
+Teleport also refuses during an active validation run.
+Until the adopting home confirms its worker is alive, every failure rolls the adopting side back and leaves the sending task in place, its worker alive and idle and its worktree and transcript untouched.
+After takeover, the sending copy is cleaned up only when its worktree still equals the snapshot.
+The remote host needs the task's project cloned in its home, the worker's harness installed and logged in, and push access to the project's origin.
+
+### Sleep reminder
+
+`bin/fm-teleport.sh remind` raises one notification, "N tasks running, teleport out?", through the [wedge-alarm channels](wedge-alarm.md) when this home has live local workers, and does nothing otherwise.
+It is rate-limited and never moves anything.
+Wire it to the host's sleep hook, for example [sleepwatcher](https://www.bernhard-baehr.de/)'s `~/.sleep` on macOS or a `systemd` system-sleep hook on Linux, with `FM_HOME` set to the home.
+`remind --lid` fires only while the lid reads closed, for hosts where a periodic poll is the only signal available.
 
 ## Sync, update, and retirement
 

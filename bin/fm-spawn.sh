@@ -35,6 +35,13 @@
 #   or herdr), refuses unless the endpoint's shell is sitting in the recorded
 #   worktree, and clears the previous harness's per-task wiring before arming
 #   the new incarnation.
+#   --teleport adopts a task another home teleported here (bin/fm-teleport.sh
+#   adopt is its only caller). It applies to a fresh ship or scout spawn on a
+#   treehouse-backed backend: after the pooled worktree is refreshed,
+#   bin/fm-teleport-lib.sh's fm_teleport_prepare_worktree restores the work from
+#   data/<task-id>/teleport/manifest. When that manifest names a Claude session
+#   and the harness is claude, the launch resumes that session with
+#   data/<task-id>/teleport/arrival.md as its prompt instead of the brief.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max> are concrete profile
@@ -271,6 +278,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
+# shellcheck source=bin/fm-teleport-lib.sh
+. "$SCRIPT_DIR/fm-teleport-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -296,6 +305,7 @@ MODE_SET=0
 YOLO_SET=0
 TRACEPARENT_SET=0
 RELAUNCH=0
+TELEPORT=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -321,6 +331,7 @@ for a in "$@"; do
     --scout) KIND=scout; KIND_SET=1 ;;
     --secondmate) KIND=secondmate; KIND_SET=1 ;;
     --relaunch) RELAUNCH=1 ;;
+    --teleport) TELEPORT=1 ;;
     --harness) want_value=harness ;;
     --harness=*) HARNESS_ARG=${a#--harness=}; HARNESS_SET=1 ;;
     --model) want_value=model ;;
@@ -388,6 +399,13 @@ fi
 # so every axis this block resolves for a fresh spawn instead comes from that
 # task's own durable record below. Contradicting it on the command line is a
 # refusal rather than a silently-ignored flag.
+if [ "$TELEPORT" -eq 1 ]; then
+  [ "$RELAUNCH" -eq 0 ] || { echo "error: --teleport adopts a new task here; it cannot be combined with --relaunch" >&2; exit 1; }
+  [ "$KIND" != secondmate ] || { echo "error: --teleport applies to ship and scout spawns, not --secondmate" >&2; exit 1; }
+  case "${#POS[@]}:${POS[0]:-}" in
+    2:*=*|[!2]:*|[0-9][0-9]*:*) echo "error: --teleport takes exactly <task-id> <project-dir>, never a batch" >&2; exit 1 ;;
+  esac
+fi
 if [ "$RELAUNCH" -eq 1 ]; then
   [ "$BACKEND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded backend; --backend cannot override it" >&2; exit 1; }
   [ "$KIND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded kind; --scout/--secondmate cannot override it" >&2; exit 1; }
@@ -999,6 +1017,10 @@ if [ "$RELAUNCH" -eq 0 ]; then
     echo "error: backend=orca does not support --secondmate spawns yet" >&2
     exit 1
   fi
+  if [ "$BACKEND" = orca ] && [ "$TELEPORT" -eq 1 ]; then
+    echo "error: backend=orca owns its worktrees, so --teleport cannot restore into one; adopt on a treehouse-backed backend" >&2
+    exit 1
+  fi
   if [ "$BACKEND" = cmux ] && [ "$KIND" = secondmate ]; then
     echo "error: backend=cmux does not support --secondmate spawns yet" >&2
     exit 1
@@ -1154,7 +1176,7 @@ launch_template() {
     # does NOT suppress the interactive ghost text (verified empirically), so the env
     # var is the correct control. The dim-aware composer reader in fm-tmux-lib.sh is
     # the defense-in-depth backstop for any pane this flag cannot reach.
-    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions __MODELFLAG____EFFORTFLAG____RESUMEFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     codex)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
@@ -1737,6 +1759,20 @@ else
   BRIEF="$DATA/$ID/brief.md"
 fi
 [ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
+# A teleported Claude task resumes its own session; its arrival note, not the
+# brief, is the launch prompt. bin/fm-teleport.sh adopt wrote both files.
+TELEPORT_SESSION=
+TELEPORT_PROMPT=
+if [ "$TELEPORT" -eq 1 ]; then
+  [ -f "$DATA/$ID/teleport/manifest" ] || { echo "error: --teleport needs $DATA/$ID/teleport/manifest" >&2; exit 1; }
+  TELEPORT_SESSION=$(fm_meta_get "$DATA/$ID/teleport/manifest" session)
+  if [ -n "$TELEPORT_SESSION" ]; then
+    [ "$HARNESS" = claude ] || { echo "error: the teleport manifest names a Claude session but this spawn runs $HARNESS" >&2; exit 1; }
+    fm_teleport_valid_session "$TELEPORT_SESSION" || { echo "error: invalid session id in the teleport manifest" >&2; exit 1; }
+    TELEPORT_PROMPT="$DATA/$ID/teleport/arrival.md"
+    [ -f "$TELEPORT_PROMPT" ] || { echo "error: no teleport arrival note at $TELEPORT_PROMPT" >&2; exit 1; }
+  fi
+fi
 
 # Firstmate recall, checked before any endpoint exists. fm-brief.sh scaffolds
 # ship and scout briefs with {RECALL_FOUND: firstmate - ...} and
@@ -2373,6 +2409,12 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
+  if [ "$TELEPORT" -eq 1 ]; then
+    fm_teleport_prepare_worktree "$WT" "$ID" "$DATA" "$FM_HOME" "$STATE" || {
+      echo "error: could not restore the teleported work for $ID into $WT" >&2
+      exit 1
+    }
+  fi
 fi
 
 # Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't
@@ -2860,7 +2902,7 @@ if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
 fi
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
-sq_brief=$(shell_quote "$BRIEF")
+sq_brief=$(shell_quote "${TELEPORT_PROMPT:-$BRIEF}")
 sq_turnend=$(shell_quote "$TURNEND")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
 sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
@@ -2871,6 +2913,9 @@ MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT")
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
+RESUMEFLAG=
+[ -z "$TELEPORT_SESSION" ] || RESUMEFLAG="--resume $(shell_quote "$TELEPORT_SESSION") "
+LAUNCH=${LAUNCH//__RESUMEFLAG__/$RESUMEFLAG}
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}
 LAUNCH=${LAUNCH//__TURNEND__/$sq_turnend}
 LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
