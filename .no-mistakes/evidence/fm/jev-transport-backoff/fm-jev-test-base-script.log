@@ -1,0 +1,16 @@
+ok - off by default: an ambient OPENROUTER_API_KEY neither logs nor calls the network
+ok - a STATE other than the key home's own state never enables Jev
+ok - shadow mode logs presentation, answer and acknowledgement without changing the drain
+ok - only the masked reason and last status line are sent; the key stays off argv and disk
+ok - config/jev-timeout overrides the 5 second default and invalid values keep it
+ok - one timeout skips only that wake and does not pause Jev
+ok - consecutive timeouts pause Jev for 60 minutes, reported by status and report
+ok - config/jev-timeout-streak and config/jev-timeout-pause configure the pause rule and invalid values keep the defaults
+ok - a successful classification resets the timeout streak
+ok - a timeout pause expires by itself, repeat pauses back off, and none outlasts the day
+ok - a legacy disabled file is read safely: old timeout records resume, other day pauses hold
+ok - entering any pause appends one check wake with the reason and the pause-until time
+ok - a resume wake follows only the first successful classification after an announced pause, once
+ok - pause-state prints one line while paused and nothing otherwise
+ok - HTTP errors and a missing cost pause Jev until the next day
+not ok - one transport error paused Jev
