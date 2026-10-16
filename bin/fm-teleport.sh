@@ -52,7 +52,10 @@
 #      a generated progress note. adopt waits until the agent reads alive and
 #      rolls itself back on any failure.
 #   5. The backlog item follows: bin/fm-backlog-handoff.sh outbound, and
-#      backlog-export plus a local tasks-axi move for --back.
+#      backlog-export plus a local tasks-axi move for --back. The adopting home
+#      already owns the task here, so an outbound handoff failure only warns
+#      (run bin/fm-backlog-handoff.sh --resume-pending, or move it by hand when
+#      no outbox was staged) and the teleport still completes.
 #   6. release (sending home): only after the adopting home confirmed, stops the
 #      worker, proves the worktree still equals the snapshot, tears it down
 #      through bin/fm-teardown.sh, and deletes the sending copy of the transcript.
@@ -380,7 +383,9 @@ cmd_adopt() { # <task>; manifest on stdin
     [ -f "$DATA/$task/brief.md" ] || { adopt_rollback_data "$task" "$prior"; die "task $task arrived without instructions"; }
     note_file="$DATA/$task/teleport/progress-note.md"
     progress_note "$manifest" "$payload" "$proj" > "$note_file"
-    cat "$note_file" >> "$DATA/$task/brief.md"
+    awk '/^## Teleport note/ { skip = 1; next } skip && /^## / { skip = 0 } !skip' "$DATA/$task/brief.md" > "$DATA/$task/brief.md.tmp"
+    cat "$note_file" >> "$DATA/$task/brief.md.tmp"
+    mv -f "$DATA/$task/brief.md.tmp" "$DATA/$task/brief.md"
   fi
 
   spawn_args=("$task" "$proj")
@@ -534,13 +539,14 @@ teleport_out() { # <task> <secondmate> <session>
   if section=$(backlog_section "$BACKLOG" "$task"); then
     [ "$section" != "## In flight" ] || tasks-axi reopen "$task" --file "$BACKLOG" >/dev/null
     if ! "$HELPERS/fm-backlog-handoff.sh" "$sm" "$task" >&2; then
-      if [ "$section" = "## In flight" ] && backlog_section "$BACKLOG" "$task" >/dev/null; then
-        tasks-axi start "$task" --file "$BACKLOG" >/dev/null || true
+      if [ -f "$DATA/handoff/$sm.outbox.md" ]; then
+        warn "$sm took over task $task, but its backlog item did not arrive; run bin/fm-backlog-handoff.sh --resume-pending to deliver it"
+      else
+        warn "$sm took over task $task, but its backlog item did not move; move it to $sm's backlog by hand"
       fi
-      on "$sm" fm-teleport.sh abort "$task" >/dev/null 2>&1 || warn "$sm still runs a copy of $task; run fm-on.sh $sm fm-teleport.sh abort $task"
-      die "could not hand task $task's backlog item to $sm; the move was rolled back and the task stays here with its worker idle"
+    else
+      on "$sm" fm-teleport.sh backlog-start "$task" >/dev/null 2>&1 || warn "$sm received $task's backlog item but could not mark it in flight"
     fi
-    on "$sm" fm-teleport.sh backlog-start "$task" >/dev/null 2>&1 || warn "$sm received $task's backlog item but could not mark it in flight"
   fi
   "$SELF" release "$task" >/dev/null || die "$sm took over task $task, but cleaning up the copy here failed; the worker here is stopped or idle and its worktree is kept"
   delete_wip_ref "$task" "$(project_dir_for "$key")"

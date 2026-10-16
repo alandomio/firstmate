@@ -49,7 +49,12 @@ SH
 cat > "$FAKE/fm-backlog-handoff.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'handoff %s %s\n' "$1" "$2" >> "$FAKE_LOG"
-[ -z "${FAKE_HANDOFF_FAIL:-}" ] || exit 1
+if [ -n "${FAKE_HANDOFF_FAIL:-}" ]; then
+  mkdir -p "$FM_HOME/data/handoff"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$FM_HOME/data/handoff/$1.outbox.md"
+  tasks-axi mv "$2" --file "$FM_HOME/data/backlog.md" --to "$FM_HOME/data/handoff/$1.outbox.md" >/dev/null
+  exit 1
+fi
 tasks-axi mv "$2" --file "$FM_HOME/data/backlog.md" --to "$FAKE_REMOTE_HOME/data/backlog.md" >/dev/null
 SH
 cat > "$FAKE/fm-spawn.sh" <<'SH'
@@ -274,6 +279,26 @@ out=$(local_tp t3 2>&1) || fail "transcript-less claude teleport failed: $out"
 assert_contains "$out" "no Claude transcript" "a missing transcript is reported"
 assert_grep "## Teleport note" "$REMOTE/data/t3/brief.md" "a transcript-less Claude task gets a progress note"
 pass "a Claude task without a transcript falls back to brief plus progress note"
+
+# A failed backlog handoff after takeover leaves the remote in charge.
+new_local_task t5 codex
+out=$(FAKE_HANDOFF_FAIL=1 local_tp t5 2>&1) || fail "teleport with a failed handoff should still complete: $out"
+assert_contains "$out" "teleported t5 to alwayson" "a failed handoff still completes the teleport"
+assert_contains "$out" "--resume-pending" "a failed handoff names the durable fix"
+assert_present "$REMOTE/state/t5.meta" "the remote keeps the task after a failed handoff"
+assert_absent "$LOCAL/state/t5.meta" "the local copy is cleaned up after a failed handoff"
+assert_absent "$LOCAL/pool/t5" "the local worktree is returned after a failed handoff"
+pass "a failed backlog handoff after takeover warns instead of rolling the remote back"
+
+# A round trip keeps exactly one teleport note in the brief.
+out=$(local_tp t2 --back 2>&1) || fail "codex teleport back failed: $out"
+notes=$(grep -c '^## Teleport note' "$LOCAL/data/t2/brief.md")
+[ "$notes" = 1 ] || fail "a round trip left $notes teleport notes in the brief"
+assert_grep "Delivery contract" "$LOCAL/data/t2/brief.md" "the original brief survives note replacement"
+out=$(local_tp t2 2>&1) || fail "codex teleport out again failed: $out"
+notes=$(grep -c '^## Teleport note' "$REMOTE/data/t2/brief.md")
+[ "$notes" = 1 ] || fail "a second trip left $notes teleport notes in the brief"
+pass "a round trip replaces the earlier teleport note"
 
 # --- guards ------------------------------------------------------------------------------
 
