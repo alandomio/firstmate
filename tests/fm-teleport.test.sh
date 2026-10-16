@@ -295,6 +295,7 @@ pass "a failed backlog handoff after takeover warns instead of rolling the remot
 new_local_task t6 codex
 out=$(FAKE_HANDOFF_FAIL=early local_tp t6 2>&1) || fail "teleport with an early handoff failure should still complete: $out"
 assert_contains "$out" "fm-backlog-handoff.sh alwayson t6" "an early handoff failure names the exact command"
+assert_contains "$out" "on alwayson run tasks-axi unhold t6 and tasks-axi start t6" "an early handoff failure spells out the remote recovery"
 assert_present "$REMOTE/state/t6.meta" "the remote keeps the task after an early handoff failure"
 assert_absent "$LOCAL/state/t6.meta" "the local copy is cleaned up after an early handoff failure"
 held=$(tasks-axi show t6 --file "$LOCAL/data/backlog.md" 2>&1)

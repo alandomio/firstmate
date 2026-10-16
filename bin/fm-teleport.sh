@@ -546,7 +546,7 @@ teleport_out() { # <task> <secondmate> <session>
       elif backlog_section "$BACKLOG" "$task" >/dev/null; then
         tasks-axi hold "$task" --file "$BACKLOG" --kind parked --reason "teleported to $sm; backlog move pending - run fm-backlog-handoff.sh $sm $task" >/dev/null \
           || warn "could not place a dispatch hold on $task here; do not dispatch it"
-        warn "$sm took over task $task, but its backlog item did not move and is held here; run bin/fm-backlog-handoff.sh $sm $task"
+        warn "$sm took over task $task, but its backlog item did not move and is held here; run bin/fm-backlog-handoff.sh $sm $task, then on $sm run tasks-axi unhold $task and tasks-axi start $task, for example through bin/fm-on.sh $sm or in that home"
       else
         warn "$sm took over task $task, but its backlog item did not move; run bin/fm-backlog-handoff.sh $sm $task"
       fi
