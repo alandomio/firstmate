@@ -98,13 +98,14 @@
 #
 # Pauses. Two kinds, both in state/jev/disabled ("<day>\t<why>" or, for a timed
 # pause, "<day>\t<why>\t<until-epoch>"). A DAY pause holds until the next local
-# calendar day: on OpenRouter an API/transport error, a response without a
+# calendar day: on OpenRouter an API error that came back as an HTTP response, a response without a
 # usage.cost, or reaching the daily spend cap (USD, default 1; override with a
 # decimal number in config/jev-daily-cap, summed from the usage.cost each
 # response reports); on either backend an invalid config/jev-endpoint, which is
 # a configuration mistake to surface, not a transient condition to retry. A
-# TIMED pause covers timeouts, on either backend: the Nth consecutive timeout
-# (config/jev-timeout-streak, default 3; any successful classification resets
+# TIMED pause covers timeouts and transport failures (any curl failure with no
+# HTTP response, such as a DNS or connection error), on either backend: the Nth
+# consecutive one (config/jev-timeout-streak, default 3; any successful classification resets
 # the count, kept in state/jev/timeout-streak) pauses classification for
 # config/jev-timeout-pause minutes (default 60), then Jev tries again by
 # itself. A further pause with no success in between doubles (60, 120, 240 ...
@@ -397,7 +398,7 @@ jev_clock() {  # <epoch> -> HH:MM local time (GNU date, then BSD date)
 }
 
 # state/jev/disabled is "<day>\t<why>" (a pause until the next local day: the
-# spend cap, an API/transport error or a missing cost on OpenRouter, an
+# spend cap, an HTTP API error or a missing cost on OpenRouter, an
 # invalid config/jev-endpoint) or "<day>\t<why>\t<until-epoch>" (a timed pause
 # that clears itself). A "<day>\ttimeout" record without an until time was
 # written when one timeout paused the whole day; that reason no longer pauses,
@@ -704,7 +705,7 @@ jev_classify_row() {  # <id> <reason-masked> <status-masked> <backend> <spend-be
   if [ "$rc" -ne 0 ]; then
     rm -f "$resp"
     jev_log_skip "$id" api-error "transport error (curl exit $rc)" "$reason" "$status"
-    [ "$backend" = local ] || jev_pause "$day" api-error
+    jev_timeout_note "$day"
     return 0
   fi
   case "$code" in
