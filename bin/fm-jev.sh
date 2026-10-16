@@ -124,12 +124,12 @@
 # skipped by a pause is logged with why=disabled.
 #
 # The local backend has no per-request cost and no monotonic quota to protect,
-# so apart from the timed timeout pause and an invalid endpoint none of its own
-# failure reasons ever pauses it: a 1-minute load average at or above
-# config/jev-max-load (default 8; checked before each request) or an
-# API/transport error each only skip that one row (why=load/api-error), and the
-# very next drain tries again. A timeout also skips the rest of that same
-# drain's rows (why=timeout) without dialing, so a stuck server costs one
+# so apart from the timed pause (timeouts and transport failures) and an invalid
+# endpoint none of its own failure reasons ever pauses it: a 1-minute load
+# average at or above config/jev-max-load (default 8; checked before each
+# request) or an HTTP API error each only skip that one row
+# (why=load/api-error), and the very next drain tries again. A timeout also
+# skips the rest of that same drain's rows (why=timeout) without dialing, so a stuck server costs one
 # timeout per drain rather than one per row (and counts once toward the
 # streak), and the classify lock is never held long enough for detached drains
 # to pile up behind it. The wake itself is untouched in every case because
