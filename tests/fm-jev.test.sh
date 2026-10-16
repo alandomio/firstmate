@@ -62,6 +62,7 @@ case "${FAKE_CURL_MODE:-ok}" in
   timeout) exit 28 ;;
   hang) sleep 3; exit 28 ;;
   refused) exit 7 ;;
+  dns) exit 6 ;;
   http500) printf '{"error":{"message":"boom"}}' > "$out"; printf '500' ;;
   nocost) printf '{"answers":{"handling":{"type":"choice","choice":"absorbable","confidence":0.9}},"usage":{}}' > "$out"; printf '200' ;;
   ok)
@@ -450,7 +451,7 @@ test_pause_state_command_prints_only_while_paused() {
 
 test_api_errors_pause_until_the_next_day() {
   local mode home
-  for mode in http500 refused nocost; do
+  for mode in http500 nocost; do
     home=$(jev_case "api-$mode" with-key)
     queue_row "$home" 1 heartbeat heartbeat heartbeat
     queue_row "$home" 2 stale default:w1:p1 'stale: default:w1:p1'
@@ -459,7 +460,26 @@ test_api_errors_pause_until_the_next_day() {
     [ "$(cut -f2 "$home/state/jev/disabled")" = api-error ] || fail "$mode did not pause Jev"
     [ "$(calls "$home")" = 1 ] || fail "$mode: Jev kept calling after an API error"
   done
-  pass "HTTP errors, transport errors and a missing cost pause Jev until the next day"
+  pass "HTTP errors and a missing cost pause Jev until the next day"
+}
+
+test_transport_errors_count_toward_the_timed_pause() {
+  local home now until
+  home=$(jev_case transport1 with-key)
+  timeout_drain "$home" 1 1 dns
+  jev_events "$home" 'select(.why == "api-error")' | grep -q . || fail "a transport error was not logged"
+  assert_absent "$home/state/jev/disabled" "one transport error paused Jev"
+  assert_contains "$(in_home "$home" "$JEV" status)" 'timeout streak: 1 of 3' "the transport error did not count in the streak"
+  home=$(jev_case transport3 with-key)
+  now=$(date +%s)
+  timeout_drain "$home" 1 3 refused
+  [ "$(calls "$home")" = 3 ] || fail "transport errors did not each dial"
+  [ "$(cut -f2 "$home/state/jev/disabled")" = timeout ] || fail "three transport errors did not start the timed pause"
+  until=$(pause_until "$home")
+  [ -n "$until" ] && [ "$until" -gt "$now" ] || fail "the timed pause carries no end time"
+  timeout_drain "$home" 4 1 refused
+  [ "$(calls "$home")" = 3 ] || fail "a paused Jev still dialed"
+  pass "transport errors count in the timeout streak and start the timed pause, never a day pause"
 }
 
 test_daily_cap_pauses_after_the_spend_is_reached() {
@@ -1128,6 +1148,7 @@ test_every_pause_is_announced_once_through_a_check_wake
 test_resume_is_announced_only_for_an_announced_pause
 test_pause_state_command_prints_only_while_paused
 test_api_errors_pause_until_the_next_day
+test_transport_errors_count_toward_the_timed_pause
 test_daily_cap_pauses_after_the_spend_is_reached
 test_local_backend_takes_priority_needs_no_key_and_records_the_answering_model
 test_local_backend_uncertain_maps_to_doubt
