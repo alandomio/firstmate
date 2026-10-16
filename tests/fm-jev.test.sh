@@ -62,6 +62,7 @@ case "${FAKE_CURL_MODE:-ok}" in
   timeout) exit 28 ;;
   hang) sleep 3; exit 28 ;;
   refused) exit 7 ;;
+  dns) exit 6 ;;
   http500) printf '{"error":{"message":"boom"}}' > "$out"; printf '500' ;;
   nocost) printf '{"answers":{"handling":{"type":"choice","choice":"absorbable","confidence":0.9}},"usage":{}}' > "$out"; printf '200' ;;
   ok)
@@ -465,7 +466,7 @@ test_api_errors_pause_until_the_next_day() {
 test_transport_errors_count_toward_the_timed_pause() {
   local home now until
   home=$(jev_case transport1 with-key)
-  timeout_drain "$home" 1 1 refused
+  timeout_drain "$home" 1 1 dns
   jev_events "$home" 'select(.why == "api-error")' | grep -q . || fail "a transport error was not logged"
   assert_absent "$home/state/jev/disabled" "one transport error paused Jev"
   assert_contains "$(in_home "$home" "$JEV" status)" 'timeout streak: 1 of 3' "the transport error did not count in the streak"
