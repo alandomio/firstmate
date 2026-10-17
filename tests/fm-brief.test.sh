@@ -534,6 +534,10 @@ test_herdr_lab_omission_is_loud_for_ship_and_scout() {
     brief="$home/data/$id/brief.md"
     assert_grep "# Herdr lifecycle - not enabled" "$brief" \
       "$kind brief silently omitted the Herdr declaration"
+    assert_grep "# Haiku subagents (claude harness only)" "$brief" \
+      "$kind brief omitted the Haiku subagent directive"
+    assert_grep "read the actual diff, not the subagent's summary" "$brief" \
+      "$kind brief omitted the supervision rule for delegated edits"
     assert_grep "This task does not drive Herdr lifecycle commands" "$brief" \
       "$kind brief did not tell the worker Herdr lifecycle is off"
     # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
