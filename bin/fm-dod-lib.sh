@@ -239,7 +239,7 @@ fm_brief_base_branches() {  # <brief>
 # Classify a project's host from its local clone's origin remote (falling back
 # to .gitlab-ci.yml on an unrecognized host) so the brief names the real forge.
 # With no evidence - no clone, a dir that is not its own clone root (git would
-# read the encloser's remote), no origin, or a local-path origin - it keeps the historical github
+# read the encloser's remote), no origin, or a local-path or file:// origin - it keeps the historical github
 # wording; only an origin on an unrecognized host is unknown.
 fm_dod_project_host() {  # <clone-dir>
   local dir=$1 url host top abs
@@ -249,6 +249,8 @@ fm_dod_project_host() {  # <clone-dir>
   [ "$top" = "$abs" ] || { echo github; return; }
   url=$(git -C "$dir" remote get-url origin 2>/dev/null) || { echo github; return; }
   case "$url" in
+    file://*)
+      echo github; return ;;
     https://*|http://*|ssh://*|git://*)
       host=${url#*://}; host=${host%%/*}; host=${host##*@}; host=${host%%:*} ;;
     *@*:*)
