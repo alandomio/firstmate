@@ -10,13 +10,10 @@
 # after a harness upgrade.
 set -u
 
-if [ "${FM_PAL_COUNCIL_LIVE_E2E:-0}" != 1 ]; then
-  echo "skip: set FM_PAL_COUNCIL_LIVE_E2E=1 to check pal-council tier resolution against the installed harness catalogs"
-  exit 0
-fi
-
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+fm_live_gate opt-in FM_PAL_COUNCIL_LIVE_E2E
 
 unset FM_PAL_CATALOG_DIR
 PAL="$ROOT/bin/fm-pal-council.sh"
