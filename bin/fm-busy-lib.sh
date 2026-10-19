@@ -29,38 +29,81 @@
 # task's recorded harness classifies unknown, so one adapter's writer can
 # never classify another adapter):
 #   pi-ext           Pi/pi-signed per-task extension (agent_start/agent_settled)
+#   omp-ext          omp (Oh My Pi) per-task extension (agent_start/agent_end without willContinue)
 #   opencode-plugin  OpenCode per-task plugin (session.status)
 #   claude-hook      Claude lifecycle hooks (UserPromptSubmit/Stop/StopFailure/SessionEnd)
+#   devin-hook       Devin UserPromptSubmit / Stop / SessionEnd hooks; manual
+#                    cancellation emits no Stop, so control invalidates to unknown.
+#   commandcode-mod  Command Code per-task mod (run_start opens; run_end, including
+#                    an Escape interrupt, and session end close)
+#   gemini-hook      Gemini agent hooks (BeforeAgent opens; AfterAgent and
+#                    SessionEnd close)
+#   polytoken-hook   Polytoken pre_user_prompt / pre_model_turn open and stop
+#                    closes; a REST turn cancel emits no stop (verified live),
+#                    so the control plane writes the close itself
 #   codex-hook, codex-appserver  reserved: Codex, gated by
 #                    fm_busy_codex_semantic_source
 #   kimi-wire, kimi-hook  reserved: standalone Kimi, gated by fm_busy_kimi_verified
 # Firstmate-owned sources accepted for every converted adapter:
 #   fm-spawn         the launch-brief turn seeded at spawn
-#   fm-interrupt     the legacy Claude fm-send --key Escape idle event
+#   fm-interrupt     the legacy Claude fm-send --key Escape idle event, and the
+#                    unknown invalidation fm-control writes after a Devin interrupt
 #   fm-recovery      a documented recovery reset after relaunch
 # Classifier-only sources (never written into a record):
-#   endpoint-gone, herdr-native, grok-regex, muse-session-log,
-#   cursor-transcript, agy-conversation, missing, malformed, gen-mismatch,
-#   source-mismatch, kimi-unverified, codex-unverified, capture-failed,
-#   no-target
+#   endpoint-gone, herdr-native, grok-regex, rovo-regex, agy-regex, muse-session-log,
+#   cursor-transcript, missing, malformed, gen-mismatch, source-mismatch,
+#   kimi-unverified, codex-unverified, capture-failed, no-target, launch-prompt
 #
 # Classification (fm_busy_classify): busy | idle | unknown | dead, always
 # with the producing source as the second token. Precedence:
 #   1. dead endpoint (fm_busy_classify_live only) -> dead endpoint-gone
 #   2. standalone Kimi before verification       -> unknown kimi-unverified
-#   3. a valid, gen-matching, source-trusted record -> its state and source
+#   3. a valid, gen-matching, source-trusted record -> its state and source,
+#      UNLESS the record is still the untouched seed fm-spawn wrote at arm
+#      time (state=busy source=fm-spawn - no adapter hook has posted since
+#      launch) AND the caller supplied a captured tail that matches that
+#      harness's own recognized interactive-prompt signature (a trust
+#      dialog, sign-in screen, or first-run menu - fm_busy_launch_prompt_parked
+#      owns the per-harness table). That combination classifies unknown
+#      launch-prompt instead: the launch never actually started the brief, so
+#      it must not read as proof of an active turn. A record that has
+#      advanced past fm-spawn (any real hook event) is NEVER reclassified
+#      this way, however its rendered tail looks, so a genuinely working turn
+#      keeps its ordinary busy verdict and the general BUSY_TURN_MAX_SECS
+#      bound is unchanged.
 #   4. no record at all: herdr's native busy verdict is trusted as busy
 #      (generation state is sufficient for busy, not for idle), then the
-#      muse session-log and cursor transcript pull sources, then the Grok-only
-#      temporary regex fallback classifies a grok task from its rendered tail,
-#      then unknown missing
+#      muse session-log and cursor transcript pull sources, then the
+#      Grok/Rovo/AGY temporary regex fallbacks classify a grok, rovo, or agy
+#      task from its rendered tail, then unknown missing
 #   5. malformed, stale, or untrusted records -> unknown, never a fallback
-# The Grok arm is the ONLY rendered-text classification that survives the
-# redesign, because Grok's structured lifecycle was not credited-live-verified
-# in the approved audit; it is scoped to harness=grok and can never classify
-# another adapter. The delivery guards in bin/fm-composer-lib.sh match rendered
-# footers for submit acknowledgement and away-mode supervisor injection only;
-# neither is a recorded worker state source.
+#
+# fm_busy_launch_prompt_parked (the launch-prompt classifier-only source): a
+# launch whose busy record never advanced past the fm-spawn seed is
+# indistinguishable, from the record alone, between "still reading its
+# brief" and "parked on an interactive prompt the harness never gets past
+# without a human" - a Claude/Gemini/Pi workspace-trust dialog, a sign-in or
+# auth-method picker, or a first-run setup menu. Left alone this reads as
+# ordinary busy for the full BUSY_TURN_MAX_SECS (one hour) before the
+# separate wedge-suspect bound even looks at it. The signature table matches
+# each harness's own verified rendered dialog text (see
+# .agents/skills/harness-adapters/references/harness/*.md and
+# docs/verification/*.md for the evidence), scoped to the exact harness that
+# renders it so one adapter's ordinary output can never match another's
+# dialog. This is a best-effort backstop, not prevention: it never suppresses
+# a real busy verdict once any hook has posted, and it defers to whatever
+# harness-specific trust pre-registration already exists (fm-claude-trust.sh,
+# GEMINI_CLI_TRUST_WORKSPACE) to stop the dialog from appearing at all.
+# Apart from the launch-prompt backstop above, Grok, Rovo, and AGY are the ONLY
+# rendered-text busy fallbacks that survive the redesign, because none of their
+# structured lifecycles was credited-live-verified
+# in the approved audit (Rovo's clean ACP stopReason lives outside the TUI
+# path firstmate drives, see references/harness/rovo.md; agy 1.2.0 exposes no
+# hook surface at all, see references/harness/agy.md); each is scoped to
+# its own harness= and can never classify another adapter. The delivery
+# guards in bin/fm-composer-lib.sh match rendered footers for submit
+# acknowledgement and away-mode supervisor injection only; neither is a
+# recorded worker state source.
 #
 # The muse pull source is semantic, not rendered: it folds muse's own durable
 # session event log. It has no writer, no arm, and no gen, because
@@ -76,20 +119,6 @@
 # no writer, no arm, and no gen, so nothing is seeded that could never be
 # cleared. See fm_busy_cursor_turn_state for the fold. Cursor's rendered
 # `ctrl+c to stop` footer is deliberately not a state source here.
-#
-# The agy (Antigravity CLI) pull source folds its own durable per-conversation
-# SQLite database (agy has no hook or plugin surface at all - not even a
-# disabled one - so unlike muse there is nothing to gate on a future build).
-# Its `steps` table live-verified (agy 1.1.28) on the (step_type, status)
-# PAIR, because the busy code is step-type dependent: (15, 8) is a running
-# text-generation step, (132, 2) a running tool call, and status 3 is the
-# universal settled value for every step_type - including after an interrupt,
-# which covers interruption the same way cursor's transcript does and Claude's
-# Stop hook does not. The fold carries one documented, deliberately unsolved
-# gap: a poll landing between one step settling and the next being inserted
-# reports idle mid-turn. See fm_busy_agy_run_state for both. agy's rendered
-# `esc to cancel` footer is deliberately not a state source here, same caveat
-# as cursor's footer above.
 #
 # Codex negotiation (fm_busy_codex_appserver_observable,
 # fm_busy_codex_hooks_verified): the approved contract prefers Codex's
@@ -206,7 +235,12 @@ fm_busy_sources_for_harness() {  # <harness>
       adapter='codex-hook codex-appserver'
       ;;
     opencode*) adapter=opencode-plugin ;;
+    gemini*) adapter=gemini-hook ;;
+    devin) adapter=devin-hook ;;
+    commandcode) adapter=commandcode-mod ;;
+    polytoken) adapter=polytoken-hook ;;
     pi|pi-signed) adapter=pi-ext ;;
+    omp) adapter=omp-ext ;;
     kimi*)
       fm_busy_kimi_verified || { printf ''; return 0; }
       adapter='kimi-wire kimi-hook'
@@ -837,244 +871,6 @@ fm_busy_cursor_turn_state() {  # <transcript>
   '
 }
 
-fm_busy_agy_binding_path() {  # <state-dir> <id>
-  printf '%s/%s.agy-session' "$1" "$2"
-}
-
-fm_busy_agy_cache_path() {  # <state-dir> <id>
-  printf '%s/%s.agy-session-current' "$1" "$2"
-}
-
-# _fm_busy_agy_kv_field: read one `<key>=<value>` field from an agy sidecar,
-# or fail. Both agy sidecars use the same line format.
-_fm_busy_agy_kv_field() {  # <path> <key>
-  local path=$1 key=$2 line
-  [ -f "$path" ] || return 1
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      "$key="*)
-        line=${line#"$key="}
-        [ -n "$line" ] || return 1
-        printf '%s' "$line"
-        return 0
-        ;;
-    esac
-  done < "$path"
-  return 1
-}
-
-fm_busy_agy_binding_field() {  # <state-dir> <id> <key>
-  _fm_busy_agy_kv_field "$(fm_busy_agy_binding_path "$1" "$2")" "$3"
-}
-
-fm_busy_agy_binding_has_prior() {  # <state-dir> <id> <conversation-path>
-  local path line base
-  path=$(fm_busy_agy_binding_path "$1" "$2")
-  [ -f "$path" ] || return 1
-  base=$(basename -- "$3")
-  while IFS= read -r line || [ -n "$line" ]; do
-    [ "$line" = "prior_conversation=$base" ] && return 0
-  done < "$path"
-  return 1
-}
-
-# fm_busy_agy_matching_conversations: every conversation database directly
-# under <conversations-root> that stores <workspace-root> as a COMPLETE
-# protobuf string field. agy's workspace path is not exposed through any
-# queryable column - each database embeds it inside an opaque protobuf blob
-# (verified live, agy 1.1.28) - so the scan is byte-level rather than
-# structured, the same tradeoff muse's own flat text scan makes over its JSONL
-# metadata. A raw substring hit is NOT sufficient: sibling worktrees are
-# numbered pool slots, so `.../proj/1` occurs inside every byte sequence
-# naming `.../proj/10`, and an unanchored hit would let slot 1 bind to slot
-# 10's conversation and report its busy state as its own.
-#
-# The boundary is taken from protobuf's own framing rather than assumed from a
-# delimiter character. A length-delimited field is written as a tag byte whose
-# low 3 bits are wire type 2, then a base-128 varint holding the payload's
-# exact byte length, then the payload - so an occurrence is this task's
-# workspace only when a valid varint ending immediately before it decodes to
-# exactly the path's byte length AND the byte before that varint is a
-# wire-type-2 tag. Both halves were measured against a real database: all 4
-# genuine occurrences carry the tag byte, and requiring the length alone would
-# accept any coincidental equal-valued byte - an ASCII space (0x20 = 32)
-# before an unrelated 32-byte path inside another task's captured tool output
-# is enough to mis-bind and then cache that mis-binding for life.
-# A byte-class boundary was measured and rejected too: the byte FOLLOWING a
-# genuine occurrence was observed to be an ordinary alphanumeric (0x7a). See
-# docs/verification/runtime-backends.md for the dated collision measurement
-# (0 of 18 sibling-prefix occurrences accepted, 4 of 18 own occurrences
-# accepted). node is already this file's decoder for muse's fold and degrades
-# the same way when absent: no match, so the fold reports unknown rather than
-# guessing.
-#
-# Both `<uuid>.db` and its sibling `<uuid>.db-wal` are scanned, and either hit
-# reports the plain `<uuid>.db`. SQLite in WAL mode leaves a live session's
-# freshly written pages in the -wal until a checkpoint, so scanning only *.db
-# left the binding unresolvable for exactly as long as the first turn ran -
-# measured on a real agy 1.1.28 session as `unknown agy-conversation` for a
-# whole ~7s working window, with the binding landing ~30s later when the WAL
-# was checkpointed. Widening the glob does not weaken the anchoring above: a
-# match is still verified the same way, only in more files.
-fm_busy_agy_matching_conversations() {  # <conversations-root> <workspace-root>
-  local root=$1 ws=$2
-  [ -d "$root" ] || return 1
-  ws=${ws%/}
-  [ -n "$ws" ] || return 1
-  command -v node >/dev/null 2>&1 || return 1
-  node - "$root" "$ws" <<'NODE'
-const fs = require("fs");
-const path = require("path");
-const [root, workspace] = process.argv.slice(2);
-const needle = Buffer.from(workspace, "utf8");
-
-// True when buffer[offset] begins the payload of a length-delimited protobuf
-// field of exactly `length` bytes: a valid varint ends at buffer[offset - 1]
-// and decodes to `length`, and the byte before that varint is a wire-type-2
-// tag. Varint bytes are little-endian base-128: every byte but the last
-// carries a set continuation bit.
-function lengthPrefixed(buffer, offset, length) {
-  if (offset < 1 || (buffer[offset - 1] & 0x80) !== 0) return false;
-  for (let width = 1; width <= 5; width += 1) {
-    const start = offset - width;
-    if (start < 1) return false;
-    if (width > 1 && (buffer[start] & 0x80) === 0) return false;
-    let value = 0;
-    for (let i = 0; i < width; i += 1) {
-      value += (buffer[start + i] & 0x7f) * Math.pow(128, i);
-    }
-    if (value === length && (buffer[start - 1] & 0x07) === 2) return true;
-  }
-  return false;
-}
-
-function recordsWorkspace(file) {
-  let buffer;
-  try {
-    buffer = fs.readFileSync(file);
-  } catch {
-    return false;
-  }
-  let from = 0;
-  for (;;) {
-    const at = buffer.indexOf(needle, from);
-    if (at < 0) return false;
-    if (lengthPrefixed(buffer, at, needle.length)) return true;
-    from = at + 1;
-  }
-}
-
-let entries;
-try {
-  entries = fs.readdirSync(root, { withFileTypes: true });
-} catch {
-  entries = [];
-}
-// A live session's freshly written pages sit in the sibling `<uuid>.db-wal`
-// until SQLite checkpoints them, so both forms are scanned and a hit in
-// either names the SAME conversation: the reported path is always the plain
-// `<uuid>.db`, which sqlite3 reads through the WAL anyway. Emitting the
-// conversation once keeps the caller's one-candidate rule intact when both
-// forms match, and keeps prior-conversation exclusion keyed on one basename.
-const reported = new Set();
-for (const entry of entries) {
-  if (!entry.isFile()) continue;
-  const wal = entry.name.endsWith(".db-wal");
-  if (!wal && !entry.name.endsWith(".db")) continue;
-  const file = path.join(root, entry.name);
-  const conversation = wal ? file.slice(0, -"-wal".length) : file;
-  if (reported.has(conversation)) continue;
-  if (!recordsWorkspace(file)) continue;
-  reported.add(conversation);
-  process.stdout.write(`${conversation}\n`);
-}
-NODE
-}
-
-fm_busy_agy_cache_field() {  # <state-dir> <id> <key>
-  _fm_busy_agy_kv_field "$(fm_busy_agy_cache_path "$1" "$2")" "$3"
-}
-
-fm_busy_agy_cache_conversation() {  # <state-dir> <id> <conversation-path>
-  printf 'conversation=%s\n' "$3" > "$(fm_busy_agy_cache_path "$1" "$2")"
-}
-
-# fm_busy_agy_conversation: the ONE conversation database this pane owns, or
-# failure. A cached resolution is trusted as long as the file it names still
-# exists - agy's conversations directory is flat with no day-boundary
-# rotation to invalidate against, unlike muse's sessions tree - which keeps a
-# repeat fold from re-scanning every conversation database (some run several
-# MB) on every poll. Otherwise resolve fresh: every currently matching
-# conversation minus every one the binding recorded as already existing at
-# spawn time must leave exactly one candidate; zero or more than one is a
-# genuine ambiguity (no conversation started yet, or two tasks racing to
-# create their first conversation against the same workspace path in the same
-# window) and stays unresolved rather than guessing.
-fm_busy_agy_conversation() {  # <state-dir> <id>
-  local state=$1 id=$2 cached root ws candidate matched=0 result=
-  cached=$(fm_busy_agy_cache_field "$state" "$id" conversation 2>/dev/null || true)
-  if [ -n "$cached" ] && [ -f "$cached" ]; then
-    printf '%s' "$cached"
-    return 0
-  fi
-  root=$(fm_busy_agy_binding_field "$state" "$id" conversations_root 2>/dev/null) || return 1
-  ws=$(fm_busy_agy_binding_field "$state" "$id" workspace_root 2>/dev/null) || return 1
-  while IFS= read -r candidate; do
-    [ -n "$candidate" ] || continue
-    fm_busy_agy_binding_has_prior "$state" "$id" "$candidate" && continue
-    matched=$((matched + 1))
-    result=$candidate
-  done <<EOF
-$(fm_busy_agy_matching_conversations "$root" "$ws" || true)
-EOF
-  [ "$matched" -eq 1 ] || return 1
-  fm_busy_agy_cache_conversation "$state" "$id" "$result"
-  printf '%s' "$result"
-}
-
-# fm_busy_agy_run_state: busy when the LAST step recorded in <conversation-db>
-# is still running, idle when it has settled, unknown otherwise. The verdict
-# reads the (step_type, status) PAIR, because agy's busy code is step-type
-# dependent - status alone does not carry it. Live-verified (agy 1.1.28) by
-# polling a real multi-tool-call turn at 0.5s against known ground-truth
-# timing:
-#   (15, 8)   a text-generation step actually running   -> busy
-#   (132, 2)  a tool-call step actually running         -> busy
-#   (*, 3)    settled, for every observed step_type     -> idle
-# status 3 is the universal terminal value: it appeared as the dominant
-# terminal status across every step_type recorded on this machine (14, 15, 21,
-# 23, 33, 98, 101, 132, 139 and others), and it is also what a single Escape
-# settles the running row to, so interruption is covered the same way cursor's
-# transcript covers it and Claude's Stop hook does not. Every OTHER pair is
-# unknown rather than guessed - no meaning is invented for a step_type or
-# status outside the verified set.
-#
-# KNOWN LIMITATION, deliberately not solved here: a turn is a sequence of step
-# rows, and between one row settling and the next being inserted there is a
-# real window in which the last row reads settled while the turn is still
-# going. A poll landing in that window reports idle. Every other table in the
-# conversation database was inspected for a turn-level signal to close it -
-# trajectory_meta is static single-row metadata written once at conversation
-# creation, and executor_metadata, gen_metadata, parent_references and
-# battle_mode_infos are opaque protobuf blobs with no discoverable status
-# field or empty in every conversation inspected - and none exists. Treat this
-# as a documented gap in the same class as cursor's interrupt-ack timing
-# variability, not a closed guarantee.
-#
-# Read with sqlite3 -readonly, which shares the live WAL-mode file safely with
-# agy's own writer without needing a lock.
-fm_busy_agy_run_state() {  # <conversation-db>
-  local db=$1 row
-  [ -f "$db" ] || return 1
-  command -v sqlite3 >/dev/null 2>&1 || return 1
-  row=$(sqlite3 -readonly "$db" 'SELECT step_type, status FROM steps ORDER BY idx DESC LIMIT 1;' 2>/dev/null) || return 1
-  case "$row" in
-    *'|3') printf 'idle' ;;
-    '15|8'|'132|2') printf 'busy' ;;
-    *) return 1 ;;
-  esac
-}
-
 # fm_busy_grok_tail_busy: the Grok-only temporary rendered-tail fallback.
 # Consumes the tail on stdin; 0 when Grok's verified busy signature matches.
 # FM_BUSY_REGEX still globally overrides the signature, mirroring the
@@ -1084,15 +880,153 @@ fm_busy_grok_tail_busy() {
     | grep -qiE "${FM_BUSY_REGEX:-${FM_DELIVERY_GROK_BUSY_REGEX_DEFAULT:-Ctrl\\+c:cancel}}"
 }
 
+# fm_busy_rovo_tail_busy: the Rovo-only temporary rendered-tail fallback.
+# Consumes the tail on stdin; 0 when Rovo's verified animated busy line
+# matches (the "Rovo is thinking..." text rendered while a turn is running,
+# verified live on rovo 202609.1.2; both observed glyph variants share this
+# literal text). rovo has no turn-end hook - its eventHooks fire at tool
+# granularity only - so this fallback, like Grok's, is the only source; it is
+# never armed as a semantic writer (fm_busy_sources_for_harness trusts
+# nothing for rovo). FM_BUSY_ROVO_REGEX overrides the signature.
+fm_busy_rovo_tail_busy() {
+  grep -v '^[[:space:]]*$' | tail -12 \
+    | grep -qiE "${FM_BUSY_ROVO_REGEX:-Rovo is thinking}"
+}
+
+# fm_busy_agy_tail_busy: the AGY-only temporary rendered-tail fallback.
+# Consumes the tail on stdin; 0 when AGY's verified busy signature matches:
+# the `esc to cancel` token in the status row the TUI pins to the bottom of
+# the pane while a turn runs (verified live on agy 1.2.0; the idle status row
+# shows `? for shortcuts` instead). The `Generating...` spinner word that
+# renders beside it is deliberately NOT matched: it is a free-floating output
+# line, so ordinary worker output echoing the word would classify an idle
+# worker as busy. agy exposes no hook surface, so this fallback is the only
+# pane-side source; it is never armed as a semantic writer
+# (fm_busy_sources_for_harness trusts nothing for agy).
+fm_busy_agy_tail_busy() {
+  grep -v '^[[:space:]]*$' | tail -12 \
+    | grep -qiE 'esc[[:space:]]+to[[:space:]]+cancel'
+}
+
+# --- launch-prompt signatures (fm_busy_launch_prompt_parked) ----------------
+#
+# Each function consumes a captured pane tail on stdin (the caller's whole
+# tail40, NOT reduced to the last 12 non-blank lines the way the Grok/Rovo/AGY
+# busy footers above are): a bordered dialog box renders many short lines of
+# pure border/padding (`│  ...  │`) that are NOT whitespace-only, so a 12-line
+# non-blank reduction was verified live to push the box's own heading text
+# (e.g. Gemini's "How would you like to authenticate for this project?")
+# outside the window entirely, silently defeating the match. Matching the
+# full capture avoids that trap; a signature is still best-effort exactly like
+# the footer fallbacks - a screen taller than the capture can still scroll a
+# signature out, so absence never proves the pane is NOT parked, only that
+# this check cannot confirm it.
+
+# fm_busy_claude_launch_prompt_tail: Claude's workspace-trust dialog
+# ("Quick safety check: Is this a project you created or one you trust?",
+# re-verified live on Claude Code 2.1.278, docs/verification/runtime-backends.md
+# "Launch-prompt backstop signatures") and its separate external-CLAUDE.md-
+# imports dialog ("Allow external CLAUDE.md file imports?", verified by
+# disassembly, .agents/skills/harness-adapters/references/harness/claude.md
+# "Hook trust" sibling section). fm-claude-trust.sh pre-registers both before
+# launch; this is the backstop for when that registration did not take effect.
+# Each dialog's own question text is paired with one of its own rendered
+# option/footer lines, both required together: the question text alone is
+# plausible self-referential prose a firstmate-repo worker could easily render
+# on its own (fm-claude-trust.sh's header literally quotes both questions),
+# but the option/footer pairing only ever renders inside the real dialog.
+fm_busy_claude_launch_prompt_tail() {
+  local buf
+  buf=$(cat)
+  if printf '%s' "$buf" | grep -qiE "${FM_BUSY_CLAUDE_TRUST_PROMPT_REGEX:-Quick safety check: Is this a project you created or one you trust\\?}" \
+    && printf '%s' "$buf" | grep -qiE 'No, exit|Enter to confirm'; then
+    return 0
+  fi
+  printf '%s' "$buf" | grep -qiE "${FM_BUSY_CLAUDE_IMPORTS_PROMPT_REGEX:-Allow external CLAUDE\\.md file imports\\?}" \
+    && printf '%s' "$buf" | grep -qiE 'No, disable external imports|Yes, allow external imports'
+}
+
+# fm_busy_pi_launch_prompt_tail: Pi's project-trust dialog. Live-verified on
+# pi 0.86.1 (2026-09-22) in a fresh untrusted worktree carrying a project-local
+# .pi/extensions/ file (the shape a real ship/scout spawn always launches
+# into): the rendered heading is "Trust project folder?" and its declining
+# option is literally "Do not trust". An initial guess sourced only from the
+# installed binary's UI strings ("Project trust", the internal panel-title
+# component name, not this dialog's own rendered heading) was proven wrong by
+# that live run and never matched the real screen - which is exactly why this
+# class of check must be proven end to end rather than read off strings or a
+# name. Matching BOTH the heading and "Do not trust" keeps this from firing on
+# a worker's own prose that happens to use the common word "trust" alone.
+# Covers omp too: it shares Pi's engine and the same project-trust gate.
+fm_busy_pi_launch_prompt_tail() {
+  local buf
+  buf=$(cat)
+  printf '%s' "$buf" | grep -qiE "${FM_BUSY_PI_LAUNCH_PROMPT_REGEX:-Trust project folder\\?}" \
+    && printf '%s' "$buf" | grep -qiE 'Do not trust'
+}
+
+# fm_busy_gemini_launch_prompt_tail: Gemini's workspace-trust dialog ("Do you
+# trust the files in this folder?"), its first-run auth-method picker ("How
+# would you like to authenticate for this project?"), and the credential
+# entry it falls through to with no resolvable key ("Enter Gemini API Key").
+# GEMINI_CLI_TRUST_WORKSPACE=true (fm-spawn.sh's launch template) already
+# suppresses the first; the other two have no pre-registration and are the
+# primary target of this backstop. The trust dialog and the auth-method picker
+# were live-verified on gemini 0.60.0 in a credential-less scratch environment
+# (docs/verification/runtime-backends.md "Launch-prompt backstop signatures"),
+# and each question is paired with one of its own rendered option lines,
+# required together, for the same reason as Claude's pairing above: the
+# question text alone is plausible prose this very file's own comments could
+# render. The auth-method picker's live capture is also what proved the
+# full-capture match necessary: its heading renders more than 12 non-blank-
+# looking lines above the bordered box's bottom border. The API-key entry
+# screen is carried over from .agents/skills/harness-adapters/references/
+# harness/gemini.md "Trust, and why the two documented options are not
+# equivalent" rather than this guard's own live capture, and stays a single
+# marker: it is reached only after actively selecting that auth method, so
+# self-referential prose is a materially smaller risk there.
+fm_busy_gemini_launch_prompt_tail() {
+  local buf
+  buf=$(cat)
+  if printf '%s' "$buf" | grep -qiE "${FM_BUSY_GEMINI_TRUST_PROMPT_REGEX:-Do you trust the files in this folder\\?}" \
+    && printf '%s' "$buf" | grep -qiE "Trust folder|Don't trust"; then
+    return 0
+  fi
+  if printf '%s' "$buf" | grep -qiE "${FM_BUSY_GEMINI_AUTH_PROMPT_REGEX:-How would you like to authenticate for this project\\?}" \
+    && printf '%s' "$buf" | grep -qiE 'Use Gemini API Key|No authentication method selected'; then
+    return 0
+  fi
+  printf '%s' "$buf" | grep -qiE "${FM_BUSY_GEMINI_APIKEY_PROMPT_REGEX:-Enter Gemini API Key}"
+}
+
+# fm_busy_launch_prompt_parked: dispatch to the signature above for <harness>,
+# or fail when this harness has none. Consumes the tail on stdin. Scoped to
+# exactly the harnesses fm-spawn.sh arms with the fm-spawn busy source
+# (claude*, opencode*, pi, pi-signed, omp, gemini) since only those can ever
+# read a pinned "busy fm-spawn" record; codex and standalone Kimi already
+# classify unknown before a record is ever consulted, and opencode ships no
+# trust dialog at all.
+fm_busy_launch_prompt_parked() {  # <harness>
+  case "${1:-}" in
+    claude*) fm_busy_claude_launch_prompt_tail ;;
+    pi | pi-signed | omp) fm_busy_pi_launch_prompt_tail ;;
+    gemini) fm_busy_gemini_launch_prompt_tail ;;
+    *) return 1 ;;
+  esac
+}
+
 # fm_busy_classify: semantic classification for a task whose endpoint the
 # caller has already established as present. Prints "<verdict> <source>":
 # busy|idle|unknown plus the producing source (see header). Never probes
-# process state. <tail40> is optional pre-captured plain output used only by
-# the Grok arm; when absent the Grok arm captures through fm_backend_capture
-# if available, else reports unknown capture-failed.
+# process state. <tail40> is optional pre-captured plain output: the grok,
+# rovo, and agy arms capture it themselves through fm_backend_capture when it
+# is absent (or report unknown capture-failed if that is unavailable too),
+# while the launch-prompt backstop below has no capture fallback of its own -
+# without a supplied tail40 it is skipped entirely and a record still pinned
+# at the fm-spawn seed keeps reading busy fm-spawn, unchanged.
 fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
   local backend=$1 target=$2 harness=$3 id=$4 state=$5 tail40=${6-}
-  local out rc r_state r_source native log db
+  local out rc r_state r_source native log
   case "$harness" in
     kimi*)
       if ! fm_busy_kimi_verified; then
@@ -1124,21 +1058,6 @@ fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
       esac
       return 0
       ;;
-    agy*)
-      # Semantic, on demand: fold this task's bound conversation database.
-      # See fm_busy_agy_run_state above for the verified status mapping. The
-      # rendered `esc to cancel` footer is deliberately NOT consulted here.
-      if ! db=$(fm_busy_agy_conversation "$state" "$id"); then
-        printf 'unknown agy-conversation'
-        return 0
-      fi
-      case "$(fm_busy_agy_run_state "$db" 2>/dev/null)" in
-        busy) printf 'busy agy-conversation' ;;
-        idle) printf 'idle agy-conversation' ;;
-        *) printf 'unknown agy-conversation' ;;
-      esac
-      return 0
-      ;;
   esac
   out=$(fm_busy_record_read "$state" "$id") && rc=0 || rc=$?
   if [ "$rc" = 0 ]; then
@@ -1146,7 +1065,12 @@ fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
     out=${out#* }
     r_source=${out%% *}
     if fm_busy_source_trusted "$harness" "$r_source"; then
-      printf '%s %s' "$r_state" "$r_source"
+      if [ "$r_state" = busy ] && [ "$r_source" = fm-spawn ] && [ -n "$tail40" ] \
+        && printf '%s' "$tail40" | fm_busy_launch_prompt_parked "$harness"; then
+        printf 'unknown launch-prompt'
+      else
+        printf '%s %s' "$r_state" "$r_source"
+      fi
     else
       printf 'unknown source-mismatch'
     fi
@@ -1205,6 +1129,49 @@ fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
       fi
       return 0
       ;;
+    rovo*)
+      if [ -z "$tail40" ]; then
+        if command -v fm_backend_capture >/dev/null 2>&1; then
+          tail40=$(fm_backend_capture "$backend" "$target" 40 2>/dev/null) || {
+            printf 'unknown capture-failed'
+            return 0
+          }
+        else
+          printf 'unknown capture-failed'
+          return 0
+        fi
+      fi
+      # This fallback is best-effort: a long turn can scroll the busy marker
+      # out of the captured tail, so its absence means "can't tell," never
+      # definitive idle - matching the muse and cursor arms above.
+      if printf '%s' "$tail40" | fm_busy_rovo_tail_busy; then
+        printf 'busy rovo-regex'
+      else
+        printf 'unknown rovo-regex'
+      fi
+      return 0
+      ;;
+    agy)
+      if [ -z "$tail40" ]; then
+        if command -v fm_backend_capture >/dev/null 2>&1; then
+          tail40=$(fm_backend_capture "$backend" "$target" 40 2>/dev/null) || {
+            printf 'unknown capture-failed'
+            return 0
+          }
+        else
+          printf 'unknown capture-failed'
+          return 0
+        fi
+      fi
+      # Best-effort like rovo: a long turn can scroll the busy marker out of
+      # the captured tail, so its absence means "can't tell," never idle.
+      if printf '%s' "$tail40" | fm_busy_agy_tail_busy; then
+        printf 'busy agy-regex'
+      else
+        printf 'unknown agy-regex'
+      fi
+      return 0
+      ;;
   esac
   printf 'unknown missing'
 }
@@ -1228,7 +1195,8 @@ fm_busy_classify_live() {  # <backend> <target> <harness> <id> <state-dir> [expe
 # fm_busy_classify_meta: classify a task from its recorded metadata, so every
 # consumer resolves backend, target, and harness the same way instead of
 # re-deriving them. Requires fm-backend.sh to be sourced. <tail40> is
-# optional pre-captured plain output reused by the Grok arm.
+# optional pre-captured plain output reused by the contract's rendered-text
+# checks: the Grok/Rovo/AGY busy fallbacks and the launch-prompt backstop.
 fm_busy_classify_meta() {  # <meta-file> <id> <state-dir> [tail40]
   local meta=$1 id=$2 state=$3 tail40=${4-} backend target harness
   [ -f "$meta" ] || { printf 'unknown missing'; return 0; }

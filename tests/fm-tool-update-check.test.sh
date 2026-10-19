@@ -131,7 +131,7 @@ test_path_skew_is_reported_from_every_copy() {
   assert_contains "$report" "0.8.2 is installed at $fresh/$TOOL" "the report does not name the newer installed copy, so no other PATH copy was asked for its version"
   assert_not_contains "$report" "update available" "PATH skew must not be reported as a published update"
   assert_contains "$report" "$(printf 'tool updates:')" "the report is missing its one-line prefix"
-  [ "$(wc -l < "$out")" = 1 ] || fail "the report must be exactly one line for the wake record"
+  [ "$(wc -l < "$out" | tr -d '[:space:]')" = 1 ] || fail "the report must be exactly one line for the wake record"
   pass "PATH skew is reported by asking every copy on PATH for its own version"
 }
 
@@ -236,6 +236,56 @@ SH
   pass "a tool's own update announcement is read from its output"
 }
 
+test_announced_update_already_installed_is_not_double_reported() {
+  local home first second out report
+  # One completed install: the newer copy sits on PATH behind the older
+  # self-installing copy, so PATH skew is already reported. The older copy
+  # keeps announcing the very release it has already been superseded by, and
+  # that announcement must not also be read as a still-available update.
+  home=$(make_home announce-installed)
+  first="$TMP_ROOT/announce-installed/old/bin"
+  second="$TMP_ROOT/announce-installed/new/bin"
+  mkdir -p "$first" "$second"
+  cat > "$first/no-mistakes-fixture" <<'SH'
+#!/usr/bin/env bash
+printf '1.46.0\n'
+printf 'A new version of no-mistakes is available: v1.46.0 -> v1.47.0\n' >&2
+SH
+  chmod 0755 "$first/no-mistakes-fixture"
+  make_copy "$second" "no-mistakes-fixture" '1.47.0'
+  write_config "$home" '{"tools":[{"name":"no-mistakes","command":"no-mistakes-fixture","announce_pattern":"A new version of no-mistakes is available: [^ ]+ -> [^ ]+"}]}'
+  out="$home/out.txt"
+  run_check "$home" "$(fixture_path "$first:$second")" "$out"
+  report=$(cat "$out")
+  assert_contains "$report" "no-mistakes update not in effect" "the already-installed newer copy was not reported as PATH skew"
+  assert_not_contains "$report" "update available" "an announcement naming an already-installed version was also reported as a still-available update"
+  pass "an announcement naming an already-installed version is not also reported as an available update"
+}
+
+test_announced_update_newer_than_installed_is_still_reported() {
+  local home first second out report
+  # Control: the announced version is genuinely newer than every installed
+  # copy, so it must still be reported as available alongside the skew.
+  home=$(make_home announce-not-installed)
+  first="$TMP_ROOT/announce-not-installed/old/bin"
+  second="$TMP_ROOT/announce-not-installed/new/bin"
+  mkdir -p "$first" "$second"
+  cat > "$first/no-mistakes-fixture" <<'SH'
+#!/usr/bin/env bash
+printf '1.46.0\n'
+printf 'A new version of no-mistakes is available: v1.46.0 -> v1.47.0\n' >&2
+SH
+  chmod 0755 "$first/no-mistakes-fixture"
+  make_copy "$second" "no-mistakes-fixture" '1.46.5'
+  write_config "$home" '{"tools":[{"name":"no-mistakes","command":"no-mistakes-fixture","announce_pattern":"A new version of no-mistakes is available: [^ ]+ -> [^ ]+"}]}'
+  out="$home/out.txt"
+  run_check "$home" "$(fixture_path "$first:$second")" "$out"
+  report=$(cat "$out")
+  assert_contains "$report" "no-mistakes update available: A new version of no-mistakes is available: v1.46.0 -> v1.47.0" "an announcement naming a version newer than every installed copy was not reported"
+  assert_contains "$report" "no-mistakes update not in effect" "the installed newer-than-resolved copy was not reported as PATH skew"
+  pass "an announcement naming a version newer than every installed copy is still reported as available"
+}
+
 test_announcement_is_read_from_a_second_command() {
   local home dir out report quiet_home
   # The real no-mistakes prints its version for --version but announces a new
@@ -311,7 +361,7 @@ test_one_broken_pattern_does_not_blind_the_rest_of_the_sweep() {
   report=$(cat "$out")
   assert_contains "$report" "herdr update not in effect: PATH resolves 0.8.0 at $stale/$TOOL" "a broken pattern on another tool suppressed the PATH skew report"
   assert_contains "$report" "no-mistakes check failed: announce_pattern is not a usable extended regular expression" "the tool whose pattern cannot be used was not named"
-  [ "$(wc -l < "$out")" = 1 ] || fail "the report must stay exactly one line"
+  [ "$(wc -l < "$out" | tr -d '[:space:]')" = 1 ] || fail "the report must stay exactly one line"
   pass "a broken pattern is reported for its own tool and the rest of the sweep still reports"
 }
 
@@ -336,7 +386,15 @@ SH
   chmod 0755 "$dir/no-mistakes-fixture"
   write_config "$home" '{"tools":[{"name":"no-mistakes","command":"no-mistakes-fixture","version_args":["--version"],"announce_args":["--help"],"announce_pattern":"A new version of no-mistakes is available: [^ ]+ -> [^ ]+"}]}'
   out="$home/out.txt"
-  run_check "$home" "$(fixture_path "$dir")" "$out" FM_TOOL_UPDATE_BUDGET_SECS=1
+  # The deadline is whole-second granular (real_epoch is `date +%s`), so a
+  # budget of 1 leaves headroom anywhere in (0, 1] seconds: when the sweep
+  # starts near the end of a second the very first budget check already reads
+  # as exhausted and the sweep reports "before every copy answered" instead of
+  # reaching the announcement step this case is about. A budget of 2 guarantees
+  # more than a full second of headroom for the millisecond-scale work before
+  # the copy loop, while the version probe below (bounded, then sleeping 30)
+  # still exhausts the budget before the announcement check.
+  run_check "$home" "$(fixture_path "$dir")" "$out" FM_TOOL_UPDATE_BUDGET_SECS=2
   report=$(cat "$out")
   assert_contains "$report" "no-mistakes check failed: the time budget ran out before the update announcement was checked" "an announcement source that was never asked was not reported"
   pass "an announcement source the budget could not reach is reported, not read as current"
@@ -377,6 +435,147 @@ test_quiet_tool_with_announce_pattern_is_silent() {
   run_check "$home" "$(fixture_path "$dir")" "$out"
   [ ! -s "$out" ] || fail "a tool announcing nothing produced a report: $(cat "$out")"
   pass "a tool that announces nothing stays silent"
+}
+
+# --- published version documents --------------------------------------------
+
+# A fixture curl in the probe PATH answers every fetch with one canned body (or
+# the given failure status), so no case reaches the network. The check must use
+# whatever curl PATH resolves, which is how the fixture takes the real one's
+# place without touching it.
+make_curl_fixture() {
+  local dir=$1 body=$2 status=${3:-0}
+  mkdir -p "$dir"
+  cat > "$dir/curl" <<SH
+#!/usr/bin/env bash
+[ "$status" -eq 0 ] || exit "$status"
+printf '%s\n' '$body'
+SH
+  chmod 0755 "$dir/curl"
+}
+
+test_published_version_newer_than_installed_is_reported() {
+  local home dir fresh out report
+  home=$(make_home version-url)
+  dir="$TMP_ROOT/version-url/bin"
+  make_copy "$dir" claude-fixture '2.1.271 (Claude Code)'
+  make_curl_fixture "$dir" '2.1.273'
+  write_config "$home" '{"tools":[{"name":"claude","command":"claude-fixture","version_url":"https://downloads.example.invalid/latest"}]}'
+  out="$home/out.txt"
+  run_check "$home" "$(fixture_path "$dir")" "$out"
+  report=$(cat "$out")
+  assert_contains "$report" "claude update available: 2.1.273 published at https://downloads.example.invalid/latest, PATH resolves 2.1.271" "a newer published version was not reported against the version PATH resolves"
+  assert_not_contains "$report" "not in effect" "a published update must not be reported as PATH skew"
+
+  fresh="$TMP_ROOT/version-url/new/bin"
+  make_copy "$fresh" claude-fixture '2.1.272 (Claude Code)'
+  run_check "$home" "$(fixture_path "$dir:$fresh")" "$out"
+  report=$(cat "$out")
+  assert_contains "$report" "claude update available: 2.1.273 published at https://downloads.example.invalid/latest, PATH resolves 2.1.271" "a published version newer than every installed copy was not reported"
+  assert_contains "$report" "claude update not in effect: PATH resolves 2.1.271 at $dir/claude-fixture but 2.1.272 is installed at $fresh/claude-fixture" "a published update suppressed the installed PATH skew"
+  pass "a version_url newer than every installed copy is reported as an available update"
+}
+
+test_published_version_already_installed_is_not_double_reported() {
+  local home stale fresh installed out report
+  home=$(make_home version-url-installed)
+  stale="$TMP_ROOT/version-url-installed/old/bin"
+  fresh="$TMP_ROOT/version-url-installed/new/bin"
+  make_copy "$stale" claude-fixture '2.1.271 (Claude Code)'
+  make_curl_fixture "$stale" '2.1.273'
+  write_config "$home" '{"tools":[{"name":"claude","command":"claude-fixture","version_url":"https://downloads.example.invalid/latest"}]}'
+  out="$home/out.txt"
+
+  for installed in 2.1.273 2.1.274; do
+    make_copy "$fresh" claude-fixture "$installed (Claude Code)"
+    run_check "$home" "$(fixture_path "$stale:$fresh")" "$out"
+    report=$(cat "$out")
+    assert_contains "$report" "claude update not in effect: PATH resolves 2.1.271 at $stale/claude-fixture but $installed is installed at $fresh/claude-fixture" "a published version already installed was not reported as PATH skew"
+    assert_not_contains "$report" "update available" "a published version no newer than an installed copy was reported as available"
+    assert_not_contains "$report" "check failed" "readable installed and published versions produced a check failure"
+
+    run_check "$home" "$(fixture_path "$fresh:$stale")" "$out"
+    [ ! -s "$out" ] || fail "a version_url no newer than the active copy must be silent, got: $(cat "$out")"
+  done
+  pass "a version_url no newer than an installed copy reports only PATH skew when needed"
+}
+
+test_published_version_equal_to_path_is_silent() {
+  local home dir out
+  home=$(make_home version-url-current)
+  dir="$TMP_ROOT/version-url-current/bin"
+  make_copy "$dir" claude-fixture '2.1.273 (Claude Code)'
+  make_curl_fixture "$dir" '2.1.273'
+  write_config "$home" '{"tools":[{"name":"claude","command":"claude-fixture","version_url":"https://downloads.example.invalid/latest"}]}'
+  out="$home/out.txt"
+  run_check "$home" "$(fixture_path "$dir")" "$out"
+  [ ! -s "$out" ] || fail "a current tool with version_url must be silent, got: $(cat "$out")"
+  pass "a version_url that matches the PATH version is silent"
+}
+
+test_unreadable_version_url_is_a_failure_not_a_pass() {
+  local home dir out
+  home=$(make_home version-url-dead)
+  dir="$TMP_ROOT/version-url-dead/bin"
+  make_copy "$dir" claude-fixture '2.1.271 (Claude Code)'
+  make_curl_fixture "$dir" '' 22
+  write_config "$home" '{"tools":[{"name":"claude","command":"claude-fixture","version_url":"https://downloads.example.invalid/latest"}]}'
+  out="$home/out.txt"
+  run_check "$home" "$(fixture_path "$dir")" "$out"
+  assert_contains "$(cat "$out")" "claude check failed: https://downloads.example.invalid/latest did not report a version" "a version_url that could not be read was taken for current"
+
+  make_curl_fixture "$dir" 'no version here'
+  rm -f "$home/state/.tool-updates"
+  run_check "$home" "$(fixture_path "$dir")" "$out"
+  assert_contains "$(cat "$out")" "claude check failed: https://downloads.example.invalid/latest did not report a version" "a version_url body with no version was taken for current"
+  pass "a version_url that does not answer with a version is a check failure"
+}
+
+# A probe PATH with every ambient binary except curl, so the version_url probe
+# has no reader while the check's other tools (jq, git, date, grep, timeout)
+# keep working. Built from symlinks, so the host's binaries are never moved.
+make_path_without_curl() {
+  local dir=$1 path_entry entry base
+  mkdir -p "$dir"
+  while IFS= read -r path_entry; do
+    [ -n "$path_entry" ] && [ -d "$path_entry" ] || continue
+    for entry in "$path_entry"/*; do
+      base=${entry##*/}
+      [ "$base" = curl ] && continue
+      [ -e "$dir/$base" ] && continue
+      [ -x "$entry" ] && [ ! -d "$entry" ] || continue
+      ln -s "$entry" "$dir/$base" 2>/dev/null || true
+    done
+  done < <(printf '%s\n' "$PATH" | tr ':' '\n')
+}
+
+test_missing_curl_is_a_failure_not_a_pass() {
+  local home dir nobin out
+  home=$(make_home version-url-nocurl)
+  dir="$TMP_ROOT/version-url-nocurl/bin"
+  make_copy "$dir" claude-fixture '2.1.271 (Claude Code)'
+  nobin="$TMP_ROOT/version-url-nocurl/nobin"
+  make_path_without_curl "$nobin"
+  write_config "$home" '{"tools":[{"name":"claude","command":"claude-fixture","version_url":"https://downloads.example.invalid/latest"}]}'
+  out="$home/out.txt"
+  run_check "$home" "$dir:$nobin" "$out"
+  assert_contains "$(cat "$out")" "claude check failed: curl is required to read https://downloads.example.invalid/latest" "a host without curl took the tool for current"
+  pass "a missing curl is a check failure"
+}
+
+test_version_url_must_be_https_with_a_command() {
+  local home out
+  home=$(make_home version-url-schema)
+  out="$home/out.txt"
+  write_config "$home" '{"tools":[{"name":"claude","command":"claude","version_url":"http://downloads.example.invalid/latest"}]}'
+  run_check "$home" "$PATH" "$out"
+  assert_contains "$(cat "$out")" "tool claude version_url must be one https URL" "a plain-http version_url was accepted"
+
+  write_config "$home" '{"tools":[{"name":"claude","git":{"repo":"/tmp"},"version_url":"https://downloads.example.invalid/latest"}]}'
+  rm -f "$home/state/.tool-updates"
+  run_check "$home" "$PATH" "$out"
+  assert_contains "$(cat "$out")" "tool claude version_url needs command" "a version_url with no command to compare against was accepted"
+  pass "version_url is validated as one https URL beside a command"
 }
 
 # --- git sources ------------------------------------------------------------
@@ -677,25 +876,25 @@ test_findings_are_reported_once_until_they_change() {
 }
 
 test_an_overlong_report_says_it_was_cut() {
-  local home out report i tools=
+  local home out report i tools_json=
   # Many watched tools can outgrow one line. The report must say it was cut
   # rather than end mid-finding as if that were everything found.
   home=$(make_home long)
   for i in $(seq 1 30); do
-    [ -z "$tools" ] || tools="$tools,"
-    tools="$tools{\"name\":\"absent-tool-$i\",\"command\":\"fm-absent-fixture-$i\"}"
+    [ -z "$tools_json" ] || tools_json="$tools_json,"
+    tools_json="$tools_json{\"name\":\"absent-tool-$i\",\"command\":\"fm-absent-fixture-$i\"}"
   done
-  write_config "$home" "{\"tools\":[$tools]}"
+  write_config "$home" "{\"tools\":[$tools_json]}"
   out="$home/out.txt"
   run_check "$home" "$PATH" "$out"
   report=$(cat "$out")
   assert_contains "$report" "[truncated]" "an over-long report was cut without saying so"
-  [ "$(wc -l < "$out")" = 1 ] || fail "the cut report must still be exactly one line"
+  [ "$(wc -l < "$out" | tr -d '[:space:]')" = 1 ] || fail "the cut report must still be exactly one line"
   pass "an over-long report is cut with the shared truncation marker"
 }
 
 test_a_finding_past_the_cut_is_still_reported() {
-  local home stale fresh out report i tools=
+  local home stale fresh out report i tools_json=
   # Once a report is long enough to be cut, a new finding lands past the cut and
   # leaves the printed line unchanged. It still has to count as news, or the PATH
   # skew this check exists for would be suppressed for good on a busy home.
@@ -705,17 +904,17 @@ test_a_finding_past_the_cut_is_still_reported() {
   make_copy "$stale" "$TOOL" 'herdr 0.8.0'
   make_copy "$fresh" "$TOOL" 'herdr 0.8.2'
   for i in $(seq 1 30); do
-    [ -z "$tools" ] || tools="$tools,"
-    tools="$tools{\"name\":\"absent-tool-$i\",\"command\":\"fm-absent-fixture-$i\"}"
+    [ -z "$tools_json" ] || tools_json="$tools_json,"
+    tools_json="$tools_json{\"name\":\"absent-tool-$i\",\"command\":\"fm-absent-fixture-$i\"}"
   done
   out="$home/out.txt"
-  write_config "$home" "{\"tools\":[$tools]}"
+  write_config "$home" "{\"tools\":[$tools_json]}"
   run_check "$home" "$(fixture_path "$stale:$fresh")" "$out"
   assert_contains "$(cat "$out")" "[truncated]" "the first report was not long enough to be cut, so this case proves nothing"
 
   # The skew tool goes last, so its finding falls past the cut and the printed
   # line is byte identical to the one the first sweep already recorded.
-  write_config "$home" "{\"tools\":[$tools,{\"name\":\"herdr\",\"command\":\"$TOOL\"}]}"
+  write_config "$home" "{\"tools\":[$tools_json,{\"name\":\"herdr\",\"command\":\"$TOOL\"}]}"
   run_check "$home" "$(fixture_path "$stale:$fresh")" "$out"
   report=$(cat "$out")
   [ -n "$report" ] || fail "a finding past the cut produced no report at all, so it can never reach the watcher"
@@ -983,9 +1182,6 @@ test_armed_check_wakes_the_watcher_with_the_skew_report() {
   make_copy "$stale" "$TOOL" 'herdr 0.8.0'
   make_copy "$fresh" "$TOOL" 'herdr 0.8.2'
   write_config "$home" "{\"tools\":[{\"name\":\"herdr\",\"command\":\"$TOOL\"}]}"
-  printf '%s\n' fm-pr-check-migration-scan-v1 > "$home/state/.pr-check-migration-scan-v1"
-  printf '%s\n' fm-pr-check-migration-v1 > "$home/state/.pr-check-migration-v1"
-  chmod 0600 "$home/state/.pr-check-migration-scan-v1" "$home/state/.pr-check-migration-v1"
   FM_HOME="$home" "$CHECK" arm >/dev/null || fail "could not arm the watched tool check"
 
   out="$home/out.txt"
@@ -1007,12 +1203,20 @@ test_one_copy_reached_twice_is_probed_once
 test_unreadable_version_is_a_failure_not_a_pass
 test_missing_command_is_reported
 test_announced_update_is_reported_from_the_tool_itself
+test_announced_update_already_installed_is_not_double_reported
+test_announced_update_newer_than_installed_is_still_reported
 test_announcement_is_read_from_a_second_command
 test_unusable_announce_pattern_is_reported_not_read_as_silence
 test_one_broken_pattern_does_not_blind_the_rest_of_the_sweep
 test_an_unchecked_announcement_source_is_not_read_as_current
 test_an_announcement_probe_that_does_not_answer_is_reported
 test_quiet_tool_with_announce_pattern_is_silent
+test_published_version_newer_than_installed_is_reported
+test_published_version_already_installed_is_not_double_reported
+test_published_version_equal_to_path_is_silent
+test_unreadable_version_url_is_a_failure_not_a_pass
+test_missing_curl_is_a_failure_not_a_pass
+test_version_url_must_be_https_with_a_command
 test_commits_behind_origin_are_reported
 test_default_branch_is_detected_when_branch_is_omitted
 test_default_branch_is_asked_of_the_remote_when_the_clone_has_no_record

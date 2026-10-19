@@ -3520,6 +3520,50 @@ assert_not_contains "$verbs" '"working"' \
   "an earlier line in the same log must not be reported as the state"
 pass "the state verb is a closed vocabulary, so free text cannot ride out on it"
 
+# A worker's status log can carry a declared state and then a line of plain
+# prose appended after it - a note to itself, or context for a human reader.
+# The reader must speak the newest EVENT, not degrade to a note because the
+# tail's last line happens to be prose (issue #4756).
+printf 'paused: holding for the upstream tool release\n' \
+  > "$VERB_HOME/state/four.status"
+printf 'The release window opens tomorrow.\n' >> "$VERB_HOME/state/four.status"
+fm_write_meta "$VERB_HOME/state/four.meta" kind=ship
+cat >> "$VERB_HOME/data/backlog.md" <<'EOF'
+- [ ] four - Fourth thing (repo: d) (kind: ship)
+EOF
+
+after_prose=$(verb_status --scope counts) || fail "counts scope after trailing prose failed"
+assert_contains "$after_prose" '"paused": 1' \
+  "the newest declared status event must survive a trailing prose line"
+assert_contains "$after_prose" '"note": 1' \
+  "trailing prose must not itself be counted as an extra note"
+
+after_prose_full=$(verb_status --scope full) || fail "full scope after trailing prose failed"
+assert_contains "$after_prose_full" '"id": "four"' \
+  "the fourth task should be nameable at full scope"
+assert_contains "$after_prose_full" '"state": "paused"' \
+  "full scope must report the newest event's state, not the last line's"
+pass "the reader scans back through the tail for the newest status event"
+
+# Control: an UNRECOGNISED verb-shaped prefix must not let trailing prose
+# resurrect it either. A prose line after a bad declaration is still skipped,
+# and the bad declaration itself is still a note rather than a state.
+printf '%s: waiting on their next release\n' "$CUSTOMER_TOKEN" \
+  > "$VERB_HOME/state/five.status"
+printf 'A private aside for a human reader, not the state machine.\n' \
+  >> "$VERB_HOME/state/five.status"
+fm_write_meta "$VERB_HOME/state/five.meta" kind=ship
+cat >> "$VERB_HOME/data/backlog.md" <<'EOF'
+- [ ] five - Fifth thing (repo: e) (kind: ship)
+EOF
+
+control=$(verb_status --scope full) || fail "full scope with an unrecognised trailing verb failed"
+assert_contains "$control" '"id": "five"' \
+  "the fifth task should be nameable at full scope"
+assert_contains "$control" '"state": "note"' \
+  "an unrecognised verb-shaped prefix must still report note, never hide behind trailing prose"
+pass "an unrecognised declaration cannot hide behind trailing prose either"
+
 # The two halves of one answer must come from one home. Every script that sets
 # FM_DATA_OVERRIDE sets FM_STATE_OVERRIDE beside it, so a reader that resolved one
 # and not the other would count workers and notes from one home while counting
@@ -3646,7 +3690,7 @@ pass "the configured read scope is honoured"
 # The point of the boundary: real work is queued for firstmate, not done by the
 # voice agent. It reuses bin/fm-inbox.sh rather than carrying a second queue.
 
-before=$(find "$HOME_FIXTURE/state" -maxdepth 2 -name '*.note' | wc -l)
+before=$(find "$HOME_FIXTURE/state" -maxdepth 2 -name '*.note' | wc -l | tr -d '[:space:]')
 [ "$before" = 0 ] || fail "fixture should start with an empty inbox"
 
 handed=$(FM_HOME="$HOME_FIXTURE" python3 "$ROOT/bin/fm_voice_records.py" queue \
@@ -3656,7 +3700,7 @@ assert_contains "$handed" '"queued": true' "handover should report the request q
 assert_contains "$handed" 'did not do the work yourself' \
   "handover should tell the model it handed over rather than acted"
 
-notes=$(find "$HOME_FIXTURE/state/inbox" -maxdepth 1 -name '*.note' | wc -l)
+notes=$(find "$HOME_FIXTURE/state/inbox" -maxdepth 1 -name '*.note' | wc -l | tr -d '[:space:]')
 [ "$notes" = 1 ] || fail "handover should leave exactly one note, found $notes"
 note_file=$(find "$HOME_FIXTURE/state/inbox" -maxdepth 1 -name '*.note' | head -1)
 assert_grep 'Refactor the login module' "$note_file" \
@@ -3687,7 +3731,7 @@ FM_STATE_OVERRIDE="$alt_state" python3 "$ROOT/bin/fm_voice_records.py" queue \
   "Chase the flaky retry test" --home "$alt_home" >/dev/null \
   || fail "handover with an overridden state directory failed"
 
-moved=$(find "$alt_state/inbox" -maxdepth 1 -name '*.note' | wc -l)
+moved=$(find "$alt_state/inbox" -maxdepth 1 -name '*.note' | wc -l | tr -d '[:space:]')
 [ "$moved" = 1 ] || \
   fail "the queue should write into the overridden state directory, found $moved"
 [ ! -e "$alt_home/state/inbox" ] || \

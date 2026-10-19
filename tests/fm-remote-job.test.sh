@@ -19,10 +19,14 @@ REAL_GIT=$(command -v git)
 OTHER_PID=
 RECOVERY_WORKER_PID=
 REPEAT_WORKER_PID=
-IDLE_WORKER_PID=
-IDLE_EXPIRY_PID=
-TRIPWIRE_WORKER_PID=
-DISPLACED_WORKER_PID=
+RESTART_SUPERVISOR_PID=
+LOST_TERM_PID=
+REPLACEMENT_OWNER_PID=
+STALL_WORKER_PID=
+STALL_REPLACEMENT_PID=
+STALL_JOB_GROUP=
+QUIET_WORKER_PID=
+SCAN_LANE_PID=
 mkdir -p "$REMOTE_ROOT/bin" "$REMOTE_HOME" "$ACCOUNT_HOME" "$RUNTIME_BIN"
 # worker.pid records the serving child, not its restart supervisor, so stopping
 # that pid alone leaves the supervisor to respawn - the leak
@@ -31,10 +35,18 @@ cleanup_remote_job_fixture() {
   [ -z "$OTHER_PID" ] || kill "$OTHER_PID" 2>/dev/null || true
   [ -z "$RECOVERY_WORKER_PID" ] || kill "$RECOVERY_WORKER_PID" 2>/dev/null || true
   [ -z "$REPEAT_WORKER_PID" ] || kill "$REPEAT_WORKER_PID" 2>/dev/null || true
-  [ -z "$IDLE_WORKER_PID" ] || kill "$IDLE_WORKER_PID" 2>/dev/null || true
-  [ -z "$IDLE_EXPIRY_PID" ] || kill "$IDLE_EXPIRY_PID" 2>/dev/null || true
-  [ -z "$TRIPWIRE_WORKER_PID" ] || kill "$TRIPWIRE_WORKER_PID" 2>/dev/null || true
-  [ -z "$DISPLACED_WORKER_PID" ] || fm_remote_job_stop_worker_tree "$DISPLACED_WORKER_PID" || true
+  [ -z "$RESTART_SUPERVISOR_PID" ] || kill -KILL "$RESTART_SUPERVISOR_PID" 2>/dev/null || true
+  [ -z "$LOST_TERM_PID" ] || kill -KILL "$LOST_TERM_PID" 2>/dev/null || true
+  [ -z "$REPLACEMENT_OWNER_PID" ] || kill -KILL "$REPLACEMENT_OWNER_PID" 2>/dev/null || true
+  [ -z "$QUIET_WORKER_PID" ] || kill -KILL "$QUIET_WORKER_PID" 2>/dev/null || true
+  [ -z "$SCAN_LANE_PID" ] || kill -KILL "$SCAN_LANE_PID" 2>/dev/null || true
+  local stall_pid
+  for stall_pid in "$STALL_WORKER_PID" "$STALL_REPLACEMENT_PID"; do
+    [ -n "$stall_pid" ] || continue
+    kill -KILL "$stall_pid" 2>/dev/null || true
+    wait "$stall_pid" 2>/dev/null || true
+  done
+  [ -z "$STALL_JOB_GROUP" ] || kill -KILL -- "-$STALL_JOB_GROUP" 2>/dev/null || true
   if [ -f "$STATE_ROOT/worker.pid" ]; then
     fm_remote_job_stop_worker_tree "$(cat "$STATE_ROOT/worker.pid")" || true
   fi
@@ -97,6 +109,85 @@ git -C "$REMOTE_ROOT" config user.name Test
 git -C "$REMOTE_ROOT" add AGENTS.md bin
 git -C "$REMOTE_ROOT" commit -qm 'remote job fixture'
 
+# Observe the actual sleep executable boundary for the result consumer, a
+# top-level command lane, and the dispatcher. Re-source the public library as
+# callers may do; its own dispatcher default must not become a legacy override.
+poll_cadence_case() (
+  local label=$1 legacy=$2 active=$3 expected=$4 dispatch=$5 poll_dir pid='' i
+  poll_dir="$TMP_ROOT/poll-$label"
+  mkdir -p "$poll_dir/bin"
+  cat > "$poll_dir/bin/sleep" <<'SH'
+#!/bin/bash
+printf '%s\n' "$1" >> "$FM_POLL_SLEEP_LOG"
+exec /bin/sleep "$@"
+SH
+  chmod +x "$poll_dir/bin/sleep"
+  trap '[ -z "$pid" ] || { kill -TERM "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }' EXIT
+  unset FM_REMOTE_JOB_POLL_SECONDS FM_REMOTE_JOB_ACTIVE_POLL_SECONDS
+  # shellcheck disable=SC2030 # The legacy override is local to this cadence fixture.
+  [ -z "$legacy" ] || export FM_REMOTE_JOB_POLL_SECONDS="$legacy"
+  # shellcheck disable=SC2030 # The active override is local to this cadence fixture.
+  [ -z "$active" ] || export FM_REMOTE_JOB_ACTIVE_POLL_SECONDS="$active"
+  export FM_REMOTE_JOB_STATE_ROOT="$poll_dir/state" FM_ROOT_OVERRIDE="$REMOTE_ROOT"
+  # shellcheck disable=SC2030 # Each cadence fixture owns its subshell's bounds.
+  export FM_REMOTE_JOB_QUEUE_TIMEOUT=60 FM_REMOTE_JOB_TIMEOUT=30
+  # shellcheck disable=SC2030 # The recording executable is local to this fixture.
+  export PATH="$poll_dir/bin:$PATH" FM_POLL_SLEEP_LOG="$poll_dir/sleeps"
+  # shellcheck source=bin/fm-remote-job-lib.sh
+  . "$ROOT/bin/fm-remote-job-lib.sh"
+  # shellcheck source=bin/fm-remote-job-lib.sh
+  . "$ROOT/bin/fm-remote-job-lib.sh"
+  fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
+    fm-delay-job.sh 0.8 "$poll_dir/ran" </dev/null >/dev/null || fail "$FM_REMOTE_JOB_ERROR"
+  # Publish a real bounded result after the caller has entered its wait, without
+  # a lane's own samples contaminating this consumer-only executable log.
+  (
+    /bin/sleep 0.8
+    : > "$FM_REMOTE_JOB_JOBS/$FM_REMOTE_JOB_ID/stdout"
+    : > "$FM_REMOTE_JOB_JOBS/$FM_REMOTE_JOB_ID/stderr"
+    printf '0\n' > "$FM_REMOTE_JOB_JOBS/$FM_REMOTE_JOB_ID/exit"
+    fm_remote_job_write_state "$FM_REMOTE_JOB_JOBS/$FM_REMOTE_JOB_ID" 'done'
+  ) &
+  pid=$!
+  fm_remote_job_wait "$ACCOUNT_HOME" "$FM_REMOTE_JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
+  wait "$pid" || fail "$label result producer failed"
+  pid=''
+  [ "$FM_REMOTE_JOB_EXIT" -eq 0 ] || fail "$label result consumer lost the exit status"
+  grep -qx "$expected" "$FM_POLL_SLEEP_LOG" || fail "$label consumer never sampled at $expected seconds"
+  [ "$(sort -u "$FM_POLL_SLEEP_LOG")" = "$expected" ] || fail "$label consumer used another cadence"
+
+  : > "$FM_POLL_SLEEP_LOG"
+  fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
+    fm-delay-job.sh 0.8 "$poll_dir/ran" </dev/null >/dev/null || fail "$FM_REMOTE_JOB_ERROR"
+  HOME="$ACCOUNT_HOME" "$BASH" "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --lane "$FM_REMOTE_JOB_ID" &
+  pid=$!
+  wait "$pid" || fail "$label command lane failed"
+  pid=''
+  [ -e "$poll_dir/ran" ] || fail "$label lane did not execute its command"
+  [ "$(fm_remote_job_read_state "$FM_REMOTE_JOB_JOBS/$FM_REMOTE_JOB_ID")" = 'done' ] || fail "$label lane did not publish completion"
+  grep -qx "$expected" "$FM_POLL_SLEEP_LOG" || fail "$label lane never sampled at $expected seconds"
+  if [ "$expected" != 0.05 ]; then
+    ! grep -qx 0.05 "$FM_POLL_SLEEP_LOG" || fail "$label lane still sampled at the dispatcher default"
+  fi
+
+  : > "$FM_POLL_SLEEP_LOG"
+  HOME="$ACCOUNT_HOME" "$BASH" "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" > "$poll_dir/worker.log" 2>&1 &
+  pid=$!
+  for ((i = 0; i < 200; i++)); do
+    grep -qx 1 "$FM_POLL_SLEEP_LOG" && break
+    /bin/sleep 0.05
+  done
+  grep -qx 1 "$FM_POLL_SLEEP_LOG" || fail "$label dispatcher never reached its one-second quiet wait"
+  [ "$(grep -cx "$dispatch" "$FM_POLL_SLEEP_LOG")" -eq 4 ] || fail "$label dispatcher did not limit its fast burst to four $dispatch-second waits"
+  kill -TERM "$pid" || fail "$label dispatcher stopped unexpectedly"
+  wait "$pid" 2>/dev/null || true
+  pid=''
+  pass "$label: result and command samples use $expected seconds; dispatcher uses four $dispatch-second waits then one second"
+)
+poll_cadence_case default '' '' 0.25 0.05 || exit 1
+poll_cadence_case legacy 0.07 '' 0.07 0.07 || exit 1
+poll_cadence_case active 0.07 0.12 0.12 0.07 || exit 1
+
 DEFAULT_STATE="$TMP_ROOT/default-timeout-jobs"
 DEFAULT_BOUNDS=$(
   unset FM_REMOTE_JOB_QUEUE_TIMEOUT
@@ -126,6 +217,40 @@ export FM_REMOTE_JOB_QUEUE_TIMEOUT=5
 export FM_REMOTE_JOB_TIMEOUT=5
 # shellcheck source=bin/fm-remote-job-lib.sh
 . "$ROOT/bin/fm-remote-job-lib.sh"
+
+# ps lstart follows the caller's locale (de_DE renders "Fr. 16 Okt. ..."),
+# while lock and claim ownership records are written by one process and
+# verified by others, including SSH callers with no locale. A recorded live
+# owner must still verify under a checker whose locale renders lstart
+# differently, or the checker declares it dead and a second worker splits the
+# queue - the z590 remote job worker churn.
+IDENTITY_LOCALE=
+while IFS= read -r CANDIDATE; do
+  [ -n "$IDENTITY_LOCALE" ] && break
+  case "$CANDIDATE" in C|C.*|POSIX|en_US*) continue ;; esac
+  [ "$(LC_ALL="$CANDIDATE" ps -p "$$" -o lstart= 2>/dev/null)" = "$(LC_ALL=C ps -p "$$" -o lstart= 2>/dev/null)" ] && continue
+  IDENTITY_LOCALE=$CANDIDATE
+done <<EOF
+$(locale -a 2>/dev/null)
+EOF
+if [ -z "$IDENTITY_LOCALE" ]; then
+  printf 'note: no installed locale renders ps lstart differently from C; locale-invariance case is inert here\n'
+fi
+if [ -n "$IDENTITY_LOCALE" ]; then
+  RECORDED_START=$(LC_ALL="$IDENTITY_LOCALE" fm_remote_job_process_start "$$")
+  CHECKED_START=$(LC_ALL=C fm_remote_job_process_start "$$")
+  [ "$RECORDED_START" = "$CHECKED_START" ] \
+    || fail "the process start identity changed with the caller's locale"$'\n'"  recorded under $IDENTITY_LOCALE: $RECORDED_START"$'\n'"  checked under C:               $CHECKED_START"
+  IDENTITY_RECORD="$TMP_ROOT/identity-record"
+  mkdir -p "$IDENTITY_RECORD"
+  printf '%s\n' "$$" > "$IDENTITY_RECORD/pid"
+  printf '%s\n' "$RECORDED_START" > "$IDENTITY_RECORD/start"
+  LC_ALL="$IDENTITY_LOCALE" fm_remote_job_process_command "$$" > "$IDENTITY_RECORD/command"
+  LC_ALL=C fm_remote_job_recorded_owner_alive "$IDENTITY_RECORD" \
+    || fail "a live owner recorded under $IDENTITY_LOCALE looked dead to a C-locale checker"
+  rm -rf -- "$IDENTITY_RECORD"
+  pass "lock and claim owner identity stays locale-invariant ($IDENTITY_LOCALE)"
+fi
 
 LOCAL_BIN_PARENT="$ACCOUNT_HOME/.local"
 LOCAL_BIN_TARGET="$TMP_ROOT/local-bin-target"
@@ -173,6 +298,25 @@ case ":$FM_REMOTE_JOB_OPERATOR_PATH:" in
 esac
 pass "operator PATH resolves the authorized Nix profile bin link"
 
+# Which install of a multi-version tool a remote job resolves is decided by the
+# order these directories land on PATH, so the composition has to be sorted
+# rather than whatever order the filesystem returns. The fixture is created in
+# a deliberately unsorted order, and the expectation is the shell's own
+# pathname expansion - the mechanism the portable-PATH contract in
+# tests/fm-on.test.sh reconstructs.
+MISE_INSTALLS="$ACCOUNT_HOME/.local/share/mise/installs"
+for TOOL_VERSION in node/26.7.0 node/8.1 node/26 bun/1.4 bun/1.3.14 python/3.12.7; do
+  mkdir -p "$MISE_INSTALLS/$TOOL_VERSION/bin"
+done
+fm_remote_job_compose_operator_path "$ACCOUNT_HOME" >/dev/null
+MISE_COMPOSED=$(printf '%s\n' "$FM_REMOTE_JOB_OPERATOR_PATH" | tr ':' '\n' | grep -F "$MISE_INSTALLS/" || true)
+MISE_EXPECTED=$(printf '%s\n' "$MISE_INSTALLS"/*/*/bin)
+[ "$MISE_COMPOSED" = "$MISE_EXPECTED" ] \
+  || fail "the composed operator PATH did not order tool installs like the shell's own expansion"$'\n'"expected: $MISE_EXPECTED"$'\n'"actual:   $MISE_COMPOSED"
+# This assertion detects the defect on bash 3.2 and 5.2, where compgen -G returns unsorted glob matches, but reads green on bash 5.3+ because glob sorting moved into the glob library so both mechanisms agree there.
+rm -rf -- "$ACCOUNT_HOME/.local/share/mise"
+pass "operator PATH orders discovered tool installs deterministically"
+
 HOME="$ACCOUNT_HOME" PATH="$RUNTIME_BIN:/usr/bin:/bin:/usr/sbin:/sbin" FM_FAKE_PERL_LOG="$FAKE_PERL_LOG" \
   FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$STATE_ROOT" \
   FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux FM_REMOTE_JOB_TIMEOUT=5 \
@@ -188,6 +332,14 @@ file_mode() {
     stat -f %Lp "$1"
   else
     stat -c %a "$1"
+  fi
+}
+
+file_inode() {
+  if [ "$(uname)" = Darwin ]; then
+    stat -f %i "$1" 2>/dev/null || true
+  else
+    stat -c %i "$1" 2>/dev/null || true
   fi
 }
 
@@ -244,90 +396,6 @@ assert_present "$ACTIVE_SIDE_EFFECT" "the active job was interrupted by the conc
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the active readiness job could not be reaped"
 pass "active jobs keep the worker ready for concurrent requests"
 
-SLOW_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
-kill -STOP "$SLOW_WORKER_PID"
-touch -t 200001010000 "$STATE_ROOT/worker.ready"
-FM_REMOTE_JOB_REPAIRED=0
-fm_remote_job_start_linux_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" || {
-  kill -CONT "$SLOW_WORKER_PID" 2>/dev/null || true
-  fail "$FM_REMOTE_JOB_ERROR"
-}
-[ "$FM_REMOTE_JOB_REPAIRED" -eq 0 ] || {
-  kill -CONT "$SLOW_WORKER_PID" 2>/dev/null || true
-  fail "a stale heartbeat caused the caller to launch another server beside a live lock owner"
-}
-[ "$(cat "$STATE_ROOT/worker.pid")" = "$SLOW_WORKER_PID" ] || {
-  kill -CONT "$SLOW_WORKER_PID" 2>/dev/null || true
-  fail "a stale heartbeat changed the identity of the live lock owner"
-}
-kill -CONT "$SLOW_WORKER_PID"
-for _ in $(seq 1 100); do
-  fm_remote_job_probe "$ACCOUNT_HOME" && break
-  sleep 0.05
-done
-fm_remote_job_probe "$ACCOUNT_HOME" || fail "the resumed worker did not refresh its heartbeat"
-pass "a stale heartbeat never starts another server beside a live lock owner"
-
-# An owner whose recorded identity cannot be read is live for the purpose of
-# not starting a second server, but it is not proven, so a code-identity
-# mismatch must fail without signalling it.
-UNPROVEN_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
-cp "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" "$TMP_ROOT/worker-script.saved"
-restore_unproven_owner_fixture() {
-  [ ! -f "$TMP_ROOT/lock-start.saved" ] || mv -f -- "$TMP_ROOT/lock-start.saved" "$STATE_ROOT/worker.lock/start"
-  cat "$TMP_ROOT/worker-script.saved" > "$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
-  kill -CONT "$UNPROVEN_WORKER_PID" 2>/dev/null || true
-}
-kill -STOP "$UNPROVEN_WORKER_PID"
-mv -- "$STATE_ROOT/worker.lock/start" "$TMP_ROOT/lock-start.saved"
-printf '\n' >> "$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
-FM_REMOTE_JOB_REPAIRED=0
-if fm_remote_job_start_linux_worker "$REMOTE_ROOT" "$ACCOUNT_HOME"; then
-  restore_unproven_owner_fixture
-  fail "a caller replaced a worker whose recorded identity could not be proven"
-fi
-[ "$FM_REMOTE_JOB_REPAIRED" -eq 0 ] || {
-  restore_unproven_owner_fixture
-  fail "a caller started a server beside an owner whose identity was ambiguous"
-}
-restore_unproven_owner_fixture
-for _ in $(seq 1 100); do
-  fm_remote_job_probe "$ACCOUNT_HOME" && break
-  sleep 0.05
-done
-fm_remote_job_probe "$ACCOUNT_HOME" || fail "the unproven owner did not resume serving"
-sleep 0.3
-kill -0 "$UNPROVEN_WORKER_PID" 2>/dev/null \
-  || fail "a caller signalled a worker whose recorded identity could not be proven"
-[ "$(cat "$STATE_ROOT/worker.pid")" = "$UNPROVEN_WORKER_PID" ] \
-  || fail "an ambiguous owner inspection changed the serving worker"
-pass "a worker whose identity cannot be proven is never signalled"
-
-# Callers reach the worker under different locales and timezones, so the owner
-# proof must read the same in all of them, and an owner recorded in the older
-# ps-rendered form that no longer reads the same must stay ambiguous, not stale.
-OWNER_STATE=0
-TZ=Asia/Tokyo LC_ALL=C fm_remote_job_lock_owner_state "$ACCOUNT_HOME" || OWNER_STATE=$?
-[ "$OWNER_STATE" -eq 0 ] || fail "a caller in another timezone read the live owner as state $OWNER_STATE"
-OWNER_STATE=0
-TZ=UTC0 LC_ALL=POSIX fm_remote_job_lock_owner_state "$ACCOUNT_HOME" || OWNER_STATE=$?
-[ "$OWNER_STATE" -eq 0 ] || fail "a caller in another locale read the live owner as state $OWNER_STATE"
-[ "$(TZ=Asia/Tokyo fm_remote_job_process_start "$$")" = "$(TZ=America/Lima fm_remote_job_process_start "$$")" ] \
-  || fail "the process-start identity changed with the caller's timezone"
-LEGACY_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
-kill -STOP "$LEGACY_WORKER_PID"
-cp "$STATE_ROOT/worker.lock/start" "$TMP_ROOT/lock-start.modern"
-printf 'Thu Jan  1 00:00:00 1970\n' > "$STATE_ROOT/worker.lock/start"
-OWNER_STATE=0
-fm_remote_job_lock_owner_state "$ACCOUNT_HOME" || OWNER_STATE=$?
-OWNER_RECLAIMABLE=no
-! fm_remote_job_lock_owner_reclaimable "$ACCOUNT_HOME" || OWNER_RECLAIMABLE=yes
-cat "$TMP_ROOT/lock-start.modern" > "$STATE_ROOT/worker.lock/start"
-kill -CONT "$LEGACY_WORKER_PID"
-[ "$OWNER_STATE" -eq 2 ] || fail "a ps-rendered start that reads differently gave state $OWNER_STATE instead of ambiguous"
-[ "$OWNER_RECLAIMABLE" = no ] || fail "a live owner with a ps-rendered start record was reclaimable"
-pass "the owner proof does not depend on the caller's locale or timezone"
-
 OLD_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
 printf '\n' >> "$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
 fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" \
@@ -378,63 +446,6 @@ kill "$OTHER_PID" 2>/dev/null || true
 wait "$OTHER_PID" 2>/dev/null || true
 OTHER_PID=
 pass "stale ownership is reclaimed without signaling a reused pid"
-
-# Reproduce a live worker losing its ownership directory while a later SSH
-# entrypoint starts the replacement. The displaced process must fence itself
-# out instead of continuing to serve the same queue beside the new owner.
-DISPLACED_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
-mv -- "$STATE_ROOT/worker.lock" "$STATE_ROOT/worker.lock.displaced"
-fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" \
-  || fail "$FM_REMOTE_JOB_ERROR"
-for _ in $(seq 1 200); do
-  NEW_WORKER_PID=$(cat "$STATE_ROOT/worker.pid" 2>/dev/null || true)
-  [ -n "$NEW_WORKER_PID" ] && [ "$NEW_WORKER_PID" != "$DISPLACED_WORKER_PID" ] && break
-  sleep 0.05
-done
-[ -n "${NEW_WORKER_PID:-}" ] && [ "$NEW_WORKER_PID" != "$DISPLACED_WORKER_PID" ] \
-  || fail "the caller did not start a replacement after worker ownership disappeared"
-for _ in $(seq 1 200); do
-  kill -0 "$DISPLACED_WORKER_PID" 2>/dev/null || break
-  sleep 0.05
-done
-kill -0 "$DISPLACED_WORKER_PID" 2>/dev/null \
-  && fail "a worker kept serving after a replacement acquired its lost ownership lock"
-DISPLACED_WORKER_PID=
-rm -f -- "$STATE_ROOT/worker.lock.displaced/pid" \
-  "$STATE_ROOT/worker.lock.displaced/start" "$STATE_ROOT/worker.lock.displaced/command"
-rmdir "$STATE_ROOT/worker.lock.displaced"
-pass "a worker fences itself out after losing ownership to a replacement"
-
-# The same fencing must hold while a job executes: a worker that loses its
-# ownership mid-job stops the command instead of finishing it.
-FENCED_SIDE_EFFECT="$TMP_ROOT/fenced-side-effect"
-FM_REMOTE_JOB_TIMEOUT=20
-fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-delay-job.sh 8 "$FENCED_SIDE_EFFECT" < /dev/null > /dev/null
-JOB_ID=$FM_REMOTE_JOB_ID
-JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
-for _ in $(seq 1 100); do
-  [ -f "$JOB_DIR/.claim/armed" ] && break
-  sleep 0.05
-done
-assert_present "$JOB_DIR/.claim/armed" "the in-job fencing fixture did not begin running"
-mv -- "$STATE_ROOT/worker.lock" "$STATE_ROOT/worker.lock.fenced"
-for _ in $(seq 1 100); do
-  [ "$(fm_remote_job_read_state "$JOB_DIR" 2>/dev/null || true)" = 'done' ] && break
-  sleep 0.05
-done
-[ "$(fm_remote_job_read_state "$JOB_DIR" 2>/dev/null || true)" = 'done' ] \
-  || fail "a worker kept running its job after losing ownership"
-fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
-[ "$FM_REMOTE_JOB_EXIT" -eq 125 ] || fail "a fenced job reported $FM_REMOTE_JOB_EXIT instead of the worker-stopped status"
-assert_absent "$FENCED_SIDE_EFFECT" "a fenced job ran to completion"
-fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the fenced job could not be reaped"
-rm -f -- "$STATE_ROOT/worker.lock.fenced/pid" \
-  "$STATE_ROOT/worker.lock.fenced/start" "$STATE_ROOT/worker.lock.fenced/command"
-rmdir "$STATE_ROOT/worker.lock.fenced"
-fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" \
-  || fail "$FM_REMOTE_JOB_ERROR"
-pass "a worker that loses ownership mid-job stops the running command"
 
 FM_REMOTE_JOB_TIMEOUT=1
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" fm-timeout-job.sh < /dev/null > /dev/null
@@ -670,12 +681,9 @@ pass "the worker drains bounded output without changing command results"
 
 SIDE_EFFECT="$TMP_ROOT/side-effect"
 WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
-kill -TERM "$WORKER_PID"
-for _ in $(seq 1 100); do
-  [ ! -f "$STATE_ROOT/worker.pid" ] && break
-  sleep 0.05
-done
-assert_absent "$STATE_ROOT/worker.pid" "the worker did not stop before the staged-record tamper"
+fm_remote_job_stop_worker_tree "$WORKER_PID" \
+  || fail "the worker tree did not stop before the staged-record tamper"
+assert_absent "$STATE_ROOT/worker.pid" "the worker did not clear its pid before the staged-record tamper"
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" fm-touch-job.sh "$SIDE_EFFECT" < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
 JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
@@ -755,8 +763,11 @@ RECOVERY_REFUSED_RC=$?
 set -e
 [ "$RECOVERY_REFUSED_RC" -ne 0 ] || fail "quarantine recovery ignored a recorded live process"
 assert_present "$RECOVERY_STATE/worker.lock/quarantine" "a live recorded process lost quarantine protection"
-kill "$QUARANTINED_PROCESS_PID" 2>/dev/null || true
-wait "$QUARANTINED_PROCESS_PID" 2>/dev/null || true
+printf '%s\n' "$QUARANTINED_PROCESS_PID" > "$RECOVERY_JOB/.claim/owner"
+printf 'stale owner identity\n' > "$RECOVERY_JOB/.claim/owner_start"
+printf 'stale supervisor identity\n' > "$RECOVERY_JOB/.claim/supervisor_start"
+chmod 600 "$RECOVERY_JOB/.claim/owner" "$RECOVERY_JOB/.claim/owner_start" \
+  "$RECOVERY_JOB/.claim/supervisor_start"
 HOME="$RECOVERY_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$RECOVERY_STATE" \
   FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" \
   > "$TMP_ROOT/recovery-worker.out" 2> "$TMP_ROOT/recovery-worker.err" &
@@ -765,12 +776,16 @@ for _ in $(seq 1 300); do
   [ -f "$RECOVERY_STATE/worker.ready" ] && break
   sleep 0.05
 done
-assert_present "$RECOVERY_STATE/worker.ready" "a stopped quarantined execution did not permit worker recovery"
+assert_present "$RECOVERY_STATE/worker.ready" "a reused supervisor pid did not permit worker recovery"
 assert_absent "$RECOVERY_STATE/worker.lock/quarantine" "recovered worker retained stale quarantine"
+kill -0 "$QUARANTINED_PROCESS_PID" 2>/dev/null \
+  || fail "worker recovery signalled a process whose supervisor identity did not match"
 kill -TERM "$RECOVERY_WORKER_PID"
 wait "$RECOVERY_WORKER_PID" 2>/dev/null || true
 RECOVERY_WORKER_PID=
-pass "quarantine clears only after recorded execution has stopped"
+kill "$QUARANTINED_PROCESS_PID" 2>/dev/null || true
+wait "$QUARANTINED_PROCESS_PID" 2>/dev/null || true
+pass "quarantine recovery refuses unverifiable supervisors and ignores reused pids"
 
 # A replacement stops a Linux worker by signalling its whole isolated group, and
 # the supervisor in that group forwards a second stop signal to the same serving
@@ -840,255 +855,697 @@ wait "$REPEAT_WORKER_PID" 2>/dev/null || true
 REPEAT_WORKER_PID=
 pass "a repeatedly signalled shutdown still releases ownership for the next worker"
 
-# Fake mktemp/date/sleep shadow the real ones on PATH to count calls, still
-# exec'ing through. Idle mktemp comes only from heartbeat writes, idle date
-# only from reap_stale, and idle sleep only from the poll tick itself.
-IDLE_HOME="$TMP_ROOT/idle-cadence-account"
-IDLE_STATE="$TMP_ROOT/idle-cadence-jobs"
-IDLE_BIN="$TMP_ROOT/idle-cadence-bin"
-IDLE_MKTEMP_LOG="$TMP_ROOT/idle-cadence-mktemp.log"
-IDLE_DATE_LOG="$TMP_ROOT/idle-cadence-date.log"
-IDLE_SLEEP_LOG="$TMP_ROOT/idle-cadence-sleep.log"
-mkdir -p "$IDLE_HOME" "$IDLE_BIN"
-chmod 700 "$IDLE_HOME"
-: > "$IDLE_MKTEMP_LOG"
-: > "$IDLE_DATE_LOG"
-: > "$IDLE_SLEEP_LOG"
-REAL_MKTEMP=$(command -v mktemp)
-REAL_DATE=$(command -v date)
-REAL_SLEEP=$(command -v sleep)
-cat > "$IDLE_BIN/mktemp" <<SH
+cat > "$REMOTE_ROOT/bin/fm-hold-job.sh" <<'SH'
 #!/bin/bash
-printf 'call\n' >> "$IDLE_MKTEMP_LOG"
-exec "$REAL_MKTEMP" "\$@"
+trap '' HUP INT TERM
+printf 'started\n' > "$1"
+sleep 30
+printf 'ran\n' > "$2"
 SH
-cat > "$IDLE_BIN/date" <<SH
-#!/bin/bash
-printf 'call\n' >> "$IDLE_DATE_LOG"
-exec "$REAL_DATE" "\$@"
-SH
-cat > "$IDLE_BIN/sleep" <<SH
-#!/bin/bash
-printf 'call\n' >> "$IDLE_SLEEP_LOG"
-exec "$REAL_SLEEP" "\$@"
-SH
-chmod +x "$IDLE_BIN/mktemp" "$IDLE_BIN/date" "$IDLE_BIN/sleep"
-HOME="$IDLE_HOME" PATH="$IDLE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
-  FM_REMOTE_JOB_STATE_ROOT="$IDLE_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
-  FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=2 FM_REMOTE_JOB_REAP_INTERVAL_SECONDS=2 \
-  FM_REMOTE_JOB_POLL_SECONDS=0.02 \
-  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
-  > "$TMP_ROOT/idle-cadence.out" 2> "$TMP_ROOT/idle-cadence.err" &
-IDLE_WORKER_PID=$!
+chmod +x "$REMOTE_ROOT/bin/fm-hold-job.sh"
+git -C "$REMOTE_ROOT" add bin/fm-hold-job.sh
+git -C "$REMOTE_ROOT" commit -qm 'hold job'
+
+LOST_HOME="$TMP_ROOT/lost-term-account"
+LOST_STATE="$TMP_ROOT/lost-term-jobs"
+mkdir -p "$LOST_HOME"
+chmod 700 "$LOST_HOME"
+HOME="$LOST_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$LOST_STATE" \
+  FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
+  > "$TMP_ROOT/lost-term.out" 2> "$TMP_ROOT/lost-term.err" &
+LOST_TERM_PID=$!
 for _ in $(seq 1 300); do
-  [ -f "$IDLE_STATE/worker.ready" ] && break
+  [ -f "$LOST_STATE/worker.ready" ] && break
   sleep 0.05
 done
-assert_present "$IDLE_STATE/worker.ready" "the idle-cadence worker did not become ready"
-# Startup (lock acquisition, identity, pid, the first heartbeat) already forked
-# these before this point; only counts from here measure the idle cadence
-# itself, not one-time startup cost.
-: > "$IDLE_MKTEMP_LOG"
-: > "$IDLE_DATE_LOG"
-: > "$IDLE_SLEEP_LOG"
-sleep 6
-kill -TERM "$IDLE_WORKER_PID"
-wait "$IDLE_WORKER_PID" 2>/dev/null || true
-IDLE_WORKER_PID=
-MKTEMP_CALLS=$(wc -l < "$IDLE_MKTEMP_LOG" | tr -d ' ')
-DATE_CALLS=$(wc -l < "$IDLE_DATE_LOG" | tr -d ' ')
-# The poll tick is the only per-iteration sleep while idle, so counting it
-# measures the cadence as a ratio instead of an absolute fork count that a
-# loaded runner (or the regression's own forking) would silently rescale.
-TICK_CALLS=$(wc -l < "$IDLE_SLEEP_LOG" | tr -d ' ')
-[ "$TICK_CALLS" -ge 20 ] \
-  || fail "the idle worker polled only $TICK_CALLS times; the cadence window is too short to measure"
-[ "$DATE_CALLS" -ge 2 ] && [ $((DATE_CALLS * 3)) -le "$TICK_CALLS" ] \
-  || fail "idle reap forked date $DATE_CALLS times across $TICK_CALLS poll ticks; the dead reap throttle regressed to running every poll tick"
-[ "$MKTEMP_CALLS" -ge 2 ] && [ $((MKTEMP_CALLS * 3)) -le "$TICK_CALLS" ] \
-  || fail "idle heartbeat forked mktemp $MKTEMP_CALLS times across $TICK_CALLS poll ticks; expected the write gated to its own cadence"
-pass "idle heartbeat and reap run on their own cadence, not on every poll tick"
+assert_present "$LOST_STATE/worker.ready" "the ownership-loss worker did not become ready"
+assert_present "$LOST_STATE/worker.lock" "the ownership-loss worker did not publish its lock"
+kill -STOP "$LOST_TERM_PID"
+for _ in $(seq 1 100); do
+  [ "$(ps -o state= -p "$LOST_TERM_PID" 2>/dev/null | cut -c1)" = T ] && break
+  sleep 0.05
+done
+[ "$(ps -o state= -p "$LOST_TERM_PID" 2>/dev/null | cut -c1)" = T ] \
+  || fail "the ownership-loss worker did not stop"
+rm -rf -- "$LOST_STATE/worker.lock"
+kill -CONT "$LOST_TERM_PID"
+# The independent heartbeat may already have verified ownership before the
+# lock was removed. Let that in-flight refresh expire through the public
+# probe's 10-second freshness window instead of racing it with a backdated file.
+for _ in $(seq 1 80); do
+  ( FM_REMOTE_JOB_STATE_ROOT="$LOST_STATE"; fm_remote_job_probe "$LOST_HOME" ) || break
+  sleep 0.25
+done
+! ( FM_REMOTE_JOB_STATE_ROOT="$LOST_STATE"; fm_remote_job_probe "$LOST_HOME" ) \
+  || fail "a worker without its ownership lock kept readiness fresh"
+assert_absent "$LOST_STATE/worker.lock" "the ownership lock reappeared before TERM"
+kill -TERM "$LOST_TERM_PID"
+for _ in $(seq 1 100); do
+  kill -0 "$LOST_TERM_PID" 2>/dev/null || break
+  sleep 0.05
+done
+if kill -0 "$LOST_TERM_PID" 2>/dev/null; then
+  fail "TERM after ownership loss left the serving worker alive"
+fi
+wait "$LOST_TERM_PID" 2>/dev/null || true
+LOST_TERM_PID=
+LOST_READY_SETTLED=$(file_inode "$LOST_STATE/worker.ready")
+sleep 0.3
+[ "$(file_inode "$LOST_STATE/worker.ready")" = "$LOST_READY_SETTLED" ] \
+  || fail "a worker that lost ownership kept replacing its heartbeat after TERM"
+pass "TERM after ownership loss stops the serving worker"
 
-IDLE_EXPIRY_HOME="$TMP_ROOT/idle-expiry-account"
-IDLE_EXPIRY_STATE="$TMP_ROOT/idle-expiry-jobs"
-mkdir -p "$IDLE_EXPIRY_HOME"
-chmod 700 "$IDLE_EXPIRY_HOME"
-HOME="$IDLE_EXPIRY_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
-  FM_REMOTE_JOB_STATE_ROOT="$IDLE_EXPIRY_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
-  FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS=1 FM_REMOTE_JOB_POLL_SECONDS=0.02 \
+HOLD_STARTED="$TMP_ROOT/hold-started"
+HOLD_SIDE_EFFECT="$TMP_ROOT/hold-side-effect"
+rm -f -- "$HOLD_STARTED" "$HOLD_SIDE_EFFECT"
+LOST_HOME="$TMP_ROOT/lost-cleanup-account"
+LOST_STATE="$TMP_ROOT/lost-cleanup-jobs"
+mkdir -p "$LOST_HOME"
+chmod 700 "$LOST_HOME"
+HOME="$LOST_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$LOST_STATE" \
+  FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
+  > "$TMP_ROOT/lost-cleanup.out" 2> "$TMP_ROOT/lost-cleanup.err" &
+LOST_TERM_PID=$!
+for _ in $(seq 1 300); do
+  [ -f "$LOST_STATE/worker.ready" ] && break
+  sleep 0.05
+done
+assert_present "$LOST_STATE/worker.ready" "the cleanup worker did not become ready"
+FM_REMOTE_JOB_STATE_ROOT="$LOST_STATE" FM_REMOTE_JOB_TIMEOUT=20 \
+  fm_remote_job_stage "$LOST_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
+  fm-hold-job.sh "$HOLD_STARTED" "$HOLD_SIDE_EFFECT" < /dev/null > /dev/null
+for _ in $(seq 1 100); do
+  [ -f "$HOLD_STARTED" ] && break
+  sleep 0.05
+done
+assert_present "$HOLD_STARTED" "the held command did not start before ownership loss"
+kill -STOP "$LOST_TERM_PID"
+for _ in $(seq 1 100); do
+  [ "$(ps -o state= -p "$LOST_TERM_PID" 2>/dev/null | cut -c1)" = T ] && break
+  sleep 0.05
+done
+rm -rf -- "$LOST_STATE/worker.lock"
+kill -TERM "$LOST_TERM_PID"
+kill -CONT "$LOST_TERM_PID"
+for _ in $(seq 1 100); do
+  kill -0 "$LOST_TERM_PID" 2>/dev/null || break
+  sleep 0.05
+done
+if kill -0 "$LOST_TERM_PID" 2>/dev/null; then
+  fail "TERM after ownership loss did not stop a worker with an active command"
+fi
+wait "$LOST_TERM_PID" 2>/dev/null || true
+LOST_TERM_PID=
+sleep 0.5
+assert_absent "$HOLD_SIDE_EFFECT" "the active command kept running after an unowned TERM"
+pass "TERM after ownership loss still stops the active command tree"
+
+OWNER_HOME="$TMP_ROOT/replacement-owner-account"
+OWNER_STATE="$TMP_ROOT/replacement-owner-jobs"
+OWNER_STARTED="$TMP_ROOT/replacement-started"
+OWNER_SIDE_EFFECT="$TMP_ROOT/replacement-side-effect"
+mkdir -p "$OWNER_HOME"
+chmod 700 "$OWNER_HOME"
+HOME="$OWNER_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$OWNER_STATE" \
+  FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
+  > "$TMP_ROOT/replacement-lost.out" 2> "$TMP_ROOT/replacement-lost.err" &
+LOST_TERM_PID=$!
+for _ in $(seq 1 300); do
+  [ -f "$OWNER_STATE/worker.ready" ] && break
+  sleep 0.05
+done
+assert_present "$OWNER_STATE/worker.ready" "the worker that will lose ownership did not become ready"
+kill -STOP "$LOST_TERM_PID"
+for _ in $(seq 1 100); do
+  [ "$(ps -o state= -p "$LOST_TERM_PID" 2>/dev/null | cut -c1)" = T ] && break
+  sleep 0.05
+done
+rm -rf -- "$OWNER_STATE/worker.lock"
+HOME="$OWNER_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$OWNER_STATE" \
+  FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
+  > "$TMP_ROOT/replacement-owner.out" 2> "$TMP_ROOT/replacement-owner.err" &
+REPLACEMENT_OWNER_PID=$!
+for _ in $(seq 1 300); do
+  [ -f "$OWNER_STATE/worker.lock/pid" ] && [ "$(cat "$OWNER_STATE/worker.lock/pid")" = "$REPLACEMENT_OWNER_PID" ] && break
+  sleep 0.05
+done
+[ "$(cat "$OWNER_STATE/worker.lock/pid" 2>/dev/null || true)" = "$REPLACEMENT_OWNER_PID" ] \
+  || fail "the replacement worker did not take ownership"
+FM_REMOTE_JOB_STATE_ROOT="$OWNER_STATE" FM_REMOTE_JOB_TIMEOUT=20 \
+  fm_remote_job_stage "$OWNER_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
+  fm-hold-job.sh "$OWNER_STARTED" "$OWNER_SIDE_EFFECT" < /dev/null > /dev/null
+for _ in $(seq 1 100); do
+  [ -f "$OWNER_STARTED" ] && break
+  sleep 0.05
+done
+assert_present "$OWNER_STARTED" "the replacement worker's command did not start"
+OWNER_JOB_SUPERVISOR=$(cat "$OWNER_STATE/jobs/$FM_REMOTE_JOB_ID/.claim/supervisor")
+printf 'replacement guard\n' > "$OWNER_STATE/worker.lock/quarantine"
+OWNER_QUARANTINE_INODE=$(file_inode "$OWNER_STATE/worker.lock/quarantine")
+LATE_BURST=0
+while [ "$LATE_BURST" -lt 10 ]; do
+  kill -TERM "$LOST_TERM_PID" 2>/dev/null || true
+  LATE_BURST=$((LATE_BURST + 1))
+done
+kill -CONT "$LOST_TERM_PID"
+for _ in $(seq 1 100); do
+  kill -0 "$LOST_TERM_PID" 2>/dev/null || break
+  sleep 0.05
+done
+if kill -0 "$LOST_TERM_PID" 2>/dev/null; then
+  fail "a burst of TERMs after ownership loss left the old worker alive"
+fi
+wait "$LOST_TERM_PID" 2>/dev/null || true
+LOST_DEAD_PID=$LOST_TERM_PID
+LOST_TERM_PID=
+kill -TERM "$LOST_DEAD_PID" 2>/dev/null || true
+kill -0 "$REPLACEMENT_OWNER_PID" 2>/dev/null \
+  || fail "terminating the old worker also terminated the replacement owner"
+kill -0 "$OWNER_JOB_SUPERVISOR" 2>/dev/null \
+  || fail "terminating the old worker stopped the replacement owner's command"
+[ "$(cat "$OWNER_STATE/worker.lock/pid" 2>/dev/null || true)" = "$REPLACEMENT_OWNER_PID" ] \
+  || fail "the old worker's cleanup removed the replacement owner's lock"
+[ "$(cat "$OWNER_STATE/worker.lock/quarantine" 2>/dev/null || true)" = "replacement guard" ] \
+  && [ "$(file_inode "$OWNER_STATE/worker.lock/quarantine")" = "$OWNER_QUARANTINE_INODE" ] \
+  || fail "the old worker's TERM rewrote or removed the replacement owner's quarantine"
+rm -f -- "$OWNER_STATE/worker.lock/quarantine"
+assert_absent "$OWNER_SIDE_EFFECT" "the replacement command finished during the ownership handoff"
+kill -TERM "$REPLACEMENT_OWNER_PID"
+for _ in $(seq 1 100); do
+  kill -0 "$REPLACEMENT_OWNER_PID" 2>/dev/null || break
+  sleep 0.05
+done
+if kill -0 "$REPLACEMENT_OWNER_PID" 2>/dev/null; then
+  fail "the replacement owner did not finish its own TERM shutdown"
+fi
+wait "$REPLACEMENT_OWNER_PID" 2>/dev/null || true
+REPLACEMENT_OWNER_PID=
+assert_absent "$OWNER_STATE/worker.lock" \
+  "the replacement owner's shutdown left its lock behind"
+sleep 0.5
+assert_absent "$OWNER_SIDE_EFFECT" \
+  "the replacement owner's command kept running after its own shutdown"
+pass "a lost owner terminates without stopping the replacement owner's work"
+
+# Shutdown publishes quarantine, then stops the command, then clears quarantine.
+# Steal the lock in that gap: the ousted worker must not write or clear the
+# replacement's quarantine when it resumes.
+STALL_HOME="$TMP_ROOT/stall-owner-account"
+STALL_STATE="$TMP_ROOT/stall-owner-jobs"
+STALL_STARTED="$TMP_ROOT/stall-started"
+STALL_SIDE_EFFECT="$TMP_ROOT/stall-side-effect"
+STALL_BIN="$TMP_ROOT/stall-bin"
+STALL_HOLD="$TMP_ROOT/stall-hold"
+STALL_HELD="$TMP_ROOT/stall-held"
+mkdir -p "$STALL_HOME" "$STALL_BIN"
+chmod 700 "$STALL_HOME"
+# The stop loop gives up after a bounded number of retries, so pausing the
+# worker from outside races that bound on a slow runner. This sleep holds the
+# worker's own shell at its first stop-loop retry instead: that is the only
+# sleep it runs while its quarantine exists. Removing the hold file (or the
+# whole fixture) releases it.
+cat > "$STALL_BIN/sleep" <<SH
+#!/bin/sh
+if [ "\$PPID" = "\$(cat '$STALL_HOLD' 2>/dev/null)" ] && [ -e '$STALL_STATE/worker.lock/quarantine' ]; then
+  : > '$STALL_HELD'
+  while [ -e '$STALL_HOLD' ]; do '$(command -v sleep)' 0.05; done
+fi
+exec '$(command -v sleep)' "\$@"
+SH
+chmod +x "$STALL_BIN/sleep"
+# shellcheck disable=SC2031 # Cadence fixture PATH changes stayed in their subshells.
+HOME="$STALL_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$STALL_STATE" \
+  FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux PATH="$STALL_BIN:$PATH" \
   "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
-  > "$TMP_ROOT/idle-expiry.out" 2> "$TMP_ROOT/idle-expiry.err" &
-IDLE_EXPIRY_PID=$!
-for _ in $(seq 1 100); do
-  [ -f "$IDLE_EXPIRY_STATE/worker.ready" ] && break
+  > "$TMP_ROOT/stall-lost.out" 2> "$TMP_ROOT/stall-lost.err" &
+STALL_WORKER_PID=$!
+printf '%s\n' "$STALL_WORKER_PID" > "$STALL_HOLD"
+STALL_DEADLINE=$((SECONDS + 30))
+until [ -f "$STALL_STATE/worker.ready" ] || [ "$SECONDS" -ge "$STALL_DEADLINE" ]; do sleep 0.05; done
+assert_present "$STALL_STATE/worker.ready" "the worker stalled in shutdown did not become ready"
+FM_REMOTE_JOB_STATE_ROOT="$STALL_STATE" FM_REMOTE_JOB_TIMEOUT=20 \
+  fm_remote_job_stage "$STALL_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
+  fm-hold-job.sh "$STALL_STARTED" "$STALL_SIDE_EFFECT" < /dev/null > /dev/null
+STALL_DEADLINE=$((SECONDS + 30))
+until [ -f "$STALL_STARTED" ] || [ "$SECONDS" -ge "$STALL_DEADLINE" ]; do sleep 0.05; done
+assert_present "$STALL_STARTED" "the command that keeps shutdown in its stop loop did not start"
+STALL_JOB="$STALL_STATE/jobs/$FM_REMOTE_JOB_ID"
+# An unreadable start record keeps the worker from signalling the job's own
+# command group while it still counts that group as alive, so shutdown waits in
+# its stop loop until the test stops the group.
+STALL_JOB_GROUP=$(cat "$STALL_JOB/.claim/group")
+printf 'unconfirmed\nstart\n' > "$STALL_JOB/.claim/group_start"
+kill -TERM "$STALL_WORKER_PID"
+STALL_DEADLINE=$((SECONDS + 30))
+until [ -f "$STALL_HELD" ] || [ "$SECONDS" -ge "$STALL_DEADLINE" ]; do sleep 0.05; done
+assert_present "$STALL_HELD" "shutdown did not reach its stop loop behind its own quarantine"
+assert_present "$STALL_STATE/worker.lock/quarantine" \
+  "the worker held in its stop loop did not hold its own quarantine"
+rm -rf -- "$STALL_STATE/worker.lock"
+HOME="$STALL_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$STALL_STATE" \
+  FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
+  > "$TMP_ROOT/stall-replacement.out" 2> "$TMP_ROOT/stall-replacement.err" &
+STALL_REPLACEMENT_PID=$!
+STALL_DEADLINE=$((SECONDS + 30))
+until [ "$(cat "$STALL_STATE/worker.lock/pid" 2>/dev/null || true)" = "$STALL_REPLACEMENT_PID" ] \
+  || [ "$SECONDS" -ge "$STALL_DEADLINE" ]; do
   sleep 0.05
 done
-assert_present "$IDLE_EXPIRY_STATE/worker.ready" "the bounded-idle worker did not become ready"
-for _ in $(seq 1 100); do
-  kill -0 "$IDLE_EXPIRY_PID" 2>/dev/null || break
+[ "$(cat "$STALL_STATE/worker.lock/pid" 2>/dev/null || true)" = "$STALL_REPLACEMENT_PID" ] \
+  || fail "the replacement did not take ownership while the old worker was stopped in shutdown"
+printf 'replacement guard\n' > "$STALL_STATE/worker.lock/quarantine"
+STALL_QUARANTINE_INODE=$(file_inode "$STALL_STATE/worker.lock/quarantine")
+# Both workers stop the job's recorded execution and then delete its records.
+# A worker resumed while the other is deleting can lose a record read and exit
+# before its quarantine clear, so freeze the replacement until the ousted
+# worker has finished.
+kill -STOP "$STALL_REPLACEMENT_PID"
+STALL_DEADLINE=$((SECONDS + 30))
+until [ "$(ps -o state= -p "$STALL_REPLACEMENT_PID" 2>/dev/null | cut -c1)" = T ] \
+  || [ "$SECONDS" -ge "$STALL_DEADLINE" ]; do
   sleep 0.05
 done
-kill -0 "$IDLE_EXPIRY_PID" 2>/dev/null \
-  && fail "an idle worker survived its configured lifetime backstop"
-IDLE_EXPIRY_STATUS=0
-wait "$IDLE_EXPIRY_PID" 2>/dev/null || IDLE_EXPIRY_STATUS=$?
-IDLE_EXPIRY_PID=
-[ "$IDLE_EXPIRY_STATUS" -eq 0 ] || fail "an idle worker reported failure while retiring itself"
-assert_absent "$IDLE_EXPIRY_STATE/worker.lock" "an idle worker retained ownership after retiring"
-pass "an idle worker retires itself and releases ownership after a bounded interval"
+[ "$(ps -o state= -p "$STALL_REPLACEMENT_PID" 2>/dev/null | cut -c1)" = T ] \
+  || fail "the replacement could not be held while the ousted worker resumed"
+kill -KILL -- "-$STALL_JOB_GROUP" 2>/dev/null || true
+STALL_DEADLINE=$((SECONDS + 30))
+until ! kill -0 -- "-$STALL_JOB_GROUP" 2>/dev/null || [ "$SECONDS" -ge "$STALL_DEADLINE" ]; do
+  sleep 0.05
+done
+! kill -0 -- "-$STALL_JOB_GROUP" 2>/dev/null \
+  || fail "the job's command group was still alive after the test stopped it"
+rm -f -- "$STALL_HOLD"
+STALL_DEADLINE=$((SECONDS + 30))
+until [ "$(ps -o state= -p "$STALL_WORKER_PID" 2>/dev/null | cut -c1)" = Z ] \
+  || ! kill -0 "$STALL_WORKER_PID" 2>/dev/null || [ "$SECONDS" -ge "$STALL_DEADLINE" ]; do
+  sleep 0.05
+done
+[ "$(ps -o state= -p "$STALL_WORKER_PID" 2>/dev/null | cut -c1)" = Z ] \
+  || ! kill -0 "$STALL_WORKER_PID" 2>/dev/null \
+  || fail "the ousted worker did not exit after shutdown resumed"
+STALL_WORKER_RC=0
+wait "$STALL_WORKER_PID" 2>/dev/null || STALL_WORKER_RC=$?
+STALL_WORKER_PID=
+[ "$STALL_WORKER_RC" -eq 0 ] \
+  || fail "the ousted worker did not finish shutdown through its lost-ownership exit (exit $STALL_WORKER_RC: $(cat "$TMP_ROOT/stall-lost.err"))"
+kill -CONT "$STALL_REPLACEMENT_PID"
+kill -0 "$STALL_REPLACEMENT_PID" 2>/dev/null \
+  || fail "the ousted worker's resumed shutdown terminated the replacement"
+[ "$(cat "$STALL_STATE/worker.lock/pid" 2>/dev/null || true)" = "$STALL_REPLACEMENT_PID" ] \
+  || fail "the ousted worker's resumed shutdown removed the replacement lock"
+[ "$(cat "$STALL_STATE/worker.lock/quarantine" 2>/dev/null || true)" = "replacement guard" ] \
+  && [ "$(file_inode "$STALL_STATE/worker.lock/quarantine")" = "$STALL_QUARANTINE_INODE" ] \
+  || fail "the ousted worker wrote or cleared the replacement quarantine during shutdown"
+kill -TERM "$STALL_REPLACEMENT_PID"
+STALL_DEADLINE=$((SECONDS + 30))
+until [ "$(ps -o state= -p "$STALL_REPLACEMENT_PID" 2>/dev/null | cut -c1)" = Z ] \
+  || ! kill -0 "$STALL_REPLACEMENT_PID" 2>/dev/null || [ "$SECONDS" -ge "$STALL_DEADLINE" ]; do
+  sleep 0.05
+done
+[ "$(ps -o state= -p "$STALL_REPLACEMENT_PID" 2>/dev/null | cut -c1)" = Z ] \
+  || ! kill -0 "$STALL_REPLACEMENT_PID" 2>/dev/null \
+  || fail "the replacement did not finish its own TERM shutdown"
+wait "$STALL_REPLACEMENT_PID" 2>/dev/null || true
+STALL_REPLACEMENT_PID=
+STALL_JOB_GROUP=
+pass "an ousted worker in shutdown leaves the replacement quarantine untouched"
 
-# A job staged just as the worker retired has no server. Its waiter must
-# restart the single-flight worker instead of polling an unserved queue until
-# the bounded wait expires.
-(
-  FM_REMOTE_JOB_STATE_ROOT="$IDLE_EXPIRY_STATE"
-  FM_REMOTE_JOB_QUEUE_TIMEOUT=4
-  FM_REMOTE_JOB_TIMEOUT=4
-  FM_REMOTE_JOB_WAIT_GRACE=1
-  fm_remote_job_stage "$IDLE_EXPIRY_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" fm-probe-job.sh < /dev/null > /dev/null \
-    || fail "the retired-worker fixture could not stage a job"
-  STRANDED_STATUS=0
-  fm_remote_job_wait "$IDLE_EXPIRY_HOME" "$FM_REMOTE_JOB_ID" || STRANDED_STATUS=$?
-  REVIVED_PID=$(cat "$IDLE_EXPIRY_STATE/worker.pid" 2>/dev/null || true)
-  [ -z "$REVIVED_PID" ] || fm_remote_job_stop_worker_tree "$REVIVED_PID" || true
-  [ "$STRANDED_STATUS" -eq 0 ] || fail "a job staged after the worker retired was never served: $FM_REMOTE_JOB_ERROR"
-  [ "$FM_REMOTE_JOB_EXIT" -eq 0 ] || fail "the revived worker reported $FM_REMOTE_JOB_EXIT for the stranded job"
-) || exit 1
-pass "a job staged as the worker retires restarts the worker while waiting"
-
-# A worker killed between creating the lock and recording its owner leaves a
-# lock that names no process. Once aged with no heartbeat it must be reclaimed
-# rather than wedging every later start.
-for UNPUBLISHED_KIND in missing empty malformed; do
-  UNPUBLISHED_HOME="$TMP_ROOT/unpublished-$UNPUBLISHED_KIND-account"
-  UNPUBLISHED_STATE="$TMP_ROOT/unpublished-$UNPUBLISHED_KIND-jobs"
-  mkdir -p "$UNPUBLISHED_HOME"
-  chmod 700 "$UNPUBLISHED_HOME"
-  ( FM_REMOTE_JOB_STATE_ROOT="$UNPUBLISHED_STATE"
-    fm_remote_job_prepare_state "$UNPUBLISHED_HOME" ) || fail "the unpublished-lock fixture state could not be prepared"
-  ( umask 077; mkdir "$UNPUBLISHED_STATE/worker.lock" )
-  printf '1\n' > "$UNPUBLISHED_STATE/worker.lock/.pid.leftover"
-  case "$UNPUBLISHED_KIND" in
-    empty) : > "$UNPUBLISHED_STATE/worker.lock/pid" ;;
-    malformed)
-      printf 'not-a-pid\n' > "$UNPUBLISHED_STATE/worker.lock/pid"
-      printf 'linux:0:0\n' > "$UNPUBLISHED_STATE/worker.lock/start"
-      : > "$UNPUBLISHED_STATE/worker.lock/command"
-      ;;
-  esac
-  touch -t 200001010000 "$UNPUBLISHED_STATE/worker.lock"
-  HOME="$UNPUBLISHED_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
-    FM_REMOTE_JOB_STATE_ROOT="$UNPUBLISHED_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
-    "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
-    > "$TMP_ROOT/unpublished.out" 2> "$TMP_ROOT/unpublished.err" &
-  UNPUBLISHED_PID=$!
-  for _ in $(seq 1 100); do
-    [ -f "$UNPUBLISHED_STATE/worker.ready" ] && break
-    kill -0 "$UNPUBLISHED_PID" 2>/dev/null || break
+# An idle worker must not busy-poll its queue: between passes it sleeps one
+# second, so its only steady cost is that sleep and the once-a-second heartbeat
+# (including its lock-owner validation and state preparation) plus the periodic
+# sweep, which the 2-second stage reap age pulls in to every 2 seconds.
+# Every external command the worker runs by name goes through a
+# counting shim, which makes the exec rate observable without privileges.
+QUIET_HOME="$TMP_ROOT/quiet-account"
+QUIET_STATE="$TMP_ROOT/quiet-state"
+QUIET_SHIM="$TMP_ROOT/quiet-shim"
+QUIET_EXEC_LOG="$TMP_ROOT/quiet-execs"
+QUIET_TOUCHED="$TMP_ROOT/quiet-touched"
+mkdir -p "$QUIET_HOME" "$QUIET_SHIM"
+for QUIET_TOOL in sleep chmod mktemp mv rm date stat uname dirname basename wc tr tail head ps sort cat mkdir rmdir; do
+  QUIET_REAL=$(PATH=/usr/bin:/bin command -v "$QUIET_TOOL") || continue
+  cat > "$QUIET_SHIM/$QUIET_TOOL" <<SH
+#!/bin/sh
+printf '%s\n' $QUIET_TOOL >> "\$FM_TEST_EXEC_LOG"
+exec $QUIET_REAL "\$@"
+SH
+  chmod +x "$QUIET_SHIM/$QUIET_TOOL"
+done
+HOME="$QUIET_HOME" PATH="$QUIET_SHIM:/usr/bin:/bin:/usr/sbin:/sbin" FM_TEST_EXEC_LOG="$QUIET_EXEC_LOG" \
+  FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$QUIET_STATE" \
+  FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux FM_REMOTE_JOB_STAGE_REAP_SECONDS=2 \
+  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve > "$TMP_ROOT/quiet-worker.out" 2> "$TMP_ROOT/quiet-worker.err" &
+QUIET_WORKER_PID=$!
+quiet_wait_ready() { # <state> <label>
+  for _ in $(seq 1 200); do
+    [ -f "$1/worker.ready" ] && break
     sleep 0.05
   done
-  UNPUBLISHED_OWNER=$(cat "$UNPUBLISHED_STATE/worker.lock/pid" 2>/dev/null || true)
-  UNPUBLISHED_LEFTOVER=absent
-  [ ! -e "$UNPUBLISHED_STATE/worker.lock/.pid.leftover" ] || UNPUBLISHED_LEFTOVER=present
-  kill "$UNPUBLISHED_PID" 2>/dev/null || true
-  wait "$UNPUBLISHED_PID" 2>/dev/null || true
-  [ "$UNPUBLISHED_OWNER" = "$UNPUBLISHED_PID" ] \
-    || fail "a lock with a $UNPUBLISHED_KIND owner record was never reclaimed: $(cat "$TMP_ROOT/unpublished.err")"
-  [ "$UNPUBLISHED_LEFTOVER" = absent ] || fail "reclaiming an unpublished lock kept its half-written owner record"
-done
-pass "an aged lock with no readable owner record is reclaimed"
+  assert_present "$1/worker.ready" "the $2 worker did not become ready"
+}
+# Startup counts as activity, so wait out its short fast-poll window (slowed by
+# the shims themselves) before measuring the idle steady state.
+quiet_settle() { # <max-sleeps-per-window>
+  local deadline=$((SECONDS + 30))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    : > "$QUIET_EXEC_LOG"
+    sleep 1.5
+    [ "$(grep -cx sleep "$QUIET_EXEC_LOG" || true)" -gt "$1" ] || break
+  done
+  : > "$QUIET_EXEC_LOG"
+}
+quiet_measure() { # <label> <max-sleeps>
+  local execs sleeps
+  sleep 4
+  execs=$(wc -l < "$QUIET_EXEC_LOG" | tr -d ' ')
+  sleeps=$(grep -cx sleep "$QUIET_EXEC_LOG" || true)
+  [ "$sleeps" -le "$2" ] \
+    || fail "$1 kept polling with sleep ($sleeps sleeps in 4s)"
+  # Allow the independent heartbeat's bounded ownership checks as well as
+  # sweeps at either edge of the window; the sleep limit still rejects fast
+  # queue polling independently of this external-command budget.
+  [ "$execs" -le 120 ] \
+    || fail "$1 ran $execs commands in 4s; expected only heartbeats and sweeps"$'\n'"$(sort "$QUIET_EXEC_LOG" | uniq -c)"
+}
+# fm_remote_job_probe must keep reading an idle worker as ready: its heartbeat
+# stays far inside the probe's 10-second bound across several idle waits.
+quiet_heartbeat_stays_fresh() { # <state> <account-home> <label>
+  local deadline=$((SECONDS + 5)) mtime age
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    ( FM_REMOTE_JOB_STATE_ROOT="$1"; fm_remote_job_probe "$2" ) \
+      || fail "the probe read the live $3 worker as unready"
+    mtime=$(fm_remote_job_path_mtime "$1/worker.ready") || fail "the $3 worker heartbeat vanished"
+    age=$(( $(date +%s) - mtime ))
+    [ "$age" -le 3 ] || fail "the $3 worker heartbeat went ${age}s stale"
+    sleep 0.5
+  done
+}
+quiet_stage_completes() { # <state> <account-home> <touched> <label>
+  local began=$SECONDS elapsed
+  (
+    FM_REMOTE_JOB_STATE_ROOT="$1"
+    FM_REMOTE_JOB_QUEUE_TIMEOUT=60
+    FM_REMOTE_JOB_TIMEOUT=30
+    fm_remote_job_stage "$2" "$REMOTE_ROOT" "$REMOTE_HOME" fm-touch-job.sh "$3" \
+      < /dev/null > /dev/null || exit 1
+    fm_remote_job_wait "$2" "$FM_REMOTE_JOB_ID" || exit 1
+    [ "$FM_REMOTE_JOB_EXIT" -eq 0 ] || exit 1
+    fm_remote_job_reap "$2" "$FM_REMOTE_JOB_ID"
+  ) || fail "a job staged to the $4 worker did not complete"
+  elapsed=$((SECONDS - began))
+  assert_present "$3" "the job staged to the $4 worker did not run"
+  [ "$elapsed" -le 5 ] \
+    || fail "a job staged to the $4 worker waited ${elapsed}s"
+}
+quiet_stop() { # <pid>
+  kill -TERM "$1"
+  for _ in $(seq 1 100); do
+    kill -0 "$1" 2>/dev/null || break
+    sleep 0.05
+  done
+  kill -0 "$1" 2>/dev/null && fail "TERM did not stop the idle worker"
+  wait "$1" 2>/dev/null || true
+}
+quiet_wait_ready "$QUIET_STATE" idle-rate
+quiet_settle 3
+quiet_measure "an idle worker" 6
+pass "an idle worker sleeps out a second between passes instead of busy-polling"
 
-TRIPWIRE_HOME="$TMP_ROOT/tripwire-home"
-TRIPWIRE_STATE="$TMP_ROOT/tripwire-jobs"
-mkdir -p "$TRIPWIRE_HOME"
-chmod 700 "$TRIPWIRE_HOME"
-HOME="$TRIPWIRE_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
-  FM_REMOTE_JOB_STATE_ROOT="$TRIPWIRE_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
-  FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=9 FM_REMOTE_JOB_REAP_INTERVAL_SECONDS=1 \
-  FM_REMOTE_JOB_POLL_SECONDS=0.02 \
-  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
-  > "$TMP_ROOT/tripwire.out" 2> "$TMP_ROOT/tripwire.err" &
-TRIPWIRE_WORKER_PID=$!
-for _ in $(seq 1 300); do
-  [ -f "$TRIPWIRE_STATE/worker.ready" ] && break
-  sleep 0.05
+quiet_heartbeat_stays_fresh "$QUIET_STATE" "$QUIET_HOME" idle
+pass "an idle worker keeps its readiness heartbeat fresh between passes"
+
+# The one-second idle bound is the pickup latency: a job staged to an idle
+# worker is claimed on its next pass and completes within a few seconds.
+quiet_stage_completes "$QUIET_STATE" "$QUIET_HOME" "$QUIET_TOUCHED" idle
+pass "an idle worker claims and publishes a staged job within a few seconds"
+
+# Hoisting setup out of every pass must not drop the worker's own repair of the
+# queue directories' 0700 modes: the periodic sweep still re-applies them with
+# no staging to trigger it.
+chmod 755 "$QUIET_STATE/jobs" "$QUIET_STATE/.seq-claims" "$QUIET_STATE/logs"
+for _ in $(seq 1 100); do
+  [ "$(file_mode "$QUIET_STATE/jobs")" = 700 ] && [ "$(file_mode "$QUIET_STATE/.seq-claims")" = 700 ] \
+    && [ "$(file_mode "$QUIET_STATE/logs")" = 700 ] && break
+  sleep 0.1
 done
-assert_present "$TRIPWIRE_STATE/worker.ready" "the state-root tripwire worker did not become ready"
-# The reap sweep re-prepares the state tree, so a worker whose root is deleted
-# must fail fast on its heartbeat before that sweep can silently recreate an
-# unowned tree and leave two workers serving one queue. Renaming the root away
-# deletes the path atomically: an in-place rm -rf races the live worker's
-# heartbeat, which can drop a fresh temp file into the half-removed directory,
-# fail the rm with "Directory not empty", and leave the root in place.
-mv -- "$TRIPWIRE_STATE" "$TMP_ROOT/tripwire-jobs.deleted"
+for QUIET_DIR in jobs .seq-claims logs; do
+  [ "$(file_mode "$QUIET_STATE/$QUIET_DIR")" = 700 ] \
+    || fail "the idle worker did not restore 0700 on its $QUIET_DIR directory"
+done
+quiet_stop "$QUIET_WORKER_PID"
+QUIET_WORKER_PID=
+pass "an idle worker still repairs queue permissions and stops promptly on TERM"
+
+# fm_remote_job_read_state is the per-sample read of the result consumers and
+# the lane preemption scan, so it is built from builtins and must keep the
+# published contract: a regular non-symlink file of at most 64 bytes, one
+# newline-terminated line, and a value in the published set. An unterminated
+# trailing fragment inside the size bound is still tolerated, matching the
+# former tail -n +2 check.
+STATE_CORPUS="$TMP_ROOT/state-corpus"
+mkdir -p "$STATE_CORPUS/job-x"
+state_accepts() { # <expected-value> <label>
+  local expected=$1 label=$2 printed outvar
+  printed=$(fm_remote_job_read_state "$STATE_CORPUS/job-x" 2>/dev/null) \
+    || fail "$label: a valid state record was rejected"
+  [ "$printed" = "$expected" ] || fail "$label: read '$printed' instead of '$expected'"
+  fm_remote_job_read_state "$STATE_CORPUS/job-x" outvar 2>/dev/null \
+    || fail "$label: the result-variable read was rejected"
+  [ "$outvar" = "$expected" ] || fail "$label: the result-variable read returned '$outvar'"
+}
+state_rejects() { # <label>
+  local label=$1 outvar=untouched
+  fm_remote_job_read_state "$STATE_CORPUS/job-x" > /dev/null 2>&1 \
+    && fail "$label: a malformed state record was accepted"
+  fm_remote_job_read_state "$STATE_CORPUS/job-x" outvar 2>/dev/null \
+    && fail "$label: the result-variable read accepted a malformed record"
+  [ "$outvar" = untouched ] \
+    || fail "$label: a rejected read still wrote the result variable"
+}
+printf 'queued\n' > "$STATE_CORPUS/job-x/state"
+state_accepts queued 'a queued record'
+printf 'done\n' > "$STATE_CORPUS/job-x/state"
+state_accepts 'done' 'a done record'
+printf 'queued' > "$STATE_CORPUS/job-x/state"
+state_rejects 'an unterminated record'
+printf 'queued\nextra\n' > "$STATE_CORPUS/job-x/state"
+state_rejects 'a two-line record'
+printf 'queued\nshort-tail' > "$STATE_CORPUS/job-x/state"
+state_accepts queued 'an unterminated trailing fragment'
+printf 'queued\n%0200d\n' 0 > "$STATE_CORPUS/job-x/state"
+state_rejects 'a record padded past the bound'
+printf 'bogus\n' > "$STATE_CORPUS/job-x/state"
+state_rejects 'a value outside the published set'
+printf '\n' > "$STATE_CORPUS/job-x/state"
+state_rejects 'a blank record'
+printf 'queued\n\n' > "$STATE_CORPUS/job-x/state"
+state_rejects 'a terminated empty second line'
+printf 'queued\r\n' > "$STATE_CORPUS/job-x/state"
+state_rejects 'a carriage-return record'
+printf 'queued\n\r' > "$STATE_CORPUS/job-x/state"
+state_rejects 'a carriage-return trailing fragment'
+printf 'queued\n\0pad' > "$STATE_CORPUS/job-x/state"
+state_rejects 'a NUL-padded record'
+rm -f -- "$STATE_CORPUS/job-x/state"
+state_rejects 'a missing record'
+mkdir "$STATE_CORPUS/job-x/state"
+state_rejects 'a directory record'
+rmdir "$STATE_CORPUS/job-x/state"
+printf 'queued\n' > "$STATE_CORPUS/state-target"
+ln -s ../state-target "$STATE_CORPUS/job-x/state"
+state_rejects 'a symlinked record'
+rm -f -- "$STATE_CORPUS/job-x/state" "$STATE_CORPUS/state-target"
+pass "the fork-free state read keeps every malformed-record rejection"
+
+# The record bounds are bytes, not characters: in a UTF-8 locale a multibyte
+# tail that fits the character count but busts the byte bound still rejects.
+UTF8_LOCALE=
+for CANDIDATE in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+  if locale -a 2>/dev/null | grep -qx "$CANDIDATE"; then UTF8_LOCALE=$CANDIDATE; break; fi
+done
+[ -n "$UTF8_LOCALE" ] || fail "no UTF-8 locale is available for the byte-bound checks"
+perl -e 'print "queued\n", "\xc3\xa9" x 30' > "$STATE_CORPUS/job-x/state"
+( LC_ALL="$UTF8_LOCALE" state_rejects 'a multibyte tail within 65 characters but past 64 bytes' ) || exit 1
+printf '%s\n' "$REMOTE_HOME" > "$STATE_CORPUS/job-x/home"
+( LC_ALL="$UTF8_LOCALE" fm_remote_job_read_line "$STATE_CORPUS/job-x/home" 8192 HOME_VALUE \
+    || fail 'a home record within its byte bound was rejected'
+  [ "$HOME_VALUE" = "$REMOTE_HOME" ] || fail "the home record read '$HOME_VALUE'" ) || exit 1
+perl -e 'print $ARGV[0], "\n", "\xc3\xa9" x 4100' "$REMOTE_HOME" > "$STATE_CORPUS/job-x/home"
+( if LC_ALL="$UTF8_LOCALE" fm_remote_job_read_line "$STATE_CORPUS/job-x/home" 8192 HOME_VALUE 2>/dev/null; then
+    fail 'a multibyte home record past its byte bound was accepted'
+  fi ) || exit 1
+rm -f -- "$STATE_CORPUS/job-x/home"
+pass "the builtin record reads bound bytes, not characters, in a UTF-8 locale"
+
+# While a lane runs a preemptible long poll it scans staged queued jobs once a
+# second for a same-home waiter. The field reads must not exec: the scan used
+# to spend a pipeline per field per record per second, which the counting
+# shims make observable. A same-home non-poll job still preempts, while a
+# queued job for another home or another preemptible poll does not.
+SCAN_ACCOUNT="$TMP_ROOT/scan-account"
+SCAN_STATE="$TMP_ROOT/scan-state"
+SCAN_HOME_B="$TMP_ROOT/scan-home-b"
+SCAN_EXEC_LOG="$TMP_ROOT/scan-execs"
+SCAN_CHILD_LOG="$TMP_ROOT/scan-child-execs"
+mkdir -p "$SCAN_ACCOUNT" "$SCAN_HOME_B" "$SCAN_ACCOUNT/.local/bin"
+# The delta-read child runs under env -i with the composed child PATH, which
+# includes the account's .local/bin: a shim there counts its stat polls where
+# the lane-level shims cannot see them.
+cat > "$SCAN_ACCOUNT/.local/bin/stat" <<SH
+#!/bin/bash
+printf 'child-stat\n' >> '$SCAN_CHILD_LOG'
+exec /usr/bin/stat "\$@"
+SH
+chmod +x "$SCAN_ACCOUNT/.local/bin/stat"
+scan_stage() { # <home> <command> [args...]; echoes the staged job id
+  local home=$1
+  shift
+  (
+    FM_REMOTE_JOB_STATE_ROOT="$SCAN_STATE" FM_REMOTE_JOB_QUEUE_TIMEOUT=60 \
+      FM_REMOTE_JOB_TIMEOUT=40 \
+      fm_remote_job_stage "$SCAN_ACCOUNT" "$REMOTE_ROOT" "$home" "$@" \
+        </dev/null >/dev/null || exit 1
+    printf '%s\n' "$FM_REMOTE_JOB_ID"
+  )
+}
+SCAN_POLL_ID=$(scan_stage "$REMOTE_HOME" \
+  fm-remote-delta-read.sh "$REPLY_LOG_REL" 0 "$EMPTY_SHA" 20)
+[ -n "$SCAN_POLL_ID" ] || fail "the scan fixture's long poll did not stage"
+# A queued sibling poll for the running lane's own home exercises the full
+# field read and must not count as a waiter; a queued command for a second
+# home must be invisible to this lane's scan.
+SCAN_SIBLING_ID=$(scan_stage "$REMOTE_HOME" \
+  fm-remote-delta-read.sh "$REPLY_LOG_REL" 0 "$EMPTY_SHA" 3)
+SCAN_OTHER_ID=$(scan_stage "$SCAN_HOME_B" fm-delay-job.sh 1 "$TMP_ROOT/other-ran")
+[ -n "$SCAN_SIBLING_ID" ] && [ -n "$SCAN_OTHER_ID" ] \
+  || fail "the scan fixture's queued jobs did not stage"
+: > "$SCAN_EXEC_LOG"
+: > "$SCAN_CHILD_LOG"
+# Direct exec, not "$BASH": the production shebang is /bin/bash, so this lane
+# runs on the stock macOS bash the same way the deployed worker does.
+HOME="$SCAN_ACCOUNT" PATH="$QUIET_SHIM:/usr/bin:/bin:/usr/sbin:/sbin" \
+  FM_TEST_EXEC_LOG="$SCAN_EXEC_LOG" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+  FM_REMOTE_JOB_STATE_ROOT="$SCAN_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --lane "$SCAN_POLL_ID" \
+  > "$TMP_ROOT/scan-lane.out" 2> "$TMP_ROOT/scan-lane.err" &
+SCAN_LANE_PID=$!
 for _ in $(seq 1 200); do
-  kill -0 "$TRIPWIRE_WORKER_PID" 2>/dev/null || break
+  [ "$(fm_remote_job_read_state "$SCAN_STATE/jobs/$SCAN_POLL_ID" 2>/dev/null || true)" = running ] && break
   sleep 0.05
 done
-if kill -0 "$TRIPWIRE_WORKER_PID" 2>/dev/null; then
-  kill -KILL "$TRIPWIRE_WORKER_PID" 2>/dev/null || true
-  wait "$TRIPWIRE_WORKER_PID" 2>/dev/null || true
-  TRIPWIRE_WORKER_PID=
-  fail "the worker kept serving after its state root was deleted"
+[ "$(fm_remote_job_read_state "$SCAN_STATE/jobs/$SCAN_POLL_ID" 2>/dev/null || true)" = running ] \
+  || fail "the long poll did not begin running in the scan fixture"
+sleep 1.5
+: > "$SCAN_EXEC_LOG"
+sleep 4
+for SCAN_TOOL in wc tr tail; do
+  SCAN_HITS=$(grep -cx "$SCAN_TOOL" "$SCAN_EXEC_LOG" || true)
+  [ "$SCAN_HITS" -eq 0 ] \
+    || fail "the lane scan ran $SCAN_TOOL $SCAN_HITS times in a 4-second window"
+done
+[ "$(grep -cx sleep "$SCAN_EXEC_LOG" || true)" -gt 0 ] \
+  || fail "the lane stopped sampling during the window"
+[ "$(grep -cx 'child-stat' "$SCAN_CHILD_LOG" || true)" -gt 0 ] \
+  || fail "the long poll stopped statting during the window"
+[ "$(fm_remote_job_read_state "$SCAN_STATE/jobs/$SCAN_POLL_ID" 2>/dev/null || true)" = running ] \
+  || fail "a queued job for another home preempted the running poll"
+pass "the lane scan reads staged records without execs and honors home isolation"
+
+SCAN_WAITER_ID=$(scan_stage "$REMOTE_HOME" fm-touch-job.sh "$TMP_ROOT/scan-touched")
+[ -n "$SCAN_WAITER_ID" ] || fail "the same-home waiter did not stage"
+for _ in $(seq 1 200); do
+  [ "$(fm_remote_job_read_state "$SCAN_STATE/jobs/$SCAN_POLL_ID" 2>/dev/null || true)" = 'done' ] && break
+  sleep 0.05
+done
+[ "$(fm_remote_job_read_state "$SCAN_STATE/jobs/$SCAN_POLL_ID" 2>/dev/null || true)" = 'done' ] \
+  || fail "a same-home queued command did not preempt the running poll"
+[ "$(cat "$SCAN_STATE/jobs/$SCAN_POLL_ID/exit")" -eq "$FM_REMOTE_JOB_PREEMPTED_EXIT" ] \
+  || fail "the preempted poll did not publish the preemption exit"
+wait "$SCAN_LANE_PID" 2>/dev/null || true
+SCAN_LANE_PID=
+pass "a same-home queued command still preempts the poll through the builtin scan"
+
+# A queued poll whose argv busts the byte bound is not a valid poll, so it
+# preempts like any other waiter. Its multibyte field fits the bound in
+# characters, which the scan must not count in a UTF-8 locale. The earlier
+# fixture's queued same-home waiter is cancelled so only this record can
+# preempt.
+( FM_REMOTE_JOB_STATE_ROOT="$SCAN_STATE" fm_remote_job_cancel "$SCAN_ACCOUNT" "$SCAN_WAITER_ID" ) \
+  || fail "the earlier same-home waiter could not be cancelled"
+SCAN_BOUND_POLL_ID=$(scan_stage "$REMOTE_HOME" \
+  fm-remote-delta-read.sh "$REPLY_LOG_REL" 0 "$EMPTY_SHA" 20)
+SCAN_BOUND_SIBLING_ID=$(scan_stage "$REMOTE_HOME" \
+  fm-remote-delta-read.sh "$REPLY_LOG_REL" 0 "$EMPTY_SHA" 3)
+[ -n "$SCAN_BOUND_POLL_ID" ] && [ -n "$SCAN_BOUND_SIBLING_ID" ] \
+  || fail "the byte-bound scan fixture did not stage"
+perl -e 'print "fm-remote-delta-read.sh\0", "\xc3\xa9" x 2100, "\0"' \
+  > "$SCAN_STATE/jobs/$SCAN_BOUND_SIBLING_ID/argv"
+HOME="$SCAN_ACCOUNT" PATH="$QUIET_SHIM:/usr/bin:/bin:/usr/sbin:/sbin" \
+  FM_TEST_EXEC_LOG="$SCAN_EXEC_LOG" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+  FM_REMOTE_JOB_STATE_ROOT="$SCAN_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  FM_REMOTE_JOB_MAX_BYTES=4096 LC_ALL="$UTF8_LOCALE" \
+  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --lane "$SCAN_BOUND_POLL_ID" \
+  > "$TMP_ROOT/scan-bound-lane.out" 2> "$TMP_ROOT/scan-bound-lane.err" &
+SCAN_LANE_PID=$!
+for _ in $(seq 1 200); do
+  [ "$(fm_remote_job_read_state "$SCAN_STATE/jobs/$SCAN_BOUND_POLL_ID" 2>/dev/null || true)" = 'done' ] && break
+  sleep 0.05
+done
+[ "$(fm_remote_job_read_state "$SCAN_STATE/jobs/$SCAN_BOUND_POLL_ID" 2>/dev/null || true)" = 'done' ] \
+  || fail "a queued poll with a multibyte argv past the byte bound did not preempt"
+[ "$(cat "$SCAN_STATE/jobs/$SCAN_BOUND_POLL_ID/exit")" -eq "$FM_REMOTE_JOB_PREEMPTED_EXIT" ] \
+  || fail "the byte-bound preemption did not publish the preemption exit"
+wait "$SCAN_LANE_PID" 2>/dev/null || true
+SCAN_LANE_PID=
+pass "the lane scan bounds argv in bytes, not characters, in a UTF-8 locale"
+
+# A child that stays up for FM_REMOTE_JOB_SUPERVISOR_HEALTHY_SECONDS clears the
+# consecutive-failure backoff, so a child that dies just past that threshold
+# used to reset the only guard the supervisor had and restart forever. The
+# fixture below is that worker: it exits non-zero after living just longer than
+# the healthy window, so every restart is accounted as healthy-then-failed.
+RESTART_ROOT="$TMP_ROOT/restart-root"
+RESTART_HOME="$TMP_ROOT/restart-account"
+RESTART_STATE="$TMP_ROOT/restart-state"
+RESTART_CHILD_LOG="$TMP_ROOT/restart-children"
+mkdir -p "$RESTART_ROOT/bin" "$RESTART_HOME"
+cp "$ROOT/bin/fm-remote-job-lib.sh" "$RESTART_ROOT/bin/"
+cp "$ROOT/bin/fm-remote-job-worker.sh" "$RESTART_ROOT/bin/fm-remote-job-supervisor-under-test.sh"
+printf 'fixture\n' > "$RESTART_ROOT/AGENTS.md"
+cat > "$RESTART_ROOT/bin/fm-remote-job-worker.sh" <<'SH'
+#!/bin/bash
+set -u
+[ "${1:-}" = --serve ] || exit 2
+printf '%s\n' "${BASHPID:-$$}" >> "$FM_TEST_SUPERVISOR_CHILD_LOG"
+sleep "$FM_TEST_SUPERVISOR_CHILD_SECONDS"
+exit "$FM_TEST_SUPERVISOR_CHILD_STATUS"
+SH
+chmod +x "$RESTART_ROOT/bin"/*.sh
+HOME="$RESTART_HOME" FM_ROOT_OVERRIDE="$RESTART_ROOT" \
+  FM_REMOTE_JOB_STATE_ROOT="$RESTART_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  FM_REMOTE_JOB_SUPERVISOR_HEALTHY_SECONDS=1 FM_REMOTE_JOB_SUPERVISOR_MAX_RESTARTS=3 \
+  FM_REMOTE_JOB_SUPERVISOR_MAX_BACKOFF_SECONDS=0 FM_TEST_SUPERVISOR_CHILD_LOG="$RESTART_CHILD_LOG" \
+  FM_TEST_SUPERVISOR_CHILD_SECONDS=1.1 FM_TEST_SUPERVISOR_CHILD_STATUS=1 \
+  "$RESTART_ROOT/bin/fm-remote-job-supervisor-under-test.sh" \
+  > "$TMP_ROOT/restart-supervisor.out" 2> "$TMP_ROOT/restart-supervisor.err" &
+RESTART_SUPERVISOR_PID=$!
+for _ in $(seq 1 300); do
+  kill -0 "$RESTART_SUPERVISOR_PID" 2>/dev/null || break
+  sleep 0.1
+done
+if kill -0 "$RESTART_SUPERVISOR_PID" 2>/dev/null; then
+  fail "workers dying just past the healthy threshold drove an unbounded restart loop"
 fi
-TRIPWIRE_STATUS=0
-wait "$TRIPWIRE_WORKER_PID" 2>/dev/null || TRIPWIRE_STATUS=$?
-TRIPWIRE_WORKER_PID=
-[ "$TRIPWIRE_STATUS" -ne 0 ] \
-  || fail "a worker whose state root vanished exited cleanly instead of failing for its supervisor to restart"
-assert_absent "$TRIPWIRE_STATE" "the reap sweep recreated the deleted worker state root behind an unowned worker"
-pass "a deleted state root fails the worker fast instead of being recreated by the reap sweep"
-
-# The live tripwire above only lands in the window between a successful
-# heartbeat and the sweep occasionally; pin that ordering deterministically.
-SWEEP_STATE="$TMP_ROOT/sweep-race-jobs"
-(
-  FM_REMOTE_JOB_STATE_ROOT="$SWEEP_STATE"
-  fm_remote_job_prepare_state "$ACCOUNT_HOME" || exit 2
-  mv -- "$SWEEP_STATE" "$TMP_ROOT/sweep-race-jobs.deleted"
-  fm_remote_job_reap_stale "$ACCOUNT_HOME" && exit 3
-  exit 0
-) || fail "the stale sweep did not fail on a state root deleted after preparation"
-assert_absent "$SWEEP_STATE" "the stale sweep recreated a state root deleted after the worker's heartbeat"
-pass "the stale sweep never recreates a state root deleted after the worker's heartbeat"
-
-# A prober reads worker.ready as fresh for FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS,
-# so a heartbeat cadence at or past that window would let a healthy worker read
-# as unready between writes. Settings validation refuses it before any state.
-for BAD_HEARTBEAT in '' abc 0 "$FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS" \
-  "$((FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS + 1))"; do
-  ( FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=$BAD_HEARTBEAT
-    fm_remote_job_validate_settings ) \
-    && fail "a heartbeat interval of '$BAD_HEARTBEAT' was accepted"
-done
-( FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS=$((FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS - 1))
-  fm_remote_job_validate_settings ) \
-  || fail "the widest heartbeat interval still inside the freshness window was rejected"
-for BAD_REAP in '' abc 0; do
-  ( FM_REMOTE_JOB_REAP_INTERVAL_SECONDS=$BAD_REAP
-    fm_remote_job_validate_settings ) \
-    && fail "a reap interval of '$BAD_REAP' was accepted"
-done
-for BAD_IDLE in '' abc 0 86401; do
-  ( FM_REMOTE_JOB_IDLE_TIMEOUT_SECONDS=$BAD_IDLE
-    fm_remote_job_validate_settings ) \
-    && fail "an idle timeout of '$BAD_IDLE' was accepted"
-done
-BOUNDS_HOME="$TMP_ROOT/bounds-home"
-BOUNDS_STATE="$TMP_ROOT/bounds-jobs"
-mkdir -p "$BOUNDS_HOME"
-chmod 700 "$BOUNDS_HOME"
-BOUNDS_STATUS=0
-HOME="$BOUNDS_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
-  FM_REMOTE_JOB_STATE_ROOT="$BOUNDS_STATE" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
-  FM_REMOTE_JOB_HEARTBEAT_INTERVAL_SECONDS="$FM_REMOTE_JOB_PROBE_FRESHNESS_SECONDS" \
-  "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --serve \
-  > "$TMP_ROOT/bounds.out" 2> "$TMP_ROOT/bounds.err" || BOUNDS_STATUS=$?
-[ "$BOUNDS_STATUS" -ne 0 ] \
-  || fail "the worker served with a heartbeat cadence outside the probe freshness window"
-grep -q 'bounds or timeout are invalid' "$TMP_ROOT/bounds.err" \
-  || fail "the refused worker did not report invalid bounds: $(cat "$TMP_ROOT/bounds.err")"
-assert_absent "$BOUNDS_STATE/worker.ready" "a worker with a refused heartbeat cadence still published a heartbeat"
-pass "a heartbeat cadence outside the probe freshness window is refused before the worker serves"
+set +e
+wait "$RESTART_SUPERVISOR_PID"
+RESTART_SUPERVISOR_RC=$?
+set -e
+RESTART_SUPERVISOR_PID=
+[ "$RESTART_SUPERVISOR_RC" -ne 0 ] || fail "the exhausted restart guard reported success"
+[ "$(wc -l < "$RESTART_CHILD_LOG" | tr -d ' ')" -eq 3 ] \
+  || fail "the restart guard did not stop at the configured maximum"
+assert_grep "remote job worker exited 3 times; stopping the supervisor" "$TMP_ROOT/restart-supervisor.err" \
+  "the restart guard did not explain why it stopped"
+pass "barely healthy worker failures remain bounded by the restart guard"
 
 echo "ALL TESTS PASSED"
