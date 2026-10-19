@@ -2986,10 +2986,8 @@ test_unattended_read_passes_an_active_away_window() {
   home=$(make_home unattended-away); write_fixture "$home"
   fakebin=$(make_fakebin "$home")
   : > "$home/state/.afk"
-  set +e
-  out=$(run "$home" "$fakebin" --json 2>&1)
-  rc=$?
-  set -e
+  rc=0
+  out=$(run "$home" "$fakebin" --json 2>&1) || rc=$?
   [ "$rc" -eq 3 ] || fail "an ordinary bearings read should refuse during away mode (rc=$rc): $out"
   out=$(run "$home" "$fakebin" --unattended --json 2>/dev/null) \
     || fail "the unattended bearings read refused during away mode"
