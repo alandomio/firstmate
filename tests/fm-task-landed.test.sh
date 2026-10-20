@@ -332,7 +332,7 @@ new_case readonly fm/readonly
 wt_commit a.txt one
 git -C "$C_WT" push -q origin fm/readonly || fail "push"
 index="$(git -C "$C_WT" rev-parse --absolute-git-dir)/index"
-touch -d '2001-01-01' "$index"
+touch -t 200101010000 "$index"
 before=$(cksum < "$index")
 touch "$C_WT/a.txt"
 meta readonly "worktree=$C_WT" kind=ship
