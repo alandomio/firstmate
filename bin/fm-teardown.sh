@@ -205,11 +205,12 @@
 #   whose work another home holds: the copy it moved out, or an adoption it is
 #   rolling back. Teardown then requires proof of that move and refuses without
 #   it: this home's teleport staging holds a manifest for the task, and the
-#   worktree is clean and on that manifest's snapshot commit, which the
-#   worktree's origin teleport ref also names. Given that proof it skips only
-#   the scout report and captain-call checks, and treats a backlog item that is
-#   no longer in this home as moved with the task rather than as a failed close;
-#   every other check still applies.
+#   worktree is clean and on that manifest's snapshot commit, which the clone's
+#   private refs/teleport/<task> also names. Given that proof it skips only the
+#   scout report and captain-call checks and the landed-work check (the work
+#   now lives in the other home, not on a remote), and treats a backlog item
+#   that is no longer in this home as moved with the task rather than as a
+#   failed close; every other check still applies.
 #   --legacy-record accepts a task record that predates the spawn_gen field:
 #   teardown then proceeds only when the recorded endpoint is confirmed dead or
 #   agent-less (bin/fm-backend.sh's recovery-grade classifier), and without
@@ -2021,9 +2022,15 @@ teardown_note_dirty_return() {
 }
 
 validate_worktree_teardown_safety() {
-  local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
+  local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch refusal
   [ -d "$WT" ] || return 0
   [ "$FORCE" != "--force" ] || return 0
+  if [ "$TELEPORTED" = 1 ]; then
+    refusal=$(teleported_copy_refusal)
+    [ -n "$refusal" ] || return 0
+    echo "REFUSED: --teleported needs proof that task $ID was teleported: $refusal." >&2
+    return 1
+  fi
   case "$KIND" in
     secondmate|scout) return 0 ;;
   esac
@@ -3615,16 +3622,16 @@ fi
 
 # Prints why the copy is not proven to be a teleported one (see --teleported).
 teleported_copy_refusal() {
-  local manifest wip head origin_wip status
+  local manifest wip head ref_wip status
   for manifest in "$STATE/teleport/$ID/out/manifest" "$STATE/teleport/$ID/in/manifest" ''; do
     [ -n "$manifest" ] || { printf 'no teleport manifest for %s under %s\n' "$ID" "$STATE/teleport/$ID"; return 0; }
     [ -f "$manifest" ] && [ ! -L "$manifest" ] && [ "$(fm_meta_get "$manifest" task)" = "$ID" ] && break
   done
   wip=$(fm_meta_get "$manifest" wip)
   head=$(git -C "$WT" rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null) || head=
-  origin_wip=$(git -C "$WT" rev-parse --verify --quiet "refs/remotes/origin/fm/teleport/$ID^{commit}" 2>/dev/null) || origin_wip=
-  if [ -z "$wip" ] || [ "$head" != "$wip" ] || [ "$origin_wip" != "$wip" ]; then
-    printf 'worktree %s is not on the teleport snapshot of %s that origin holds\n' "$WT" "$ID"
+  ref_wip=$(git -C "$WT" rev-parse --verify --quiet "refs/teleport/$ID^{commit}" 2>/dev/null) || ref_wip=
+  if [ -z "$wip" ] || [ "$head" != "$wip" ] || [ "$ref_wip" != "$wip" ]; then
+    printf 'worktree %s is not on the teleport snapshot of %s\n' "$WT" "$ID"
     return 0
   fi
   status=$(git -C "$WT" status --porcelain --untracked-files=all 2>/dev/null) || { printf 'could not read worktree %s\n' "$WT"; return 0; }

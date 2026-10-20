@@ -640,9 +640,11 @@ bin/fm-teleport.sh <task-id> --back [--to <secondmate>]
 The default route is `alwayson`.
 `bin/fm-teleport.sh`'s header owns the flags, the step order, and the protocol verbs it runs on each side through `fm-on.sh`.
 
-The work travels through git, never rsync.
-The sending side interrupts the worker, waits until it reads idle, and pushes one WIP commit holding the whole worktree, tracked and untracked, to `fm/teleport/<task-id>` on the project's origin.
-The adopting home launches the worker through `fm-spawn.sh --teleport` in a fresh pooled worktree, with the branch at the worker's last commit and the WIP content as uncommitted changes, so the WIP commit never enters the branch and the ref is deleted once the move completes.
+The work travels as git objects over the same SSH channel, never through rsync and never through a push to any remote of the project.
+The sending side interrupts the worker, waits until it reads idle, and records one WIP commit holding the whole worktree, tracked and untracked, under the private ref `refs/teleport/<task-id>`, then sends it as a git bundle inside the checked payload.
+The commit's message is a plain "WIP snapshot"; the task, branch, and snapshot are named only in the teleport manifest.
+The adopting home installs the bundle into its clone, fetching origin first when its clone lacks the history the bundle builds on, and launches the worker through `fm-spawn.sh --teleport` in a fresh pooled worktree, with the branch at the worker's last commit and the WIP content as uncommitted changes, so the WIP commit never enters the branch.
+Each home deletes its snapshot ref once it no longer needs it.
 The task's `data/<task-id>/` records travel with it, with the sending home's absolute paths rewritten to the adopting home's.
 A Claude worker resumes its own conversation: its transcript travels over the same SSH channel, is installed for the new worktree with paths rewritten, and is deleted on the sending side only after takeover.
 Any other harness, or a Claude worker whose transcript is missing, starts from its instructions plus a generated progress note.
@@ -651,9 +653,9 @@ The backlog item follows the task: `fm-backlog-handoff.sh` on the way out, and a
 The adopting home refuses before anything moves when it already records the task or its clone of the project is missing, dirty, or on another origin.
 Teleport also refuses during an active validation run.
 Until the adopting home confirms its worker is alive, every failure rolls the adopting side back and leaves the sending task in place, its worker alive and idle and its worktree and transcript untouched.
-After takeover, the sending copy is cleaned up only when its worktree still equals the snapshot.
+After takeover, the sending copy is cleaned up only when its worktree still equals the snapshot, through `fm-teardown.sh --teleported`, which accepts a copy whose work now lives in the other home rather than on a remote.
 Once the adopting home confirms its worker is alive it owns the task: a failed outbound backlog handoff no longer rolls anything back, the sending copy is still cleaned up, and the teleport completes with a warning to run `bin/fm-backlog-handoff.sh --resume-pending` when an outbox was staged; when none was, the local item gets a parked dispatch hold so it is never dispatched twice, and the warning spells out the recovery: run `bin/fm-backlog-handoff.sh <secondmate> <task-id>`, then on the second mate run `tasks-axi unhold <task-id>` and `tasks-axi start <task-id>`, for example through `bin/fm-on.sh` or in that home.
-The remote host needs the task's project cloned in its home, the worker's harness installed and logged in, and push access to the project's origin.
+The remote host needs the task's project cloned in its home and the worker's harness installed and logged in.
 
 ### Sleep reminder
 

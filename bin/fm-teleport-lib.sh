@@ -5,13 +5,18 @@
 # bin/fm-spawn.sh --teleport, which calls fm_teleport_prepare_worktree on a
 # freshly acquired pooled worktree before launching the adopting agent.
 #
-# The work travels as one WIP commit on refs/heads/fm/teleport/<task>. Its
+# The work travels as one WIP commit held under the private ref
+# refs/teleport/<task> in each home's project clone, never on any remote. Its
 # parent is the worker's HEAD and its tree is the worktree's full content,
 # tracked and untracked, honouring .gitignore and info/exclude. The commit is
 # built through a private index, so taking the snapshot never moves the
-# worker's HEAD, branch, index, or files. Two trailers make the commit
-# self-describing: "Firstmate-Teleport: <task>" and "Teleport-Branch: <name>"
-# (empty for a detached worker).
+# worker's HEAD, branch, index, or files. Its message is a plain "WIP snapshot"
+# and, without a configured identity, its author is "snapshot"; the teleport
+# manifest, not the commit, names the task, the snapshot, and the branch.
+#
+# The commit crosses hosts as a git bundle inside the teleport payload. The
+# bundle leaves out history the origin's default branch already holds; the
+# receiving clone fetches origin first when it lacks those prerequisites.
 #
 # Restoring puts the branch back at the WIP parent and the WIP tree back as
 # uncommitted changes, so the WIP commit itself never enters the branch.
@@ -23,7 +28,7 @@
 # literal strings.
 
 fm_teleport_ref() { # <task>
-  printf 'fm/teleport/%s\n' "$1"
+  printf 'refs/teleport/%s\n' "$1"
 }
 
 fm_teleport_valid_task_id() { # <task>
@@ -79,39 +84,60 @@ fm_teleport_worktree_tree() { # <worktree>
   printf '%s\n' "$tree"
 }
 
-# Create the WIP commit for <task> without touching the worktree, and print it.
+# Create the WIP commit for <task> without touching the worktree, record it
+# under refs/teleport/<task>, and print it.
 fm_teleport_snapshot() { # <worktree> <task>
-  local wt=$1 task=$2 tree head branch msg
+  local wt=$1 task=$2 tree head wip
   head=$(git -C "$wt" rev-parse --verify --quiet 'HEAD^{commit}') || return 1
-  branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   tree=$(fm_teleport_worktree_tree "$wt") || return 1
-  msg=$(printf 'teleport: WIP snapshot of %s\n\nFirstmate-Teleport: %s\nTeleport-Branch: %s\n' "$task" "$task" "$branch")
   if [ -n "$(git -C "$wt" config user.email 2>/dev/null)" ]; then
-    printf '%s\n' "$msg" | git -C "$wt" commit-tree "$tree" -p "$head"
+    wip=$(printf 'WIP snapshot\n' | git -C "$wt" commit-tree "$tree" -p "$head") || return 1
   else
-    printf '%s\n' "$msg" | git -C "$wt" -c user.name=firstmate -c user.email=firstmate@localhost commit-tree "$tree" -p "$head"
+    wip=$(printf 'WIP snapshot\n' | git -C "$wt" -c user.name=snapshot -c user.email=snapshot@localhost commit-tree "$tree" -p "$head") || return 1
+  fi
+  git -C "$wt" update-ref "$(fm_teleport_ref "$task")" "$wip" || return 1
+  printf '%s\n' "$wip"
+}
+
+# Write a bundle carrying refs/teleport/<task>, minus history that the origin's
+# default branch already holds.
+fm_teleport_bundle_create() { # <worktree> <task> <bundle-file>
+  local wt=$1 ref default
+  ref=$(fm_teleport_ref "$2")
+  default=$(git -C "$wt" rev-parse --verify --quiet refs/remotes/origin/HEAD 2>/dev/null \
+    || git -C "$wt" rev-parse --verify --quiet refs/remotes/origin/main 2>/dev/null \
+    || git -C "$wt" rev-parse --verify --quiet refs/remotes/origin/master 2>/dev/null || true)
+  if [ -n "$default" ] && [ "$(git -C "$wt" rev-parse "$ref")" != "$default" ]; then
+    git -C "$wt" bundle create "$3" "$ref" --not "$default"
+  else
+    git -C "$wt" bundle create "$3" "$ref"
   fi
 }
 
-# Print one trailer value of a teleport WIP commit.
-fm_teleport_trailer() { # <git-dir> <commit> <key>
-  git -C "$1" log -1 --format=%B "$2" 2>/dev/null | awk -v k="$3: " 'index($0, k) == 1 { print substr($0, length(k) + 1); exit }'
+# Install refs/teleport/<task> from <bundle> into <clone> and prove it names
+# <wip>. Fetches origin first when the clone lacks the bundle's prerequisites.
+fm_teleport_bundle_import() { # <clone> <task> <bundle-file> <wip>
+  local clone=$1 ref bundle=$3 wip=$4
+  ref=$(fm_teleport_ref "$2")
+  if ! git -C "$clone" bundle verify "$bundle" >/dev/null 2>&1; then
+    git -C "$clone" fetch --quiet origin || { echo "error: could not fetch origin into $clone for the snapshot's history" >&2; return 1; }
+    git -C "$clone" bundle verify "$bundle" >/dev/null 2>&1 || { echo "error: the snapshot bundle does not apply to $clone" >&2; return 1; }
+  fi
+  git -C "$clone" fetch --quiet "$bundle" "+$ref:$ref" || { echo "error: could not read the snapshot from its bundle" >&2; return 1; }
+  [ "$(git -C "$clone" rev-parse --verify --quiet "$ref^{commit}")" = "$wip" ] || {
+    git -C "$clone" update-ref -d "$ref" 2>/dev/null || true
+    echo "error: the snapshot bundle does not hold the snapshot named in the manifest" >&2; return 1; }
 }
 
 # Check out the teleported work in a clean worktree: branch at the WIP parent,
 # WIP tree as uncommitted changes. Refuses an existing local branch of the same
 # name that is not an ancestor of the WIP parent, so nothing it holds is moved.
-fm_teleport_restore_worktree() { # <worktree> <task>
-  local wt=$1 task=$2 ref wip base branch marker existing
+fm_teleport_restore_worktree() { # <worktree> <task> <wip> <branch>
+  local wt=$1 task=$2 wip=$3 branch=$4 ref base existing
   ref=$(fm_teleport_ref "$task")
-  git -C "$wt" fetch --quiet origin "+refs/heads/$ref:refs/remotes/origin/$ref" || {
-    echo "error: could not fetch $ref from origin" >&2; return 1; }
-  wip=$(git -C "$wt" rev-parse --verify --quiet "refs/remotes/origin/$ref^{commit}") || {
-    echo "error: $ref is not a commit" >&2; return 1; }
-  marker=$(fm_teleport_trailer "$wt" "$wip" Firstmate-Teleport)
-  [ "$marker" = "$task" ] || { echo "error: $ref is not a teleport snapshot of $task" >&2; return 1; }
+  [ -n "$wip" ] && [ "$(git -C "$wt" rev-parse --verify --quiet "$ref^{commit}")" = "$wip" ] || {
+    echo "error: $ref does not hold the teleport snapshot of $task" >&2; return 1; }
   base=$(git -C "$wt" rev-parse --verify --quiet "$wip^1") || { echo "error: teleport snapshot has no parent" >&2; return 1; }
-  branch=$(fm_teleport_trailer "$wt" "$wip" Teleport-Branch)
   [ -z "$(git -C "$wt" status --porcelain)" ] || { echo "error: worktree $wt is not clean; refusing to restore over it" >&2; return 1; }
   if [ -n "$branch" ]; then
     git check-ref-format --branch "$branch" >/dev/null 2>&1 || { echo "error: unsafe branch name in snapshot: $branch" >&2; return 1; }
@@ -128,13 +154,13 @@ fm_teleport_restore_worktree() { # <worktree> <task>
 }
 
 # Leave a worktree whose content still equals the WIP snapshot detached at that
-# commit, so it reads clean and landed (reachable from origin's teleport ref).
+# commit, so it reads clean on its snapshot, as teardown --teleported requires.
 # Refuses when the content changed after the snapshot.
 fm_teleport_settle_on_snapshot() { # <worktree> <task>
   local wt=$1 task=$2 ref wip tree
   ref=$(fm_teleport_ref "$task")
-  wip=$(git -C "$wt" rev-parse --verify --quiet "refs/remotes/origin/$ref^{commit}") || {
-    echo "error: no origin/$ref in $wt" >&2; return 1; }
+  wip=$(git -C "$wt" rev-parse --verify --quiet "$ref^{commit}") || {
+    echo "error: no $ref in $wt" >&2; return 1; }
   tree=$(fm_teleport_worktree_tree "$wt") || { echo "error: could not read $wt" >&2; return 1; }
   [ "$tree" = "$(git -C "$wt" rev-parse "$wip^{tree}")" ] || {
     echo "error: $wt changed after the teleport snapshot; leaving it untouched" >&2; return 1; }
@@ -167,7 +193,7 @@ fm_teleport_prepare_worktree() { # <worktree> <task> <data-dir> <home> <state-di
   dir="$data/$task/teleport"
   manifest="$dir/manifest"
   [ -f "$manifest" ] || { echo "error: no teleport manifest at $manifest" >&2; return 1; }
-  fm_teleport_restore_worktree "$wt" "$task" || return 1
+  fm_teleport_restore_worktree "$wt" "$task" "$(fm_meta_get "$manifest" wip)" "$(fm_meta_get "$manifest" branch)" || return 1
   session=$(fm_meta_get "$manifest" session)
   [ -n "$session" ] || return 0
   fm_teleport_valid_session "$session" || { echo "error: invalid session id in $manifest" >&2; return 1; }
