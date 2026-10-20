@@ -1,0 +1,12 @@
+ok - channel is inert without both the .env token and a valid config
+ok - fm-voice-note.sh transcribes any audio file into a data-only inbox note and never drops the audio
+ok - a voice note is downloaded, transcribed over ssh, and recorded as a marked transcript
+ok - any transcription failure keeps the message with a reason, and the timeout bounds a hung host
+ok - voice transcription is off unless configured, and its host is validated
+ok - discover reads chat and user ids without consuming updates, and retire disarms
+ok - poll keeps only addressed allowlisted messages, marks the owner, and leaves foreign groups
+ok - re-delivery never doubles a record and unsurfaced records are re-offered
+ok - the runner turns accepted messages into marked inbox notes with one announcement each
+ok - a fatal Bot API error is captured once and retires the source
+ok - channel notes are idempotent by id and cannot forge captain authority
+ok - send refuses foreign chats, sends plain text by default, splits, and records
