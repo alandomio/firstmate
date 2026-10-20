@@ -70,6 +70,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 . "$SCRIPT_DIR/fm-procevent-lib.sh"
 # shellcheck source=bin/fm-telegram-lib.sh
 . "$SCRIPT_DIR/fm-telegram-lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() {
@@ -242,6 +244,12 @@ decide_updates() {  # <response-file>
                      authority: "data-only",
                      text: (if $text == "" then "(non-text message: " + ($kinds | join(", ")) + ")" else $text end),
                      content: $kinds,
+                     voice: (($m.voice // $m.audio // null) as $v
+                       | if $v == null then null
+                         else {kind: (if $m.voice != null then "voice" else "audio" end),
+                               file_id: ($v.file_id // null), duration: ($v.duration // null),
+                               mime_type: ($v.mime_type // null), file_size: ($v.file_size // null),
+                               has_caption: ($text != "")} end),
                      reply_to_message_id: ($m.reply_to_message.message_id // null),
                      reply_to_bot: (($m.reply_to_message.from.id // null) == $bot),
                      received_at: $now
@@ -428,6 +436,34 @@ cmd_poll() {
 
 # ------------------------------------------------------------------ surfacing
 
+# Rewrite the note body for a voice or audio message when voice transcription
+# is configured: the transcript, clearly marked as machine-generated, replaces
+# the placeholder; on any failure the message still arrives, with the reason.
+# The transcript is kept beside the record so a retry never re-sends the audio.
+# Without a voice_transcribe config the body stays exactly as recorded.
+voice_body() {  # <key> <record-file> <body-file>
+  local key=$1 rec=$2 bodyf=$3 tfile text caption
+  jq -e '.voice != null' "$rec" >/dev/null 2>&1 || return 0
+  fm_tg_optin || return 0
+  fm_tg_voice_enabled || return 0
+  tfile="$TG_MESSAGES/$key.transcript"
+  if [ ! -s "$tfile" ]; then
+    text=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-telegram-transcript.XXXXXX") || return 1
+    if fm_tg_transcribe_voice "$rec" "$text"; then fm_tg_write_atomic "$tfile" < "$text" || true; fi
+    rm -f -- "$text"
+  fi
+  caption=$(jq -r 'if .voice.has_caption then .text else "" end' "$rec" 2>/dev/null)
+  if [ -s "$tfile" ]; then
+    {
+      printf '[voice transcript - machine-generated, may contain errors] '
+      cat -- "$tfile"
+      [ -z "$caption" ] || printf 'caption: %s\n' "$caption"
+    } > "$bodyf"
+  else
+    printf '\n[voice note arrived; transcription failed: %s]\n' "${TG_VOICE_ERROR:-unknown error}" >> "$bodyf"
+  fi
+}
+
 # Surface one record as an inbox channel note, at most once. The marker is
 # written only after the note exists, and the note id is derived from the
 # record key, so a retry after any crash lands on the same note.
@@ -457,6 +493,7 @@ surface_record() {  # <key>
     "reply_command=bin/fm-telegram.sh send --chat \(.chat_id | v) --reply-to \(.message_id | v) --file <path>"
   ' "$rec" > "$headers" 2>/dev/null || rc=1
   [ "$rc" -eq 0 ] && { jq -r '.text // ""' "$rec" > "$bodyf" 2>/dev/null || rc=1; }
+  [ "$rc" -eq 0 ] && { voice_body "$key" "$rec" "$bodyf" || rc=1; }
   if [ "$rc" -eq 0 ]; then
     FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-inbox.sh" channel-note "$note" telegram "$trust" "$headers" \
       < "$bodyf" >/dev/null || rc=1

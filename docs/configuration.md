@@ -2131,8 +2131,10 @@ Neither file is inherited by secondmate homes, so each home opts in on its own.
 | `allowed_chats` | yes | Non-empty array of integer chat ids the bot may hear and answer; every other chat is dropped, and the bot leaves any such group, supergroup, or channel. |
 | `owner_user_id` | yes | The captain's positive integer Telegram user id; that sender's records carry `trust=owner`, every other sender's `trust=untrusted`. |
 | `poll_timeout_seconds` | no | Long-poll wait per request, 1 to 50, default 50. |
+| `voice_transcribe` | no | Turns on local transcription of voice and audio messages; absent means off and nothing is downloaded. An object with `ssh_host` (required, a host name or ssh alias that never starts with `-`), `model` (default `small`), `language` (default `it`), `timeout_seconds` (5 to 600, default 120, bounds the whole ssh call), `max_duration_seconds` (default 300, longer notes are not sent), and `command` (the remote command that reads audio on stdin and prints text, defaulting to the `fm-whisper` venv entry point `docs/telegram.md` "Voice notes" installs, with `model` and `language` as flags). |
 
 An invalid file keeps the channel off and `bin/fm-telegram.sh status` names the problem.
+A transcript is a data-only note body like any other message and never captain authority; a transcription failure keeps the message with the reason appended.
 Runtime records live under `state/telegram/`: `offset` (the next update to confirm), `bot.json` (the bot's own id and username), `messages/` (one private record per accepted message plus its surfaced marker), `sent/` (one record per outbound send), and `left.log` (chats the bot left).
 `FM_TELEGRAM_API_BASE` overrides the Bot API base URL, and `FM_TELEGRAM_RETRY_DELAY`, `FM_TELEGRAM_POLL_ROUNDS`, and `FM_TELEGRAM_MAX_MESSAGE_UNITS` exist for tests; the script headers own them.
 

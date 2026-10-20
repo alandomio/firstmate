@@ -69,12 +69,31 @@ else
       n=$(cat "$dir/msgid" 2>/dev/null || echo 500); n=$((n + 1)); echo "$n" > "$dir/msgid"
       printf '{"ok":true,"result":{"message_id":%s}}' "$n" > "$out" ;;
     leaveChat) printf '{"ok":true,"result":true}' > "$out" ;;
+    getFile) printf '{"ok":true,"result":{"file_id":"x","file_path":"voice/file_1.oga"}}' > "$out" ;;
+    file_1.oga) printf 'OGGDATA' > "$out" ;;
     *) code=404; printf '{"ok":false,"description":"Not Found"}' > "$out" ;;
   esac
 fi
 printf '%s' "$code"
 SH
 chmod +x "$FAKEBIN/curl"
+# A fake ssh: logs the host and remote command, counts the audio bytes piped to
+# it, and behaves per FAKE_SSH_MODE (ok, fail, hang, empty).
+cat > "$FAKEBIN/ssh" <<'SH'
+#!/usr/bin/env bash
+while [ $# -gt 0 ]; do
+  case "$1" in -o) shift 2 ;; --) shift; break ;; *) break ;; esac
+done
+bytes=$(wc -c | tr -d ' ')
+printf '%s\t%s\t%s\n' "$1" "$2" "$bytes" >> "$FAKE_TG_DIR/ssh.log"
+case "${FAKE_SSH_MODE:-ok}" in
+  ok) printf 'ciao  capitano\nprova di trascrizione\n' ;;
+  empty) : ;;
+  hang) sleep 30 ;;
+  *) echo "ssh: connect to host $1 port 22: Connection refused" >&2; exit 255 ;;
+esac
+SH
+chmod +x "$FAKEBIN/ssh"
 export PATH="$FAKEBIN:$PATH"
 
 new_home() {  # <name> [optin]: print a fresh home; optin writes .env and config
@@ -317,7 +336,82 @@ test_discover_lists_ids_without_confirming() {
   pass "discover reads chat and user ids without consuming updates, and retire disarms"
 }
 
+voice_update() {  # <update-id> <chat-id> <from-id> [caption]
+  printf '{"update_id":%s,"message":{"message_id":%s,"date":1,"chat":{"id":%s,"type":"private"},"from":{"id":%s,"is_bot":false,"first_name":"F"},"voice":{"file_id":"AwACfileid_1","duration":3,"mime_type":"audio/ogg","file_size":900}%s}}' \
+    "$1" "$(( $1 + 1000 ))" "$2" "$3" "${4:+,\"caption\":\"$4\"}"
+}
+
+voice_home() {  # <name> <voice_transcribe-json>
+  local home
+  home=$(new_home "$1" optin)
+  printf '{"allowed_chats":[%s,%s],"owner_user_id":%s,"voice_transcribe":%s}\n' "$GROUP" "$OWNER" "$OWNER" "$2" > "$home/config/telegram.json"
+  printf '%s\n' "$home"
+}
+
+run_voice() {  # <home> <update-id>: capture one voice message through the runner
+  enqueue "$1" getUpdates 200 "{\"ok\":true,\"result\":[$(voice_update "$2" "$OWNER" "$OWNER" "${3-}")]}"
+  tg "$1" arm >/dev/null
+  pe "$1" start "$SID" >/dev/null 2>&1 || true
+}
+
+test_voice_transcribed() {
+  local home note
+  home=$(voice_home voice-ok '{"ssh_host":"nostromo","model":"small","language":"it"}')
+  FAKE_SSH_MODE=ok run_voice "$home" 700 "per Alan"
+  note="$home/state/inbox/tg-$OWNER-1700.note"
+  assert_present "$note" "a voice message becomes an inbox note"
+  assert_grep "voice transcript - machine-generated" "$note" "the body marks the text as a voice transcript"
+  assert_grep "ciao capitano prova di trascrizione" "$note" "the transcript is the note text"
+  assert_grep "caption: per Alan" "$note" "a caption is kept"
+  assert_grep "authority=data-only" "$note" "a transcript is still data only"
+  assert_grep "trust=owner" "$note" "the sender's trust is unchanged"
+  grep -q "^nostromo	.*transcribe.py --model small --language it	[1-9]" "$home/fake/ssh.log" || fail "audio is piped to the configured host with the default entry point"
+  [ "$(calls "$home" getFile)" = 1 ] || fail "the audio is fetched through getFile"
+  assert_present "$home/state/telegram/messages/$OWNER-1700.transcript" "the transcript is kept beside the record"
+  assert_no_grep "$TOKEN" "$note" "the note never carries the token"
+  pass "a voice note is downloaded, transcribed over ssh, and recorded as a marked transcript"
+}
+
+test_voice_failures_keep_message() {
+  local home note mode
+  for mode in fail empty hang; do
+    home=$(voice_home "voice-$mode" '{"ssh_host":"nostromo","timeout_seconds":5}')
+    FAKE_SSH_MODE=$mode run_voice "$home" 710
+    note="$home/state/inbox/tg-$OWNER-1710.note"
+    assert_present "$note" "a failed transcription ($mode) still delivers the message"
+    assert_grep "non-text message: voice" "$note" "the placeholder survives ($mode)"
+    assert_grep "voice note arrived; transcription failed" "$note" "the failure is recorded ($mode)"
+    assert_no_grep "voice transcript" "$note" "no transcript is invented ($mode)"
+  done
+  assert_grep "timed out after 5s" "$TMP_ROOT/voice-hang/state/inbox/tg-$OWNER-1710.note" "a hung host is bounded by the timeout"
+  assert_grep "Connection refused" "$TMP_ROOT/voice-fail/state/inbox/tg-$OWNER-1710.note" "a down host's error is recorded"
+  home=$(voice_home voice-getfile '{"ssh_host":"nostromo"}')
+  enqueue "$home" getFile 400 '{"ok":false,"description":"Bad Request: file is too big"}'
+  FAKE_SSH_MODE=ok run_voice "$home" 711
+  assert_grep "getFile failed" "$home/state/inbox/tg-$OWNER-1711.note" "a getFile failure is recorded"
+  [ ! -e "$home/fake/ssh.log" ] || fail "no audio goes to ssh when the download failed"
+  pass "any transcription failure keeps the message with a reason, and the timeout bounds a hung host"
+}
+
+test_voice_off_unless_configured() {
+  local home note
+  home=$(new_home voice-off optin)
+  FAKE_SSH_MODE=ok run_voice "$home" 720
+  note="$home/state/inbox/tg-$OWNER-1720.note"
+  assert_grep "(non-text message: voice)" "$note" "without voice_transcribe the note is today's placeholder"
+  assert_no_grep "transcription" "$note" "no transcription is mentioned when it is off"
+  [ "$(calls "$home" getFile)" = 0 ] || fail "audio is never downloaded when off"
+  [ ! -e "$home/fake/ssh.log" ] || fail "audio never leaves the machine when off"
+  home=$(new_home voice-bad optin)
+  printf '{"allowed_chats":[%s],"owner_user_id":%s,"voice_transcribe":{"ssh_host":"-oProxyCommand=x"}}' "$OWNER" "$OWNER" > "$home/config/telegram.json"
+  assert_contains "$(tg "$home" status)" "invalid:" "a host that looks like an ssh option is refused"
+  pass "voice transcription is off unless configured, and its host is validated"
+}
+
 test_inert_without_optin
+test_voice_transcribed
+test_voice_failures_keep_message
+test_voice_off_unless_configured
 test_discover_lists_ids_without_confirming
 test_poll_filters_records_and_leaves
 test_poll_redelivery_and_reoffer
