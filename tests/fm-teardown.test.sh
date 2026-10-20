@@ -1622,7 +1622,7 @@ test_teleported_copy_whose_backlog_item_moved_needs_no_close() {
   rc=$?
   set -e
   expect_code 0 "$rc" "teleported-item-present: teardown should close the item still here"
-  [ "$(tasks-axi show task-x1 --file "$case_dir/data/backlog.md" 2>/dev/null | sed -n 's/^  state: *//p' | head -1)" = done ] \
+  [ "$(tasks-axi show task-x1 --file "$case_dir/data/backlog.md" 2>/dev/null | sed -n 's/^  state: *//p' | head -1)" = "done" ] \
     || fail "teleported-item-present: the backlog item still here was not closed"
   pass "--teleported treats a backlog item that moved with the task as nothing to close, and still closes one that stayed"
 }
