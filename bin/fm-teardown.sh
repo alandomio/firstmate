@@ -207,7 +207,9 @@
 #   it: this home's teleport staging holds a manifest for the task, and the
 #   worktree is clean and on that manifest's snapshot commit, which the
 #   worktree's origin teleport ref also names. Given that proof it skips only
-#   the scout report and captain-call checks; every other check still applies.
+#   the scout report and captain-call checks, and treats a backlog item that is
+#   no longer in this home as moved with the task rather than as a failed close;
+#   every other check still applies.
 #   --legacy-record accepts a task record that predates the spawn_gen field:
 #   teardown then proceeds only when the recorded endpoint is confirmed dead or
 #   agent-less (bin/fm-backend.sh's recovery-grade classifier), and without
@@ -1720,6 +1722,10 @@ backlog_refresh_reminder() {
   local backlog_display root backend=markdown
   [ "$KIND" = secondmate ] && return 0
   [ "$CLEANUP_RECOVERY" = orca ] && return 0
+  if [ "$BACKLOG_MOVED" = 1 ]; then
+    printf '%s\n' "Backlog: $ID's item moved with the teleport; this home has none to close."
+    return 0
+  fi
   if root=$(fm_backlog_root "$DATA"); then
     backend=$(fm_tasks_axi_backend "$root") || return 2
   fi
@@ -3725,6 +3731,13 @@ if [ "$BACKEND" = herdr ]; then
   TEARDOWN_HERDR_PANE=$FM_BACKEND_HERDR_PANE
 fi
 
+# A teleported copy whose backlog item already moved with it has no row to close here.
+BACKLOG_MOVED=0
+if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ] && [ "$TELEPORTED" = 1 ] \
+   && ! fm_backlog_row_probe "$DATA" "$ID" && [ "$FM_BACKLOG_ROW_RESULT" = not_found ]; then
+  TEARDOWN_BACKLOG_APPLIES=0
+  BACKLOG_MOVED=1
+fi
 BACKLOG_CLOSED=0
 BACKLOG_TRANSITION=$TEARDOWN_BACKLOG_TRANSITION
 BACKLOG_TRANSITION_FLAGS=()
