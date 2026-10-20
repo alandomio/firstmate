@@ -449,7 +449,7 @@ retire_copy() { # <task>
   fi
   "$HELPERS/fm-control.sh" "$task" exit >/dev/null || die "could not stop task $task's worker"
   fm_teleport_settle_on_snapshot "$WT" "$task" || die "task $task's worktree no longer matches the teleport snapshot; it was left in place"
-  "$HELPERS/fm-teardown.sh" "$task" >&2 || die "cleanup of task $task's worktree failed; its worker is stopped and its worktree still holds the snapshot"
+  "$HELPERS/fm-teardown.sh" "$task" --teleported >&2 || die "cleanup of task $task's worktree failed; its worker is stopped and its worktree still holds the snapshot"
 }
 
 # Roll back a copy this home adopted (or half-adopted) and has not yet confirmed

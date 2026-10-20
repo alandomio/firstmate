@@ -197,10 +197,17 @@
 # leased home releases its durable treehouse lease so the pool slot is freed,
 # never left leased forever. If the treehouse return fails, teardown leaves the
 # leased home and state in place instead of hiding a still-held lease.
-# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--teleported]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
+#   --teleported is passed only by bin/fm-teleport.sh when it retires a copy
+#   whose work another home holds: the copy it moved out, or an adoption it is
+#   rolling back. Teardown then requires proof of that move and refuses without
+#   it: this home's teleport staging holds a manifest for the task, and the
+#   worktree is clean and on that manifest's snapshot commit, which the
+#   worktree's origin teleport ref also names. Given that proof it skips only
+#   the scout report and captain-call checks; every other check still applies.
 #   --legacy-record accepts a task record that predates the spawn_gen field:
 #   teardown then proceeds only when the recorded endpoint is confirmed dead or
 #   agent-less (bin/fm-backend.sh's recovery-grade classifier), and without
@@ -424,11 +431,13 @@ ID=$1
 TEARDOWN_LOST_SLOT_EXIT=4
 FORCE=
 LEGACY_RECORD_GIVEN=0
+TELEPORTED=0
 shift
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --force) FORCE=--force ;;
     --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
+    --teleported) TELEPORTED=1 ;;
     *)
       echo "error: invalid teardown request" >&2
       exit 2
@@ -3598,7 +3607,32 @@ if [ "$KIND" = secondmate ] && [ "$FORCE" = "--force" ]; then
   cleanup_firstmate_home_children "$HOME_PATH" || exit $?
 fi
 
-if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
+# Prints why the copy is not proven to be a teleported one (see --teleported).
+teleported_copy_refusal() {
+  local manifest wip head origin_wip status
+  for manifest in "$STATE/teleport/$ID/out/manifest" "$STATE/teleport/$ID/in/manifest" ''; do
+    [ -n "$manifest" ] || { printf 'no teleport manifest for %s under %s\n' "$ID" "$STATE/teleport/$ID"; return 0; }
+    [ -f "$manifest" ] && [ ! -L "$manifest" ] && [ "$(fm_meta_get "$manifest" task)" = "$ID" ] && break
+  done
+  wip=$(fm_meta_get "$manifest" wip)
+  head=$(git -C "$WT" rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null) || head=
+  origin_wip=$(git -C "$WT" rev-parse --verify --quiet "refs/remotes/origin/fm/teleport/$ID^{commit}" 2>/dev/null) || origin_wip=
+  if [ -z "$wip" ] || [ "$head" != "$wip" ] || [ "$origin_wip" != "$wip" ]; then
+    printf 'worktree %s is not on the teleport snapshot of %s that origin holds\n' "$WT" "$ID"
+    return 0
+  fi
+  status=$(git -C "$WT" status --porcelain --untracked-files=all 2>/dev/null) || { printf 'could not read worktree %s\n' "$WT"; return 0; }
+  [ -z "$status" ] || printf 'worktree %s changed after the teleport snapshot\n' "$WT"
+}
+if [ "$TELEPORTED" = 1 ]; then
+  TELEPORTED_REFUSAL=$(teleported_copy_refusal)
+  if [ -n "$TELEPORTED_REFUSAL" ]; then
+    echo "REFUSED: --teleported needs proof that task $ID was teleported: $TELEPORTED_REFUSAL." >&2
+    exit 1
+  fi
+fi
+
+if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ] && [ "$TELEPORTED" != 1 ]; then
   REPORT="$DATA/$ID/report.md"
   if [ ! -f "$REPORT" ]; then
     echo "REFUSED: scout task $ID has no report at $REPORT." >&2
