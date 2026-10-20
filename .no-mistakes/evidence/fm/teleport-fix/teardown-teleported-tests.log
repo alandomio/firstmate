@@ -1,0 +1,4 @@
+ok - --teleported retires a scout copy that a teleport moved out or rolled back, without its report
+ok - --teleported treats a backlog item that moved with the task as nothing to close, and still closes one that stayed
+ok - --teleported retires a moved ship copy whose snapshot is on no remote
+ok - --teleported refuses unless the copy is clean on its teleport snapshot

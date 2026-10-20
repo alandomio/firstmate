@@ -1,0 +1,3 @@
+ok - teleport refuses a dirty or already-occupied remote before touching the worker
+ok - a failed teleport leaves the local task intact and runnable
+not ok - pack recorded no refs/teleport/t1 snapshot

@@ -1,0 +1,32 @@
+ok - teleport refuses a dirty or already-occupied remote before touching the worker
+ok - a failed teleport leaves the local task intact and runnable
+ok - pack snapshots tracked and untracked work under refs/teleport/<task> without moving the worker
+ok - teleport out moves work, records, transcript, and backlog item to the remote and cleans up here
+ok - teleport --back reverses the move
+ok - a non-Claude task relaunches from its brief plus a generated progress note
+ok - a Claude task without a transcript falls back to brief plus progress note
+ok - a failed backlog handoff after takeover warns instead of rolling the remote back
+ok - an early backlog handoff failure holds the local item instead of leaving it dispatchable
+ok - a round trip replaces the earlier teleport note
+ok - no teleport, out or back, pushes anything to the project's origin
+ok - an adopting clone behind origin fetches the snapshot's history before installing it
+ok - teleport refuses mid-validation
+ok - abort refuses a task this home did not adopt
+ok - remind raises one rate-limited notification only while workers run
+ok - fm-spawn refuses --teleport with relaunch, secondmate, or batch spawns
+ok - fm-spawn --teleport resumes the Claude session with the arrival note as its launch record, before its backlog item arrives
+exit=0
+ok - teardown leaves opencode's busy plugin in the returned pool worktree as on main
+ok - a missing teardown startup source refuses before cleanup
+ok - an unreadable teardown startup source refuses before cleanup
+ok - a missing adapter sibling refuses before cleanup
+ok - a forced descendant with a missing adapter sibling refuses before cleanup
+ok - a forced secondmate with a missing own adapter sibling refuses before child cleanup
+ok - present required sources still reach the ordinary teardown refusal
+ok - local-only worktree with HEAD on a fork remote is torn down and the home summary is refreshed
+ok - teardown closes its own backlog item before reporting success
+ok - teardown closes a landed Gerrit task with its change URL as a note and a GitHub task with --pr
+ok - teardown closes a landed GitLab task with its merge request URL as a note and GitHub and Forgejo tasks with --pr
+Terminated: 15
+Terminated: 15
+tests/lib.sh: line 288: 58318 Killed: 9               out=$(run_teardown "$case_dir")
