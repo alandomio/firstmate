@@ -118,7 +118,7 @@ FM_HOME=/home/alan/firstmate RELAY_ON_AUDIO="/home/alan/firstmate/bin/fm-voice-n
 ```
 
 `--trust owner` only records that the captain's own device sent it; the transcript stays data only, never captain authority.
-Running the command twice on the same file queues one note and sends the audio to the host once.
+Running the command twice on the same file queues one note and sends the audio to the host once; a failed transcription is not cached, so running it again after a failure retries and queues the transcript as a separate note.
 `bin/fm-voice-note.sh --help` owns the flags.
 
 ## Replying
