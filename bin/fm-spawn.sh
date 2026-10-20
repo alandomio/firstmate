@@ -93,6 +93,13 @@
 #   cwd check refuses any endpoint that still reports another copy; a Herdr shell
 #   that has drifted out of the recorded worktree is told once to return, and
 #   only a shell that will not go refuses.
+#   --teleport adopts a task another home teleported here (bin/fm-teleport.sh
+#   adopt is its only caller). It applies to a fresh ship or scout spawn on a
+#   treehouse-backed backend: after the pooled worktree is refreshed,
+#   bin/fm-teleport-lib.sh's fm_teleport_prepare_worktree restores the work from
+#   data/<task-id>/teleport/manifest. When that manifest names a Claude session
+#   and the harness is claude, the launch resumes that session with
+#   data/<task-id>/teleport/arrival.md as its prompt instead of the brief.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
@@ -800,6 +807,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-project-capacity-lib.sh"
 # shellcheck source=bin/fm-worker-account-lib.sh
 . "$SCRIPT_DIR/fm-worker-account-lib.sh"
+# shellcheck source=bin/fm-teleport-lib.sh
+. "$SCRIPT_DIR/fm-teleport-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -834,6 +843,7 @@ RELAUNCH=0
 # Opt-in only: exact-resume presentation-order lock waits instead of refusing.
 # Absent/unset keeps upstream refuse-on-contention. See header.
 HERDR_RESUME_LOCK_WAIT=0
+TELEPORT=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -907,6 +917,7 @@ for a in "$@"; do
     KIND_SET=1
     ;;
   --relaunch) RELAUNCH=1 ;;
+  --teleport) TELEPORT=1 ;;
   --herdr-resume-lock-wait) HERDR_RESUME_LOCK_WAIT=1 ;;
   --harness) want_value=harness ;;
   --harness=*)
@@ -1057,6 +1068,13 @@ fi
 # so every axis this block resolves for a fresh spawn instead comes from that
 # task's own durable record below. Contradicting it on the command line is a
 # refusal rather than a silently-ignored flag.
+if [ "$TELEPORT" -eq 1 ]; then
+  [ "$RELAUNCH" -eq 0 ] || { echo "error: --teleport adopts a new task here; it cannot be combined with --relaunch" >&2; exit 1; }
+  [ "$KIND" != secondmate ] || { echo "error: --teleport applies to ship and scout spawns, not --secondmate" >&2; exit 1; }
+  case "${#POS[@]}:${POS[0]:-}" in
+    2:*=*|[!2]:*|[0-9][0-9]*:*) echo "error: --teleport takes exactly <task-id> <project-dir>, never a batch" >&2; exit 1 ;;
+  esac
+fi
 if [ "$RELAUNCH" -eq 1 ]; then
   [ "$BACKEND_SET" -eq 0 ] || {
     echo "error: --relaunch reuses the task's recorded backend; --backend cannot override it" >&2
@@ -2077,6 +2095,10 @@ if [ "$RELAUNCH" -eq 0 ]; then
     echo "error: backend=orca does not support --secondmate spawns yet" >&2
     exit 1
   fi
+  if [ "$BACKEND" = orca ] && [ "$TELEPORT" -eq 1 ]; then
+    echo "error: backend=orca owns its worktrees, so --teleport cannot restore into one; adopt on a treehouse-backed backend" >&2
+    exit 1
+  fi
   if [ "$BACKEND" = cmux ] && [ "$KIND" = secondmate ]; then
     echo "error: backend=cmux does not support --secondmate spawns yet" >&2
     exit 1
@@ -2459,7 +2481,7 @@ launch_template() {
     # record-backed doorbell: the full envelope is published into the receiving
     # home's state/operational-inbox before launch and only a printable doorbell
     # naming it is passed. A record that cannot be published stops the spawn.
-    printf '%s' '__MODELFLAG____EFFORTFLAG____BRIEFDOORBELL__'
+    printf '%s' '__MODELFLAG____EFFORTFLAG____RESUMEFLAG____BRIEFDOORBELL__'
     ;;
   # --disable hooks (equivalent to -c features.hooks=false) turns codex's whole
   # lifecycle-hook layer off for CREWMATE and SCOUT launches only.
@@ -3632,6 +3654,20 @@ fi
   echo "error: task $ID has no brief at inaccessible data path $BRIEF" >&2
   exit 1
 }
+# A teleported Claude task resumes its own session; its arrival note, not the
+# brief, is the launch prompt. bin/fm-teleport.sh adopt wrote both files.
+TELEPORT_SESSION=
+TELEPORT_PROMPT=
+if [ "$TELEPORT" -eq 1 ]; then
+  [ -f "$DATA/$ID/teleport/manifest" ] || { echo "error: --teleport needs $DATA/$ID/teleport/manifest" >&2; exit 1; }
+  TELEPORT_SESSION=$(fm_meta_get "$DATA/$ID/teleport/manifest" session)
+  if [ -n "$TELEPORT_SESSION" ]; then
+    [ "$HARNESS" = claude ] || { echo "error: the teleport manifest names a Claude session but this spawn runs $HARNESS" >&2; exit 1; }
+    fm_teleport_valid_session "$TELEPORT_SESSION" || { echo "error: invalid session id in the teleport manifest" >&2; exit 1; }
+    TELEPORT_PROMPT="$DATA/$ID/teleport/arrival.md"
+    [ -f "$TELEPORT_PROMPT" ] || { echo "error: no teleport arrival note at $TELEPORT_PROMPT" >&2; exit 1; }
+  fi
+fi
 if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   if fm_brief_task_placeholders_present "$BRIEF"; then
     echo "error: $BRIEF still contains {TASK} or {FIRSTMATE_SPEC}; fill ## Captain's intent and ## Firstmate spec before spawn" >&2
@@ -5157,6 +5193,12 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" "$BASE_BRANCH" || exit 1
+  if [ "$TELEPORT" -eq 1 ]; then
+    fm_teleport_prepare_worktree "$WT" "$ID" "$DATA" "$FM_HOME" "$STATE" || {
+      echo "error: could not restore the teleported work for $ID into $WT" >&2
+      exit 1
+    }
+  fi
 fi
 
 # Re-assert the durable task copy after either treehouse acquisition or endpoint
@@ -6054,7 +6096,7 @@ fi
 "$SCRIPT_DIR/fm-home-summary-refresh.sh" --best-effort || true
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
-sq_brief=$(shell_quote "$BRIEF")
+sq_brief=$(shell_quote "${TELEPORT_PROMPT:-$BRIEF}")
 sq_turnend=$(shell_quote "$TURNEND")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
 sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
@@ -6100,6 +6142,9 @@ if [ "$HARNESS" = rovo ]; then
   }
   LAUNCH=${LAUNCH//__ROVOCONFIGOVERRIDE__/$ROVOCONFIGOVERRIDE}
 fi
+RESUMEFLAG=
+[ -z "$TELEPORT_SESSION" ] || RESUMEFLAG="--resume $(shell_quote "$TELEPORT_SESSION") "
+LAUNCH=${LAUNCH//__RESUMEFLAG__/$RESUMEFLAG}
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}
 LAUNCH=${LAUNCH//__TURNEND__/$sq_turnend}
 LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
@@ -6146,7 +6191,7 @@ case "$LAUNCH" in
     secondmate) brief_opstate="$PROJ_ABS/state" ;;
     *) brief_opstate=$STATE ;;
   esac
-  brief_doorbell=$(FM_STATE_OVERRIDE="$brief_opstate" "$FM_ROOT/bin/fm-operational-input.sh" record launch-brief <"$BRIEF") || {
+  brief_doorbell=$(FM_STATE_OVERRIDE="$brief_opstate" "$FM_ROOT/bin/fm-operational-input.sh" record launch-brief <"${TELEPORT_PROMPT:-$BRIEF}") || {
     echo "error: could not publish the launch brief for $ID as an operational-inbox record under $brief_opstate; $HARNESS strips the typed operational marker, so the worker was not launched" >&2
     exit 1
   }

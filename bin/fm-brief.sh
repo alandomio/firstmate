@@ -866,6 +866,19 @@ else
   SETUP_BASE="You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch."
 fi
 
+IFS= read -r -d '' SUBAGENT_SECTION <<'EOF2' || true
+# Haiku subagents (claude harness only)
+Applies only if you run on the claude harness; otherwise ignore this section.
+You may delegate mechanical work to Haiku subagents (Agent tool, model haiku): code search, running tests/build/lint and summarising, executing already-decided command sequences (env setup, fixture regeneration, log gathering), and small mechanical edits (rename, formatting, typo, one-parameter change).
+Keep for yourself: diagnosing why something fails, non-mechanical code changes, every commit, validation-pipeline interaction (no-mistakes run/respond), PR/MR delivery, and status lines.
+Give each Haiku subagent ONE narrow, self-contained task with a short brief and small input (pass paths or patterns, not large pasted content); it runs briefly and ends.
+Spawn a fresh one per task and never reuse or continue a long-lived one; if a delegated task grows large or needs judgment, stop it and take it back.
+Subagents quote error lines verbatim, never paraphrase.
+You supervise: after any delegated edit read the actual diff, not the subagent's summary, and approve it before committing; never run a Haiku subagent in parallel with itself on the same files.
+Skip delegation when Claude weekly quota is at or above 95% used.
+EOF2
+SUBAGENT_SECTION=${SUBAGENT_SECTION%$'\n'}
+
 if [ "$KIND" = scout ]; then
 if "$SCRIPT_DIR/fm-bootstrap.sh" lavish-compatible >/dev/null 2>&1; then
   LAVISH_LINE='If your deliverable is a visual artifact the captain will review and iterate on, use the lavish-axi rule: arm your board with bin/fm-procevent-lavish.sh arm <artifact.html> --for <task-id>; never run lavish-axi poll yourself. Re-arm with the reply after each nonterminal round to acknowledge it, route the board feedback through your steering inbox, write needs-decision [key=board-review] with the live board URL when the captain owes a decision, and stop at session_ended or an empty End without re-arming - acknowledge that final round with bin/fm-procevent.sh handled <source-id> <sequence> to conclude and retire your board.'
@@ -917,6 +930,8 @@ $DECISION_CARD_ITEM
 $SHARED_INFRA_RULE
 
 $WAIT_BLOCK$INBOX_SECTION
+
+$SUBAGENT_SECTION
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -1019,6 +1034,8 @@ $ASK_USER_BLOCK
 $SHARED_INFRA_RULE
 
 $WAIT_BLOCK$INBOX_SECTION
+
+$SUBAGENT_SECTION
 
 # Project memory
 A project's \`AGENTS.md\` or \`CLAUDE.md\` is loaded into every agent session in that project, so edit it only to correct information that is factually wrong - including information your own change made wrong - and never to add knowledge because it is missing.
