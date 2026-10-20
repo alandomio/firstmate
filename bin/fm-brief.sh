@@ -523,6 +523,19 @@ Where the Task section changes a step below, the Task wins; it never relaxes the
 EOF
 PROVENANCE=${PROVENANCE%$'\n'}
 
+IFS= read -r -d '' SUBAGENT_SECTION <<'EOF2' || true
+# Haiku subagents (claude harness only)
+Applies only if you run on the claude harness; otherwise ignore this section.
+You may delegate mechanical work to Haiku subagents (Agent tool, model haiku): code search, running tests/build/lint and summarising, executing already-decided command sequences (env setup, fixture regeneration, log gathering), and small mechanical edits (rename, formatting, typo, one-parameter change).
+Keep for yourself: diagnosing why something fails, non-mechanical code changes, every commit, validation-pipeline interaction (no-mistakes run/respond), PR/MR delivery, and status lines.
+Give each Haiku subagent ONE narrow, self-contained task with a short brief and small input (pass paths or patterns, not large pasted content); it runs briefly and ends.
+Spawn a fresh one per task and never reuse or continue a long-lived one; if a delegated task grows large or needs judgment, stop it and take it back.
+Subagents quote error lines verbatim, never paraphrase.
+You supervise: after any delegated edit read the actual diff, not the subagent's summary, and approve it before committing; never run a Haiku subagent in parallel with itself on the same files.
+Skip delegation when Claude weekly quota is at or above 95% used.
+EOF2
+SUBAGENT_SECTION=${SUBAGENT_SECTION%$'\n'}
+
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 $PROVENANCE
@@ -569,6 +582,8 @@ $DECISION_CARD_ITEM
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+
+$SUBAGENT_SECTION
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -731,6 +746,8 @@ $DECISION_CARD_ITEM
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+
+$SUBAGENT_SECTION
 
 # Project memory
 Leave this project's \`AGENTS.md\` and \`CLAUDE.md\` unchanged unless the Task assigns you that edit; firstmate never hand-writes them, and routes any such edit through the project's own delivery path.
