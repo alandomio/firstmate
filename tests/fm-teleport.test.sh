@@ -387,6 +387,11 @@ TFAKE=$(fm_test_make_spawn_fakebin "$TCASE/fake")
 mkdir -p "$THOME/data" "$THOME/projects" "$THOME/state" "$THOME/config"
 printf 'claude\n' > "$THOME/config/crew-harness"
 touch "$THOME/state/.last-watcher-beat"
+# A real backlog makes the dispatch gate apply; the teleport flow, not this
+# spawn, carries the item, so the home has none for t7 yet.
+printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' > "$THOME/data/backlog.md"
+printf '%s\n' 'backend = "markdown"' '' '[markdown]' 'path = "data/backlog.md"' > "$THOME/.tasks.toml"
+TBACKLOG_BEFORE=$(cat "$THOME/data/backlog.md")
 fm_git_worktree "$TCASE/project" "$TWT" wt-launch
 fm_test_spawn_brief "$THOME" t7 "the original brief text"
 base=$(git -C "$TWT" rev-parse HEAD)
@@ -410,4 +415,5 @@ assert_present "$TWT/wip.txt" "the teleported work was restored into the worktre
 record=$(grep -rl "TELEPORT-ARRIVAL-MARKER" "$THOME/state/operational-inbox" 2>/dev/null | head -n 1)
 [ -n "$record" ] || fail "the arrival note was not published as the launch record: $launch"
 grep -qF "the original brief text" "$record" && fail "the launch record carried the brief instead of the arrival note"
-pass "fm-spawn --teleport resumes the Claude session with the arrival note as its launch record"
+[ "$(cat "$THOME/data/backlog.md")" = "$TBACKLOG_BEFORE" ] || fail "the teleport spawn changed this home's backlog"
+pass "fm-spawn --teleport resumes the Claude session with the arrival note as its launch record, before its backlog item arrives"

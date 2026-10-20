@@ -100,6 +100,9 @@
 #   data/<task-id>/teleport/manifest. When that manifest names a Claude session
 #   and the harness is claude, the launch resumes that session with
 #   data/<task-id>/teleport/arrival.md as its prompt instead of the brief.
+#   It skips the backlog dispatch check and transition, because the teleport
+#   moves the task's backlog item into this home only after the launch and
+#   marks it in flight itself.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
@@ -4218,9 +4221,12 @@ herdr_projection_existing_meta_allows_flat() { # <meta>
 # transitionable BEFORE any endpoint, worktree, or record exists: a refusal here
 # costs nothing to unwind, while the same refusal after publication would strand
 # a live pane. The authoritative mutation still runs under the meta lock below.
+# A --teleport adoption is exempt (see --teleport in the header).
 BACKLOG_TRANSITION=0
 BACKLOG_ROW_STATE=
-if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
+if [ "$TELEPORT" -eq 1 ]; then
+  :
+elif fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   BACKLOG_TRANSITION=1
   if fm_backlog_row_probe "$DATA" "$ID"; then
     BACKLOG_ROW_STATE=$FM_BACKLOG_ROW_STATE
