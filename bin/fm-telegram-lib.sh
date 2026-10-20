@@ -19,17 +19,19 @@
 # (`curl -K -`, fed by the printf builtin), so it is not in any process argv
 # that `ps` can show, and it is not in the long-lived poller's argv either.
 #
-# VOICE NOTES. When config/telegram.json carries a valid `voice_transcribe`
-# object, fm_tg_transcribe_voice downloads a voice or audio message through
-# getFile and pipes it over ssh to the transcription host's own Whisper entry
-# point (bin/fm-whisper-transcribe.py, installed there per docs/telegram.md).
-# Audio goes only to that host and is deleted locally afterwards. Every failure
-# returns non-zero with a one-line TG_VOICE_ERROR; callers keep the message.
+# VOICE NOTES. When voice transcription is configured (bin/fm-voice-lib.sh owns
+# the config and the ssh transcription), fm_tg_transcribe_voice downloads a
+# voice or audio message through getFile and transcribes it there. The audio is
+# deleted locally afterwards. Every failure returns non-zero with a one-line
+# VOICE_ERROR; callers keep the message.
 #
 # Every function here returns non-zero rather than exiting, so the caller owns
 # its own refusal wording.
 
 FM_TELEGRAM_API_BASE_DEFAULT='https://api.telegram.org'
+
+# shellcheck source=bin/fm-voice-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-voice-lib.sh"
 
 # The TG_* globals are this library's interface to its callers.
 # shellcheck disable=SC2034
@@ -43,7 +45,6 @@ fm_tg_init() {
   TG_TOKEN=
   TG_BOT_ID=
   TG_CONFIG_ERROR=
-  TG_VOICE_ERROR=
 }
 
 # Read TELEGRAM_BOT_TOKEN from .env into TG_TOKEN: last assignment wins, an
@@ -86,16 +87,18 @@ fm_tg_load_config() {
     elif (.allowed_chats | type) != "array" or (.allowed_chats | length) == 0 then "allowed_chats must be a non-empty array of chat ids"
     elif any(.allowed_chats[]; (int | not)) then "every allowed_chats entry must be an integer chat id"
     elif (.owner_user_id | int | not) or .owner_user_id <= 0 then "owner_user_id must be a positive integer Telegram user id"
-    elif has("voice_transcribe") and ((.voice_transcribe | type) != "object" or ((.voice_transcribe.ssh_host // "") | type != "string" or test("^[A-Za-z0-9_][A-Za-z0-9._@-]{0,200}$") | not)) then "voice_transcribe must be an object whose ssh_host is a host name or ssh alias"
-    elif has("voice_transcribe") and any(["model","language"][] as $k | .voice_transcribe[$k]; . != null and (type != "string" or test("^[A-Za-z0-9._-]{1,64}$") | not)) then "voice_transcribe model and language must be plain names"
-    elif has("voice_transcribe") and any(["timeout_seconds","max_duration_seconds"][] as $k | .voice_transcribe[$k]; . != null and (int | not)) then "voice_transcribe timeout_seconds and max_duration_seconds must be integers"
-    elif has("voice_transcribe") and ((.voice_transcribe.timeout_seconds // 120) < 5 or (.voice_transcribe.timeout_seconds // 120) > 600) then "voice_transcribe timeout_seconds must be from 5 to 600"
-    elif has("voice_transcribe") and (.voice_transcribe.command != null) and ((.voice_transcribe.command | type) != "string" or (.voice_transcribe.command | length) == 0 or (.voice_transcribe.command | test("[[:cntrl:]]"))) then "voice_transcribe command must be a single-line string"
     elif has("poll_timeout_seconds") and ((.poll_timeout_seconds | int | not) or .poll_timeout_seconds < 1 or .poll_timeout_seconds > 50) then "poll_timeout_seconds must be an integer from 1 to 50"
     else "" end' "$TG_CONFIG_FILE" 2>/dev/null) || { TG_CONFIG_ERROR="$TG_CONFIG_FILE is not valid JSON"; return 1; }
   if [ -n "$err" ]; then
     TG_CONFIG_ERROR="$TG_CONFIG_FILE: $err"
     return 1
+  fi
+  if jq -e 'has("voice_transcribe")' "$TG_CONFIG_FILE" >/dev/null 2>&1; then
+    err=$(jq -c '.voice_transcribe' "$TG_CONFIG_FILE" | fm_voice_cfg_error)
+    if [ -n "$err" ]; then
+      TG_CONFIG_ERROR="$TG_CONFIG_FILE: voice_transcribe: $err"
+      return 1
+    fi
   fi
 }
 
@@ -179,77 +182,48 @@ fm_tg_note_id() { printf 'tg-%s\n' "$1"; }
 
 # ------------------------------------------------------------------ voice notes
 
-# 0 when the home configured voice transcription (config already validated).
+# 0 when the home configured voice transcription; loads it into VOICE_CFG.
 fm_tg_voice_enabled() {
-  jq -e '(.voice_transcribe | type) == "object"' "$TG_CONFIG_FILE" >/dev/null 2>&1
+  fm_voice_cfg_load
 }
-
-fm_tg_voice_set_error() { TG_VOICE_ERROR=$(printf '%s' "$1" | tr -d '\000-\037\177' | cut -c1-200); [ -z "$TG_TOKEN" ] || TG_VOICE_ERROR=${TG_VOICE_ERROR//"$TG_TOKEN"/[token]}; }
 
 # Download a Bot API file by file_id to <dest>. The URL embeds the token and
 # reaches curl only on stdin, like fm_tg_api.
 fm_tg_download() {  # <file-id> <dest> <max-seconds>
   local fid=$1 dest=$2 max=$3 work body out code path
-  printf '%s' "$fid" | grep -Eq '^[A-Za-z0-9_-]{1,200}$' || { fm_tg_voice_set_error "unusable file id"; return 1; }
-  work=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/fm-telegram-dl.XXXXXX") || { fm_tg_voice_set_error "no work directory"; return 1; }
+  printf '%s' "$fid" | grep -Eq '^[A-Za-z0-9_-]{1,200}$' || { fm_voice_set_error "unusable file id"; return 1; }
+  work=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/fm-telegram-dl.XXXXXX") || { fm_voice_set_error "no work directory"; return 1; }
   body="$work/b.json"; out="$work/o.json"
   jq -cn --arg id "$fid" '{file_id: $id}' > "$body"
   code=$(fm_tg_api getFile "$body" "$out" "$max") || code=
-  if [ "$code" != 200 ]; then rm -rf -- "$work"; fm_tg_voice_set_error "getFile failed (http ${code:-none})"; return 1; fi
+  if [ "$code" != 200 ]; then rm -rf -- "$work"; fm_voice_set_error "getFile failed (http ${code:-none})"; return 1; fi
   path=$(jq -r '.result.file_path // ""' "$out" 2>/dev/null)
   rm -rf -- "$work"
   if ! printf '%s' "$path" | grep -Eq '^[A-Za-z0-9_./-]{1,300}$' || case "$path" in *..*|/*) true ;; *) false ;; esac; then
-    fm_tg_voice_set_error "getFile returned no downloadable path"; return 1
+    fm_voice_set_error "getFile returned no downloadable path"; return 1
   fi
   code=$(printf 'url = "%s/file/bot%s/%s"\n' "$TG_API_BASE" "$TG_TOKEN" "$path" \
     | curl -sS -m "$max" -o "$dest" -w '%{http_code}' -K - 2>/dev/null) || code=
-  if [ "$code" != 200 ] || [ ! -s "$dest" ]; then fm_tg_voice_set_error "download failed (http ${code:-none})"; return 1; fi
-}
-
-# Transcribe <audio-file> on the configured host into <out-file>. The result
-# travels by file, not stdout, so TG_VOICE_ERROR survives in the caller's shell.
-fm_tg_transcribe_file() {  # <audio-file> <out-file>
-  local audio=$1 dest=$2 host cmd model lang secs out errf rc=0
-  host=$(jq -r '.voice_transcribe.ssh_host' "$TG_CONFIG_FILE")
-  model=$(jq -r '.voice_transcribe.model // "small"' "$TG_CONFIG_FILE")
-  lang=$(jq -r '.voice_transcribe.language // "it"' "$TG_CONFIG_FILE")
-  secs=$(jq -r '.voice_transcribe.timeout_seconds // 120' "$TG_CONFIG_FILE")
-  cmd=$(jq -r --arg m "$model" --arg l "$lang" '.voice_transcribe.command // ("$HOME/.local/share/fm-whisper/venv/bin/python $HOME/.local/share/fm-whisper/transcribe.py --model " + $m + " --language " + $l)' "$TG_CONFIG_FILE")
-  command -v ssh >/dev/null 2>&1 || { fm_tg_voice_set_error "ssh is not installed"; return 1; }
-  errf=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-telegram-ssherr.XXXXXX") || { fm_tg_voice_set_error "no work file"; return 1; }
-  # The audio is opened inside the bounded child: fm_run_timed runs its command
-  # in the background, where a redirect on the call itself would be replaced by
-  # /dev/null.
-  # shellcheck disable=SC2016 # expanded by the child shell
-  out=$(fm_run_timed "$secs" bash -c 'f=$1; shift; exec "$@" < "$f"' _ "$audio" \
-    ssh -o BatchMode=yes -o ConnectTimeout=10 -- "$host" "$cmd" 2>"$errf") || rc=$?
-  if [ "$rc" -eq 124 ]; then
-    rm -f -- "$errf"; fm_tg_voice_set_error "timed out after ${secs}s"; return 1
-  elif [ "$rc" -ne 0 ]; then
-    fm_tg_voice_set_error "host $host failed (exit $rc): $(tail -n1 "$errf" 2>/dev/null)"; rm -f -- "$errf"; return 1
-  fi
-  rm -f -- "$errf"
-  out=$(printf '%s' "$out" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
-  if [ -z "$out" ]; then fm_tg_voice_set_error "no speech recognized"; return 1; fi
-  printf '%s\n' "$out" > "$dest"
+  if [ "$code" != 200 ] || [ ! -s "$dest" ]; then fm_voice_set_error "download failed (http ${code:-none})"; return 1; fi
 }
 
 # Download and transcribe one voice message record into <out-file>.
 fm_tg_transcribe_voice() {  # <record-file> <out-file>
   local rec=$1 dest=$2 fid dur size maxd audio rc=0
-  TG_VOICE_ERROR=
+  VOICE_ERROR=
+  VOICE_SCRUB=$TG_TOKEN
   fid=$(jq -r '.voice.file_id // ""' "$rec" 2>/dev/null)
   dur=$(jq -r '.voice.duration // 0' "$rec" 2>/dev/null)
   size=$(jq -r '.voice.file_size // 0' "$rec" 2>/dev/null)
-  maxd=$(jq -r '.voice_transcribe.max_duration_seconds // 300' "$TG_CONFIG_FILE" 2>/dev/null)
+  maxd=$(fm_voice_cfg_get '.max_duration_seconds // 300' 2>/dev/null)
   case "$dur" in ''|*[!0-9]*) dur=0 ;; esac
   case "$size" in ''|*[!0-9]*) size=0 ;; esac
-  [ -n "$fid" ] || { fm_tg_voice_set_error "record has no audio file"; return 1; }
-  if [ "$dur" -gt "$maxd" ]; then fm_tg_voice_set_error "too long (${dur}s, limit ${maxd}s)"; return 1; fi
-  if [ "$size" -gt 20000000 ]; then fm_tg_voice_set_error "file larger than the Bot API download limit"; return 1; fi
-  audio=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-telegram-audio.XXXXXX") || { fm_tg_voice_set_error "no work file"; return 1; }
+  [ -n "$fid" ] || { fm_voice_set_error "record has no audio file"; return 1; }
+  if [ "$dur" -gt "$maxd" ]; then fm_voice_set_error "too long (${dur}s, limit ${maxd}s)"; return 1; fi
+  if [ "$size" -gt 20000000 ]; then fm_voice_set_error "file larger than the Bot API download limit"; return 1; fi
+  audio=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-telegram-audio.XXXXXX") || { fm_voice_set_error "no work file"; return 1; }
   fm_tg_download "$fid" "$audio" 60 || rc=1
-  if [ "$rc" -eq 0 ]; then fm_tg_transcribe_file "$audio" "$dest" || rc=1; fi
+  if [ "$rc" -eq 0 ]; then fm_voice_transcribe_file "$audio" "$dest" || rc=1; fi
   rm -f -- "$audio"
   [ "$rc" -eq 0 ]
 }

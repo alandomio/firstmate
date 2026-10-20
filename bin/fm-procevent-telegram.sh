@@ -70,8 +70,6 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 . "$SCRIPT_DIR/fm-procevent-lib.sh"
 # shellcheck source=bin/fm-telegram-lib.sh
 . "$SCRIPT_DIR/fm-telegram-lib.sh"
-# shellcheck source=bin/fm-timeout-lib.sh
-. "$SCRIPT_DIR/fm-timeout-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() {
@@ -460,7 +458,7 @@ voice_body() {  # <key> <record-file> <body-file>
       [ -z "$caption" ] || printf 'caption: %s\n' "$caption"
     } > "$bodyf"
   else
-    printf '\n[voice note arrived; transcription failed: %s]\n' "${TG_VOICE_ERROR:-unknown error}" >> "$bodyf"
+    printf '\n[voice note arrived; transcription failed: %s]\n' "${VOICE_ERROR:-unknown error}" >> "$bodyf"
   fi
 }
 

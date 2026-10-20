@@ -408,7 +408,46 @@ test_voice_off_unless_configured() {
   pass "voice transcription is off unless configured, and its host is validated"
 }
 
+test_voice_note_command() {
+  local home audio out rc note
+  home=$(new_home vnote)
+  audio="$home/clip.ogg"; printf 'OGGDATA-clip' > "$audio"
+  note="$home/state/inbox"
+  # Unconfigured: the note still arrives, with the reason, and the audio stays.
+  out=$(FAKE_TG_DIR="$home/fake" FM_HOME="$home" "$ROOT/bin/fm-voice-note.sh" "$audio" --source watch --trust owner)
+  assert_contains "$out" "queued voice-watch-" "an unconfigured home still queues the note"
+  assert_grep "transcription failed: voice transcription is not configured" "$(ls "$note"/voice-watch-*.note)" "the reason is recorded"
+  assert_present "$audio" "the audio is never removed"
+  rm -f "$note"/voice-watch-*.note
+  printf '{"ssh_host":"nostromo","timeout_seconds":5}\n' > "$home/config/voice-transcribe.json"
+  out=$(FAKE_SSH_MODE=ok FAKE_TG_DIR="$home/fake" FM_HOME="$home" "$ROOT/bin/fm-voice-note.sh" "$audio" --source watch --trust owner --caption "dal polso")
+  note=$(ls "$home"/state/inbox/voice-watch-*.note)
+  assert_grep "voice transcript - machine-generated" "$note" "the body is marked as a voice transcript"
+  assert_grep "ciao capitano prova di trascrizione" "$note" "the transcript is the note text"
+  assert_grep "caption: dal polso" "$note" "the caption is kept"
+  assert_grep "source=watch" "$note" "the note names its source"
+  assert_grep "authority=data-only" "$note" "a transcript is data only"
+  assert_grep "trust=owner" "$note" "the requested trust is recorded"
+  assert_grep "voice_audio=$audio" "$note" "the note points at the audio"
+  # A second run reuses the cached transcript: the audio is sent to the host once.
+  FAKE_SSH_MODE=fail FAKE_TG_DIR="$home/fake" FM_HOME="$home" "$ROOT/bin/fm-voice-note.sh" "$audio" --source watch >/dev/null
+  [ "$(wc -l < "$home/fake/ssh.log" | tr -d ' ')" = 1 ] || fail "a cached transcript is not re-sent"
+  # A down host keeps the audio and queues a failure note for new audio.
+  printf 'OGGDATA-other' > "$home/other.ogg"
+  FAKE_SSH_MODE=fail FAKE_TG_DIR="$home/fake" FM_HOME="$home" "$ROOT/bin/fm-voice-note.sh" "$home/other.ogg" --source watch >/dev/null
+  assert_grep "Connection refused" "$(grep -l other.ogg "$home"/state/inbox/voice-watch-*.note)" "a failed transcription is recorded with the reason"
+  assert_present "$home/other.ogg" "a failed transcription never drops the audio"
+  out=$(FAKE_SSH_MODE=ok FAKE_TG_DIR="$home/fake" FM_HOME="$home" "$ROOT/bin/fm-voice-note.sh" --source watch --trust owner "$audio")
+  assert_contains "$out" "queued voice-watch-" "the audio path may come last, as a relay launcher appends it"
+  rc=0; FM_HOME="$home" "$ROOT/bin/fm-voice-note.sh" "$audio" --source text >/dev/null 2>&1 || rc=$?
+  expect_code 1 "$rc" "a source cannot impersonate a captain note"
+  rc=0; FM_HOME="$home" "$ROOT/bin/fm-voice-note.sh" "$home/missing.ogg" --source watch >/dev/null 2>&1 || rc=$?
+  expect_code 1 "$rc" "a missing file is refused"
+  pass "fm-voice-note.sh transcribes any audio file into a data-only inbox note and never drops the audio"
+}
+
 test_inert_without_optin
+test_voice_note_command
 test_voice_transcribed
 test_voice_failures_keep_message
 test_voice_off_unless_configured

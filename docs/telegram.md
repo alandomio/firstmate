@@ -74,7 +74,7 @@ Once the message is handled, acknowledge it like any inbox note with `bin/fm-inb
 
 ## Voice notes
 
-A voice or audio message is transcribed locally when `config/telegram.json` carries a `voice_transcribe` object ([`docs/configuration.md`](configuration.md#telegram-channel-env-configtelegramjson) owns its fields); without it, nothing is downloaded and the note is today's `(non-text message: voice)` placeholder.
+A voice or audio message is transcribed locally when voice transcription is configured, either as a `voice_transcribe` object in `config/telegram.json` or in its own `config/voice-transcribe.json`, which wins when both exist ([`docs/configuration.md`](configuration.md#telegram-channel-env-configtelegramjson) owns its fields); without it, nothing is downloaded and the note is today's `(non-text message: voice)` placeholder.
 When the note is surfaced, the poller fetches the audio through the Bot API `getFile`, pipes it over `ssh` to the configured host, and records the returned text as the note body behind the marker `[voice transcript - machine-generated, may contain errors]`.
 The audio goes only to that host, is deleted locally right after, and the host deletes its own copy when the transcription ends.
 The transcript is data only, exactly like a typed message: it carries the same `authority=data-only` and trust as the sender's text would, and a spoken instruction is never captain authority.
@@ -106,6 +106,20 @@ Measured on an 8-core Ubuntu 22.04 WSL2 host without a GPU, for a 17.7 s Italian
 
 Latency scales roughly linearly with the clip length, so a 30 s note takes about 8 to 10 s on `small` and about 30 to 35 s on `medium`, plus the ssh round trip.
 Choose `medium` through the `model` field when accuracy matters more than a few seconds.
+
+### Other voice sources: the watch relay
+
+`bin/fm-voice-note.sh` runs the same transcription for any audio file and queues it as a data-only inbox note from a named source, so the Amazfit watch app's relay needs no Telegram setup.
+It reads `config/voice-transcribe.json` (the same object as `voice_transcribe`, for a home without Telegram) and never moves or deletes the audio: when transcription is off or fails, the note is still queued with the reason and the audio's path.
+The relay's `RELAY_ON_AUDIO` runs a command with the saved file's path appended as the last argument, so point it at the script with the home and source fixed:
+
+```sh
+FM_HOME=/home/alan/firstmate RELAY_ON_AUDIO="/home/alan/firstmate/bin/fm-voice-note.sh --source watch --trust owner" python3 server.py
+```
+
+`--trust owner` only records that the captain's own device sent it; the transcript stays data only, never captain authority.
+Running the command twice on the same file queues one note and sends the audio to the host once.
+`bin/fm-voice-note.sh --help` owns the flags.
 
 ## Replying
 
