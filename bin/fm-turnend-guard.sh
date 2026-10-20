@@ -32,6 +32,21 @@
 # primary checkout - the main home or a genuinely marked secondmate home - and
 # stay a silent, fast no-op inside child task worktrees.
 #
+# Away mode (state/.afk): the away-mode daemon owns supervision and runs the
+# watcher one-shot, restarting it after every wake, so the watch lock is
+# regularly unheld at a turn boundary with nothing wrong. A live
+# identity-matched daemon holding this home, plus a fresh beacon, is what
+# proves supervision there - see fm_afk_daemon_owns_supervision in
+# bin/fm-wake-lib.sh. The beacon freshness test there uses AFK_GRACE
+# (fm_poll_derived_grace, docs/turnend-guard.md "Guard grace and the poll
+# cadence"), not the flat $GRACE every other check on this page uses: the
+# daemon starts a fresh one-shot watcher only after it finishes handling the
+# previous wake, and that handling can legitimately run past a flat 300s
+# window under load (a slow registered check, a busy supervisor pane) with the
+# daemon perfectly healthy throughout. The strict watcher predicate and $GRACE
+# are unchanged everywhere else, including for a dead daemon pid or a beacon
+# older than AFK_GRACE, which still block.
+#
 # Loop-guard, codex/Grok (default) mode: never block twice in the same turn.
 # Codex uses stop_hook_active and Grok uses stopHookActive; typed camel-case
 # takes precedence when both spellings are present. A true value means the
@@ -49,11 +64,16 @@
 # (docs/turnend-guard.md records the 2026-07-21 incident). In --claude mode this
 # guard ignores stop_hook_active and instead cooperates with the Stop-owned
 # auto-arm (bin/fm-claude-stop-autoarm.sh), which fires on the same Stop event:
-#   1. a live identity-matched watcher with a fresh beacon allows immediately;
-#   2. otherwise wait briefly (FM_CLAUDE_AUTOARM_SYNC_WAIT_MS, default 800ms)
-#      for the auto-arm to claim this home (state/.claude-autoarm.lock owner
-#      alive, with a supervision decision still open rather than a claim its own
-#      ledger entry or recorded pid-identity already settles as finished; while a
+#   1. a live identity-matched watcher with a fresh beacon - or, in away mode, a
+#      live identity-matched daemon with a fresh beacon - allows immediately;
+#   2. an unhealthy session with a verified live session-lock owner it does not
+#      own under the shared ancestry-or-trusted-id verdict exits with a read-only
+#      diagnostic instead of blocking a session that cannot repair supervision
+#      without stealing ownership;
+#   3. otherwise wait briefly (FM_CLAUDE_AUTOARM_SYNC_WAIT_MS, default 800ms)
+#      for the auto-arm to claim this home (a live OPEN generation claim in the
+#      state/.claude-autoarm-epoch ledger - fm_autoarm_claim_open - or a legacy
+#      build's lock-holding claim under the legacy abandonment proof; while a
 #      live auto-arm's fresh starting marker shows its slower pre-claim work is
 #      still deciding, keep waiting up to FM_CLAUDE_AUTOARM_START_WAIT seconds,
 #      default 15) or to
@@ -62,11 +82,16 @@
 #      without consuming a continuation, so one event epoch yields exactly one recovery turn;
 #      the first fresh exhausted-failure epoch preserves the bounded progression,
 #      while later fresh failed epochs consume it instead of resetting it;
-#   3. only when neither materializes is the auto-arm genuinely absent: re-block
+#   4. only when neither materializes is the auto-arm genuinely absent: re-block
 #      with the repair banner, bounded to FM_CLAUDE_TURNEND_BLOCK_BUDGET
 #      (default 3) consecutive blocks per session - safely below Claude Code's
 #      hard 8-consecutive-block override - then allow one loud attended
-#      fail-open only for an already verified failure episode.
+#      fail-open only for an already verified failure episode. The budget
+#      charges each event epoch once, and it also charges every re-block
+#      against an epoch the auto-arm never advanced past the previous
+#      re-block (budget_account_current_epoch owns that rule), so an inert
+#      hook that leaves the ledger frozen cannot hold the guard in an
+#      unbounded re-block loop below that override.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -94,6 +119,33 @@ for arg in "$@"; do
     *) echo "usage: $(basename "$0") [--claude|--cursor]" >&2; exit 2 ;;
   esac
 done
+
+# A Claude secondmate's home carries .fm-busy-stop (bin/fm-spawn.sh), and this
+# guard is then the only Stop writer of the parent home's busy record for that
+# gen: every exit records the Stop's outcome, busy when exit 2 blocks it into a
+# continuation and idle otherwise. Claude runs Stop hooks in parallel, so a
+# second Stop writer could land after this one and flip the verdict.
+# shellcheck disable=SC2329 # Invoked by the EXIT trap below.
+record_parent_stop_state() {
+  local status=$? pointer="$FM_ROOT/.fm-busy-stop" key value writer='' state='' id='' gen='' verdict=idle event=stop
+  [ "$CLAUDE_MODE" -eq 1 ] || return 0
+  [ -f "$pointer" ] && [ ! -L "$pointer" ] || return 0
+  while IFS='=' read -r key value; do
+    case "$key" in
+      writer) writer=$value ;;
+      state) state=$value ;;
+      id) id=$value ;;
+      gen) gen=$value ;;
+    esac
+  done < "$pointer"
+  [ -n "$state" ] && [ -n "$id" ] && [ -n "$gen" ] && [ -x "$writer" ] || return 0
+  if [ "$status" -eq 2 ]; then
+    verdict=busy
+    event=stop-blocked
+  fi
+  "$writer" apply "$state" "$id" "$verdict" --gen "$gen" --source claude-hook --event "$event" >/dev/null 2>&1 || true
+}
+trap record_parent_stop_state EXIT
 
 # shellcheck source=bin/fm-supervision-lib.sh
 . "$SCRIPT_DIR/fm-supervision-lib.sh"
@@ -160,6 +212,10 @@ fi
 # --- the actual predicate ----------------------------------------------------
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+if [ "$CLAUDE_MODE" -eq 1 ]; then
+  # shellcheck source=bin/fm-session-lock-lib.sh
+  . "$SCRIPT_DIR/fm-session-lock-lib.sh"
+fi
 
 BUDGET_FILE="$STATE/.turnend-claude-blocks"
 BUDGET_LOCK="$STATE/.turnend-claude-blocks.lock"
@@ -179,10 +235,34 @@ if [ "$FM_SUP_NEEDED" = false ]; then
   [ -e "$FAILURE_NOTICE" ] || budget_reset
   exit 0
 fi
-if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
+# One owner of the "supervision is on, let this turn end" exit contract, shared
+# by every proof of supervision below.
+allow_supervised_stop() {
   [ "$CLAUDE_MODE" -eq 1 ] || exit 0
   fm_failure_episode_reset "$STATE" && exit 0
   exit 2
+}
+
+if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
+  allow_supervised_stop
+fi
+
+# Away mode transfers supervision ownership from the watcher to the away-mode
+# daemon, which runs the watcher one-shot and starts its replacement after every
+# wake (bin/fm-supervise-daemon.sh). A turn boundary regularly lands in that
+# hand-off, when no watcher process holds the lock and nothing is wrong, so
+# requiring one here alarmed on healthy away-mode supervision. A live
+# identity-matched daemon holding this home is the right owner to test for.
+# The beacon half of the predicate still applies: a daemon that stops
+# restarting its watcher still blocks once the beacon passes grace, and a home
+# with no daemon and no watcher blocks exactly as before. It uses AFK_GRACE
+# (poll-cadence-derived, see the comment above) instead of the flat $GRACE
+# every other check on this page uses, so a daemon that is genuinely still
+# cycling - just slower than a fixed 300s window - is not misread as down.
+AFK_GRACE=${FM_GUARD_GRACE:-$(fm_poll_derived_grace)}
+if [ "$(fm_path_age "$STATE/.last-watcher-beat")" -lt "$AFK_GRACE" ] \
+  && fm_afk_daemon_owns_supervision "$STATE"; then
+  allow_supervised_stop
 fi
 
 block_stop() {
@@ -201,6 +281,8 @@ block_stop() {
       printf '●  %s task(s) in flight, but no live watcher holds this home lock (last beat: %s).\n' "$FM_SUP_IN_FLIGHT" "$FM_SUP_BEACON_DESC"
     elif [ "$FM_SUP_SOURCES" -gt 0 ]; then
       printf '●  %s process-event source(s) registered, but no live watcher holds this home lock (last beat: %s).\n' "$FM_SUP_SOURCES" "$FM_SUP_BEACON_DESC"
+    elif [ "$FM_SUP_CHECKS" -gt 0 ]; then
+      printf '●  %s registered custom check(s), but no live watcher holds this home lock (last beat: %s).\n' "$FM_SUP_CHECKS" "$FM_SUP_BEACON_DESC"
     else
       printf '●  X-mode relay polling needs supervision, but no live watcher holds this home lock (last beat: %s).\n' "$FM_SUP_BEACON_DESC"
     fi
@@ -213,6 +295,18 @@ block_stop() {
   exit 2
 }
 
+# Another verified live session owns the home lock under the shared
+# ancestry-or-trusted-id verdict. This session is read-only and cannot arm or
+# repair supervision without
+# stealing ownership, so blocking its Stop would create an impossible loop.
+# Report the ownership conflict as a diagnostic and let this turn end safely;
+# the owning session remains responsible for restoring the watcher.
+if [ "$CLAUDE_MODE" -eq 1 ] && fm_session_lock_foreign_owner_live "$STATE"; then
+  printf '{"systemMessage":"FIRSTMATE SUPERVISION IS OWNED BY ANOTHER LIVE SESSION: this read-only session cannot and should not arm or repair the watcher (lock owner pid %s). Allowing this turn to end safely; the owning session must restore supervision."}\n' \
+    "$FM_SESSION_LOCK_FOREIGN_OWNER_PID"
+  exit 0
+fi
+
 if [ "$CLAUDE_MODE" -eq 0 ]; then
   block_stop
 fi
@@ -221,12 +315,31 @@ fi
 # The Stop-owned auto-arm fires on the same Stop event. Give it a brief bounded
 # window to prove it owns recovery for this event epoch before consuming one of
 # Claude's bounded continuations.
-budget_account_current_epoch() {
-  local current_epoch outcome old_session old_count old_epoch tmp initialized
+#
+# Budget accounting, under the budget lock. Sets COUNT (the session's
+# consumed continuations, including this one) and BUDGET_INITIALIZED_FAILURE.
+# The ledger's epoch identity is what is charged: a new epoch charges once,
+# and an epoch this same invocation already charged is never charged again,
+# because the wait loop above can observe one fresh terminal epoch many times
+# before the block decision. Across Stops the two callers differ:
+#   - observe (the allow paths in autoarm_owns_recovery): seeing an
+#     already-charged epoch again is free - it is the same claim, seen again.
+#   - block (the re-block path): a re-block against the epoch the previous
+#     re-block already charged is a new consumed continuation, because the
+#     auto-arm advanced nothing between the two Stops - it did not participate
+#     at all, which is exactly the absence this budget bounds. Charging only
+#     epoch changes let an inert hook (identity-gated, never fired, or failing
+#     before its generation claim) freeze the ledger and the count together,
+#     so the guard re-blocked without limit and the attended fail-open below
+#     never became reachable.
+BUDGET_CHARGED_EPOCH=
+budget_account_current_epoch() {  # [observe|block]
+  local mode=${1:-observe} current_epoch outcome old_session old_count old_epoch tmp initialized charged
   fm_lock_try_acquire "$BUDGET_LOCK" || return 1
-  current_epoch=$(sed -n 's/^epoch=\([0-9][0-9]*\) .*/\1/p' "$STATE/.claude-autoarm-epoch" 2>/dev/null || true)
-  outcome=$(sed -n 's/^.*outcome=\([a-z][a-z-]*\) .*$/\1/p' "$STATE/.claude-autoarm-epoch" 2>/dev/null || true)
+  current_epoch=$(sed -n '1s/^epoch=\([0-9][0-9]*\) .*/\1/p' "$STATE/.claude-autoarm-epoch" 2>/dev/null || true)
+  outcome=$(sed -n '1s/^.*outcome=\([a-z][a-z-]*\) .*$/\1/p' "$STATE/.claude-autoarm-epoch" 2>/dev/null || true)
   initialized=0
+  charged=0
   COUNT=0
   if [ -f "$BUDGET_FILE" ]; then
     old_session=$(sed -n '1s/^session=//p' "$BUDGET_FILE" 2>/dev/null || true)
@@ -238,13 +351,18 @@ budget_account_current_epoch() {
     if [ "$old_session" = "$SESSION_ID" ]; then
       COUNT=$old_count
       if [ -n "$current_epoch" ] && [ "$old_epoch" = "$current_epoch" ]; then
-        :
+        if [ "$mode" = block ] && [ "$BUDGET_CHARGED_EPOCH" != "$current_epoch" ]; then
+          COUNT=$((COUNT + 1))
+          charged=1
+        fi
       else
         COUNT=$((COUNT + 1))
+        charged=1
       fi
     fi
   fi
   if [ ! -f "$BUDGET_FILE" ] || [ "${old_session:-}" != "$SESSION_ID" ]; then
+    charged=1
     case "$outcome" in
       failed|failed-suppressed)
         if [ -e "$FAILURE_NOTICE" ]; then
@@ -265,6 +383,7 @@ budget_account_current_epoch() {
     return 1
   fi
   rm -f "$tmp" 2>/dev/null || true
+  [ "$charged" -eq 0 ] || BUDGET_CHARGED_EPOCH=$current_epoch
   BUDGET_INITIALIZED_FAILURE=$initialized
   fm_lock_release "$BUDGET_LOCK"
   return 0
@@ -273,21 +392,25 @@ budget_account_current_epoch() {
 autoarm_owns_recovery() {
   local pid role outcome age
   fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME" && return 0
-  pid=$(cat "$OWNER_LOCK/pid" 2>/dev/null || true)
-  role=$(fm_lock_role "$OWNER_LOCK" 2>/dev/null || true)
-  # A live auto-arm owner is only evidence of ownership while its supervision
-  # decision is still open. Once its own ledger entry records a terminal outcome,
-  # or its recorded pid-identity stops matching the pid holding the lock, the lock
-  # is abandoned, and treating it as ownership is what let a dead watcher go
-  # unnoticed for turn after turn. Fall through instead: the outcome cases below
-  # still cover a claim that finished moments ago, so a genuine handoff is not
-  # duplicated, while a stale one now reaches the block.
-  if fm_pid_alive "$pid" && [ "$role" = autoarm ] \
-    && ! fm_autoarm_claim_abandoned "$STATE"; then
+  # An open generation claim owns recovery; fm_autoarm_claim_open in
+  # bin/fm-wake-lib.sh owns the full predicate, including session reachability.
+  # The outcome cases below still cover a claim that finished moments ago, so
+  # a genuine handoff is not duplicated while a stale claim reaches the block.
+  if fm_autoarm_claim_open "$STATE" "$GRACE"; then
     [ ! -e "$FAILURE_NOTICE" ] || budget_account_current_epoch || true
     return 0
   fi
-  outcome=$(sed -n 's/^.*outcome=\([a-z][a-z-]*\) .*$/\1/p' "$STATE/.claude-autoarm-epoch" 2>/dev/null || true)
+  # Legacy shim: a pre-generation build's claim holds the owner lock with the
+  # autoarm role for its whole cycle; defer to it under the legacy abandonment
+  # proof so an upgrade mid-session cannot double-arm.
+  pid=$(cat "$OWNER_LOCK/pid" 2>/dev/null || true)
+  role=$(fm_lock_role "$OWNER_LOCK" 2>/dev/null || true)
+  if fm_pid_alive "$pid" && [ "$role" = autoarm ] \
+    && ! fm_autoarm_claim_abandoned "$STATE" "$GRACE"; then
+    [ ! -e "$FAILURE_NOTICE" ] || budget_account_current_epoch || true
+    return 0
+  fi
+  outcome=$(sed -n '1s/^.*outcome=\([a-z][a-z-]*\) .*$/\1/p' "$STATE/.claude-autoarm-epoch" 2>/dev/null || true)
   case "$outcome" in
     rewake)
       age=$(fm_path_age "$STATE/.claude-autoarm-epoch")
@@ -319,20 +442,24 @@ terminal_fail_open() {
   [ "$COUNT" -gt "$BLOCK_BUDGET" ] || return 1
   failure_episode_verified || return 1
   [ ! -e "$FAILURE_ALARM" ] || return 1
+  # A live open generation claim is a concurrent recovery decision to step
+  # aside for, exactly like the legacy live-owner case below.
+  fm_autoarm_claim_open "$STATE" "$GRACE" && return 2
   if ! fm_lock_try_acquire "$OWNER_LOCK"; then
     pid=$(cat "$OWNER_LOCK/pid" 2>/dev/null || true)
     role=$(fm_lock_role "$OWNER_LOCK" 2>/dev/null || true)
-    # Same abandonment test as autoarm_owns_recovery: a claim whose ledger entry
-    # is already terminal, or whose recorded pid-identity no longer matches the
-    # live pid, is not a concurrent owner to step aside for. Stepping aside for one
-    # here allows the stop silently, and the episode's one attended alarm would
-    # never fire, so clear the abandoned claim and let this decision finish
-    # instead. Failing to clear it re-blocks rather than allowing.
+    # Same legacy abandonment test as autoarm_owns_recovery: a claim whose
+    # ledger entry is already terminal, or whose recorded pid-identity no
+    # longer matches the live pid, is not a concurrent owner to step aside
+    # for. Stepping aside for one here allows the stop silently, and the
+    # episode's one attended alarm would never fire, so clear the abandoned
+    # claim and let this decision finish instead. Failing to clear it
+    # re-blocks rather than allowing.
     if fm_pid_alive "$pid" && [ "$role" = autoarm ] \
-      && ! fm_autoarm_claim_abandoned "$STATE"; then
+      && ! fm_autoarm_claim_abandoned "$STATE" "$GRACE"; then
       return 2
     fi
-    fm_autoarm_release_abandoned "$STATE" || return 1
+    fm_autoarm_release_abandoned "$STATE" "$GRACE" || return 1
     fm_lock_try_acquire "$OWNER_LOCK" || return 1
   fi
   if ! fm_lock_set_role "$OWNER_LOCK" terminal-check; then
@@ -366,6 +493,15 @@ terminal_fail_open() {
     fm_lock_release "$OWNER_LOCK"
     return 2
   fi
+  # Re-check for a live open generation claim now that both locks are held: a
+  # claimant that published "arming" between the pre-check above and the lock
+  # acquisition is active recovery, and alarming over it would fire the
+  # episode's one attended fail-open while a continuation is under way.
+  if fm_autoarm_claim_open "$STATE" "$GRACE"; then
+    fm_lock_release "$BUDGET_LOCK"
+    fm_lock_release "$OWNER_LOCK"
+    return 2
+  fi
   if ! (set -C; : > "$FAILURE_ALARM") 2>/dev/null; then
     fm_lock_release "$BUDGET_LOCK"
     fm_lock_release "$OWNER_LOCK"
@@ -380,17 +516,16 @@ failure_episode_verified() {
   local outcome
   [ ! -e "$STATE/.afk" ] || return 1
   [ -e "$FAILURE_NOTICE" ] || return 1
-  outcome=$(sed -n 's/^.*outcome=\([a-z][a-z-]*\) .*$/\1/p' "$STATE/.claude-autoarm-epoch" 2>/dev/null || true)
+  outcome=$(sed -n '1s/^.*outcome=\([a-z][a-z-]*\) .*$/\1/p' "$STATE/.claude-autoarm-epoch" 2>/dev/null || true)
   case "$outcome" in
     failed|failed-suppressed) return 0 ;;
     *) return 1 ;;
   esac
 }
 
-# A live auto-arm that announced itself (state/.claude-autoarm-starting.<pid>) but
-# has not yet claimed the home or stood down is still deciding: its pre-claim work
-# routinely outlasts the short claim window, so it earns a longer wait bounded by
-# the marker's own age. A dead pid or an expired marker is not proof of anything.
+# A live auto-arm's fresh starting marker (state/.claude-autoarm-starting.<pid>)
+# means it is still deciding before its claim; a dead pid or expired marker is
+# no proof. docs/turnend-guard.md "Slow-starting auto-arm" owns the contract.
 autoarm_starting() {
   local marker age
   for marker in "$STATE"/.claude-autoarm-starting.*; do
@@ -402,8 +537,8 @@ autoarm_starting() {
   return 1
 }
 
-# Sample the marker BEFORE the ownership check: the auto-arm publishes its role
-# and only then removes the marker, so a marker seen here means the role is
+# Sample the marker BEFORE the ownership check: the auto-arm opens its claim
+# and only then removes the marker, so a marker seen here means the claim is
 # visible to the check that follows, and no marker means the decision is settled.
 i=0
 while :; do
@@ -428,7 +563,7 @@ fi
 
 # The auto-arm genuinely failed to establish: consume the bounded re-block
 # budget before considering the verified one-time attended fail-open.
-budget_account_current_epoch || block_stop
+budget_account_current_epoch block || block_stop
 terminal_fail_open
 terminal_status=$?
 if [ "$terminal_status" -eq 0 ]; then
@@ -436,6 +571,8 @@ if [ "$terminal_status" -eq 0 ]; then
     NEED_DESC="$FM_SUP_IN_FLIGHT task(s) in flight"
   elif [ "$FM_SUP_SOURCES" -gt 0 ]; then
     NEED_DESC="$FM_SUP_SOURCES process-event source(s) registered"
+  elif [ "$FM_SUP_CHECKS" -gt 0 ]; then
+    NEED_DESC="$FM_SUP_CHECKS registered custom check(s)"
   else
     NEED_DESC="X-mode relay polling active"
   fi

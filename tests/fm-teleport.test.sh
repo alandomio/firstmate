@@ -368,3 +368,40 @@ spawn_refusal "cannot be combined with --relaunch" t9 --relaunch --teleport
 spawn_refusal "not --secondmate" t9 "$SPAWN_HOME" --secondmate --teleport
 spawn_refusal "never a batch" a=b c=d --scout --teleport
 pass "fm-spawn refuses --teleport with relaunch, secondmate, or batch spawns"
+
+# --- fm-spawn --teleport launches the resumed Claude session -----------------------------
+
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
+TCASE="$TMP_ROOT/spawn-launch"
+THOME="$TCASE/home"
+TWT="$TCASE/wt"
+TLOG="$TCASE/launch.log"
+TFAKE=$(fm_test_make_spawn_fakebin "$TCASE/fake")
+mkdir -p "$THOME/data" "$THOME/projects" "$THOME/state" "$THOME/config"
+printf 'claude\n' > "$THOME/config/crew-harness"
+touch "$THOME/state/.last-watcher-beat"
+fm_git_worktree "$TCASE/project" "$TWT" wt-launch
+fm_test_spawn_brief "$THOME" t7 "the original brief text"
+base=$(git -C "$TWT" rev-parse HEAD)
+printf 'teleported work\n' > "$TWT/wip.txt"
+git -C "$TWT" add wip.txt
+git -C "$TWT" commit -q -m "$(printf 'teleport: WIP snapshot of t7\n\nFirstmate-Teleport: t7\nTeleport-Branch: fm/t7\n')"
+git -C "$TWT" push -q origin "HEAD:refs/heads/fm/teleport/t7"
+git -C "$TWT" checkout -q --detach "$base"
+git -C "$TWT" branch -q -D wt-launch 2>/dev/null || true
+TSESSION=0f1e2d3c-aaaa-4bbb-8ccc-123456789abc
+mkdir -p "$THOME/data/t7/teleport"
+printf 'session=%s\nsource_worktree=/elsewhere/wt\nsource_home=/elsewhere/home\n' "$TSESSION" > "$THOME/data/t7/teleport/manifest"
+printf '{"cwd":"/elsewhere/wt"}\n' > "$THOME/data/t7/teleport/session.jsonl"
+printf 'TELEPORT-ARRIVAL-MARKER: you now work in __WORKTREE__\n' > "$THOME/data/t7/teleport/arrival.md"
+: > "$TLOG"
+out=$(FM_FAKE_LAUNCH_LOG="$TLOG" fm_test_run_spawn "$THOME" "$TWT" "$TFAKE" t7 "$TCASE/project" --teleport --mode no-mistakes --yolo off) \
+  || fail "teleport spawn failed: $out"
+launch=$(cat "$TLOG")
+assert_contains "$launch" "--resume '$TSESSION' " "the teleported Claude launch resumes its own session"
+assert_present "$TWT/wip.txt" "the teleported work was restored into the worktree"
+record=$(grep -rl "TELEPORT-ARRIVAL-MARKER" "$THOME/state/operational-inbox" 2>/dev/null | head -n 1)
+[ -n "$record" ] || fail "the arrival note was not published as the launch record: $launch"
+grep -qF "the original brief text" "$record" && fail "the launch record carried the brief instead of the arrival note"
+pass "fm-spawn --teleport resumes the Claude session with the arrival note as its launch record"

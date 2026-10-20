@@ -1138,9 +1138,16 @@ def build_worker_brief(council, seat, cfg):
     if code != 0 or not brief_path.is_file():
         raise Stop(f"fm-brief.sh failed for {seat['task_id']}: {(err or out).strip()[:400]}", EXIT_RUNTIME)
     text = read(brief_path)
-    if text.count("# Task\n{TASK}\n") != 1:
+    split_slot = "# Task\n## Captain's intent\n{TASK}\n\n## Firstmate spec\n{FIRSTMATE_SPEC}\n"
+    if text.count(split_slot) == 1:
+        # A neutral intent line: the raw topic may hold identifying data that untrusted
+        # seats must not see; the (pseudonymised) question already lives in the spec.
+        intent = f"Take part in council {council['id']} as its {seat['seat']} voice and answer the council's question."
+        text = text.replace(split_slot, "# Task\n## Captain's intent\n" + intent + "\n\n## Firstmate spec\n" + task + "\n", 1)
+    elif text.count("# Task\n{TASK}\n") == 1:
+        text = text.replace("# Task\n{TASK}\n", "# Task\n" + task + "\n", 1)
+    else:
         raise Stop("the scout scaffold no longer carries its '# Task' {TASK} slot; update fm_pal_council.py", EXIT_RUNTIME)
-    text = text.replace("# Task\n{TASK}\n", "# Task\n" + task + "\n", 1)
     if council["prior"]:
         found = f"Earlier councils found in the RAG and included below: {', '.join(council['prior'])}."
         changed = "Their syntheses are part of the council's question, so the council starts from them rather than from zero."

@@ -121,10 +121,6 @@
       "audience": "agent-runtime"
     },
     {
-      "path": ".agents/skills/aws-goplanner-skills/SKILL.md",
-      "audience": "agent-runtime"
-    },
-    {
       "path": ".agents/skills/bearings/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -157,15 +153,11 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/firstmate-self-repo/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/fmx-respond/SKILL.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": ".agents/skills/goplanner-android-skills/SKILL.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": ".agents/skills/goplanner-skills/SKILL.md",
       "audience": "agent-runtime"
     },
     {
@@ -173,31 +165,79 @@
       "audience": "agent-runtime"
     },
     {
-      "path": ".agents/skills/pal-council/SKILL.md",
+      "path": ".agents/skills/harness-adapters/references/common/control-and-recovery.md",
       "audience": "agent-runtime"
     },
     {
-      "path": ".agents/skills/pal-council/references/persona-template.md",
+      "path": ".agents/skills/harness-adapters/references/common/dispatch.md",
       "audience": "agent-runtime"
     },
     {
-      "path": ".agents/skills/pal-council/references/researcher-brief.md",
+      "path": ".agents/skills/harness-adapters/references/common/model-and-effort.md",
       "audience": "agent-runtime"
     },
     {
-      "path": ".agents/skills/pal-council/references/researcher-persona.md",
+      "path": ".agents/skills/harness-adapters/references/common/primary-hooks.md",
       "audience": "agent-runtime"
     },
     {
-      "path": ".agents/skills/pal-council/references/synthesis-template.md",
+      "path": ".agents/skills/harness-adapters/references/harness/agy.md",
       "audience": "agent-runtime"
     },
     {
-      "path": ".agents/skills/pal-council/references/turn-contract.md",
+      "path": ".agents/skills/harness-adapters/references/harness/claude.md",
       "audience": "agent-runtime"
     },
     {
-      "path": ".agents/skills/pal-council/references/voice-brief.md",
+      "path": ".agents/skills/harness-adapters/references/harness/codex.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/commandcode.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/cursor.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/devin.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/gemini.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/grok.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/kimi.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/muse.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/omp.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/opencode.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/pi.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/polytoken.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/rovo.md",
       "audience": "agent-runtime"
     },
     {
@@ -209,15 +249,11 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/quiet/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/quota-array-dispatch/SKILL.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": ".agents/skills/retrospective/SKILL.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": ".agents/skills/retrospective/reference.md",
       "audience": "agent-runtime"
     },
     {
@@ -309,15 +345,19 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/extension-bindings.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/examples/crew-dispatch.json",
       "audience": "operator-example"
     },
     {
-      "path": "docs/examples/pal-council.json",
+      "path": "docs/examples/process-event-extension/file-signal.mjs",
       "audience": "operator-example"
     },
     {
-      "path": "docs/examples/skill-sync-exclude",
+      "path": "docs/examples/process-event-extension/firstmate-extension.json",
       "audience": "operator-example"
     },
     {
@@ -337,20 +377,52 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/forgejo-tea-integration.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/gerrit-change-watch.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/external-review-forge.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/gerrit-forge-integration.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/gitlab-merge-watch.md",
       "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/fleet-ledger.md",
+      "audience": "operator-current"
     },
     {
       "path": "docs/herdr-backend.md",
       "audience": "operator-current"
     },
     {
+      "path": "docs/jev-guards.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/orca-backend.md",
       "audience": "operator-current"
     },
     {
+      "path": "docs/pi-supervision-branch.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/remote-secondmates.md",
       "audience": "operator-current"
+    },
+    {
+      "path": "docs/secondmate-parent-channel.md",
+      "audience": "maintainer-architecture"
     },
     {
       "path": "docs/scripts.md",
@@ -381,6 +453,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": "docs/supervision-protocols/omp.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": "docs/supervision-protocols/opencode.md",
       "audience": "agent-runtime"
     },
@@ -389,12 +465,16 @@
       "audience": "agent-runtime"
     },
     {
+      "path": "docs/supervision-protocols/supervision-host.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": "docs/supervision-protocols/unknown.md",
       "audience": "agent-runtime"
     },
     {
-      "path": "docs/telegram.md",
-      "audience": "operator-current"
+      "path": "docs/supervision-host.md",
+      "audience": "maintainer-architecture"
     },
     {
       "path": "docs/tmux-backend.md",
@@ -409,11 +489,27 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/verification/agy.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/commandcode.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/devin.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/verification/dispatch-auth.md",
       "audience": "maintainer-verification"
     },
     {
-      "path": "docs/verification/live-board.md",
+      "path": "docs/verification/dispatch-resolve.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/lint-option-a.md",
       "audience": "maintainer-verification"
     },
     {
@@ -421,11 +517,11 @@
       "audience": "maintainer-verification"
     },
     {
-      "path": "docs/verification/pal-council.md",
+      "path": "docs/verification/process-event-sources.md",
       "audience": "maintainer-verification"
     },
     {
-      "path": "docs/verification/process-event-sources.md",
+      "path": "docs/verification/polytoken.md",
       "audience": "maintainer-verification"
     },
     {
@@ -433,7 +529,15 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/verification/rovo.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/verification/runtime-backends.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/secondmate-parent-channel.md",
       "audience": "maintainer-verification"
     },
     {
@@ -467,6 +571,106 @@
     {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
+    },
+    {
+      "path": "tests/captures/no-mistakes-v1.70.1/README.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": ".agents/skills/agent-skill-trigger-index/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/away-quiet-supervision/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/aws-goplanner-skills/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/goplanner-android-skills/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/goplanner-skills/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/operational-home-layout/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pal-council/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pal-council/references/persona-template.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pal-council/references/researcher-brief.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pal-council/references/researcher-persona.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pal-council/references/synthesis-template.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pal-council/references/turn-contract.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pal-council/references/voice-brief.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/retrospective/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/retrospective/reference.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/scout-completion/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/session-start-recovery/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/ship-landing/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/validation-supervision/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/examples/pal-council.json",
+      "audience": "operator-example"
+    },
+    {
+      "path": "docs/examples/skill-sync-exclude",
+      "audience": "operator-example"
+    },
+    {
+      "path": "docs/telegram.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/verification/live-board.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/pal-council.md",
+      "audience": "maintainer-verification"
     }
   ]
 }
