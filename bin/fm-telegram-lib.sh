@@ -19,10 +19,19 @@
 # (`curl -K -`, fed by the printf builtin), so it is not in any process argv
 # that `ps` can show, and it is not in the long-lived poller's argv either.
 #
+# VOICE NOTES. When voice transcription is configured (bin/fm-voice-lib.sh owns
+# the config and the ssh transcription), fm_tg_transcribe_voice downloads a
+# voice or audio message through getFile and transcribes it there. The audio is
+# deleted locally afterwards. Every failure returns non-zero with a one-line
+# VOICE_ERROR; callers keep the message.
+#
 # Every function here returns non-zero rather than exiting, so the caller owns
 # its own refusal wording.
 
 FM_TELEGRAM_API_BASE_DEFAULT='https://api.telegram.org'
+
+# shellcheck source=bin/fm-voice-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-voice-lib.sh"
 
 # The TG_* globals are this library's interface to its callers.
 # shellcheck disable=SC2034
@@ -83,6 +92,13 @@ fm_tg_load_config() {
   if [ -n "$err" ]; then
     TG_CONFIG_ERROR="$TG_CONFIG_FILE: $err"
     return 1
+  fi
+  if jq -e 'has("voice_transcribe")' "$TG_CONFIG_FILE" >/dev/null 2>&1; then
+    err=$(jq -c '.voice_transcribe' "$TG_CONFIG_FILE" | fm_voice_cfg_error)
+    if [ -n "$err" ]; then
+      TG_CONFIG_ERROR="$TG_CONFIG_FILE: voice_transcribe: $err"
+      return 1
+    fi
   fi
 }
 
@@ -163,3 +179,51 @@ fm_tg_record_key_valid() {
 }
 
 fm_tg_note_id() { printf 'tg-%s\n' "$1"; }
+
+# ------------------------------------------------------------------ voice notes
+
+# 0 when the home configured voice transcription; loads it into VOICE_CFG.
+fm_tg_voice_enabled() {
+  fm_voice_cfg_load
+}
+
+# Download a Bot API file by file_id to <dest>. The URL embeds the token and
+# reaches curl only on stdin, like fm_tg_api.
+fm_tg_download() {  # <file-id> <dest> <max-seconds>
+  local fid=$1 dest=$2 max=$3 work body out code path
+  printf '%s' "$fid" | grep -Eq '^[A-Za-z0-9_-]{1,200}$' || { fm_voice_set_error "unusable file id"; return 1; }
+  work=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/fm-telegram-dl.XXXXXX") || { fm_voice_set_error "no work directory"; return 1; }
+  body="$work/b.json"; out="$work/o.json"
+  jq -cn --arg id "$fid" '{file_id: $id}' > "$body"
+  code=$(fm_tg_api getFile "$body" "$out" "$max") || code=
+  if [ "$code" != 200 ]; then rm -rf -- "$work"; fm_voice_set_error "getFile failed (http ${code:-none})"; return 1; fi
+  path=$(jq -r '.result.file_path // ""' "$out" 2>/dev/null)
+  rm -rf -- "$work"
+  if ! printf '%s' "$path" | grep -Eq '^[A-Za-z0-9_./-]{1,300}$' || case "$path" in *..*|/*) true ;; *) false ;; esac; then
+    fm_voice_set_error "getFile returned no downloadable path"; return 1
+  fi
+  code=$(printf 'url = "%s/file/bot%s/%s"\n' "$TG_API_BASE" "$TG_TOKEN" "$path" \
+    | curl -sS -m "$max" -o "$dest" -w '%{http_code}' -K - 2>/dev/null) || code=
+  if [ "$code" != 200 ] || [ ! -s "$dest" ]; then fm_voice_set_error "download failed (http ${code:-none})"; return 1; fi
+}
+
+# Download and transcribe one voice message record into <out-file>.
+fm_tg_transcribe_voice() {  # <record-file> <out-file>
+  local rec=$1 dest=$2 fid dur size maxd audio rc=0
+  VOICE_ERROR=
+  VOICE_SCRUB=$TG_TOKEN
+  fid=$(jq -r '.voice.file_id // ""' "$rec" 2>/dev/null)
+  dur=$(jq -r '.voice.duration // 0' "$rec" 2>/dev/null)
+  size=$(jq -r '.voice.file_size // 0' "$rec" 2>/dev/null)
+  maxd=$(fm_voice_cfg_get '.max_duration_seconds // 300' 2>/dev/null)
+  case "$dur" in ''|*[!0-9]*) dur=0 ;; esac
+  case "$size" in ''|*[!0-9]*) size=0 ;; esac
+  [ -n "$fid" ] || { fm_voice_set_error "record has no audio file"; return 1; }
+  if [ "$dur" -gt "$maxd" ]; then fm_voice_set_error "too long (${dur}s, limit ${maxd}s)"; return 1; fi
+  if [ "$size" -gt 20000000 ]; then fm_voice_set_error "file larger than the Bot API download limit"; return 1; fi
+  audio=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-telegram-audio.XXXXXX") || { fm_voice_set_error "no work file"; return 1; }
+  fm_tg_download "$fid" "$audio" 60 || rc=1
+  if [ "$rc" -eq 0 ]; then fm_voice_transcribe_file "$audio" "$dest" || rc=1; fi
+  rm -f -- "$audio"
+  [ "$rc" -eq 0 ]
+}
