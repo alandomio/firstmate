@@ -3,10 +3,10 @@
 # through bin/fm-teleport.sh with real git, real tasks-axi, and the real
 # bin/fm-teleport-lib.sh restore path. The worker, the spawn backend, teardown,
 # and the SSH route are fixtures under FM_TELEPORT_BIN: fm-on.sh runs the named
-# command in the remote home, fm-spawn.sh stands in for a treehouse-backed spawn
-# and calls fm_teleport_prepare_worktree exactly as bin/fm-spawn.sh --teleport
-# does, and fm-teardown.sh refuses a dirty worktree the way the landed-work
-# check would.
+# command in the remote home and, like the real one, forwards stdin only with
+# --stdin, fm-spawn.sh stands in for a treehouse-backed spawn and calls
+# fm_teleport_prepare_worktree exactly as bin/fm-spawn.sh --teleport does, and
+# fm-teardown.sh refuses a dirty worktree the way the landed-work check would.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -41,9 +41,13 @@ printf '%s\n' "${FAKE_CREW_STATE:-state: working · source: pane}"
 SH
 cat > "$FAKE/fm-on.sh" <<'SH'
 #!/usr/bin/env bash
+# Like bin/fm-on.sh, the remote command reads an empty stdin unless --stdin.
+forward=0
+if [ "$1" = --stdin ]; then forward=1; shift; fi
 [ "$1" = "$FAKE_SECONDMATE" ] || { echo "error: no route $1" >&2; exit 1; }
 shift
 printf 'on %s\n' "$*" >> "$FAKE_LOG"
+[ "$forward" -eq 1 ] || exec < /dev/null
 FM_HOME="$FAKE_REMOTE_HOME" CLAUDE_CONFIG_DIR="$FAKE_REMOTE_CLAUDE" exec "$FM_TEST_ROOT/bin/$1" "${@:2}"
 SH
 cat > "$FAKE/fm-backlog-handoff.sh" <<'SH'
@@ -211,8 +215,9 @@ pass "pack snapshots tracked and untracked work onto fm/teleport/<task> without 
 # --- successful outbound teleport, Claude transcript resumed -------------------------
 
 : > "$FAKE_LOG"
-out=$(local_tp t1 2>&1) || fail "teleport out failed: $out"
+out=$(FM_TELEPORT_CHUNK_BYTES=256 local_tp t1 2>&1) || fail "teleport out failed: $out"
 assert_contains "$out" "teleported t1 to alwayson" "teleport reports the destination"
+[ "$(grep -c '^on fm-teleport.sh chunk-put t1 ' "$FAKE_LOG")" -gt 1 ] || fail "the payload did not travel as several chunks"
 RWT="$REMOTE/pool/t1"
 assert_present "$REMOTE/state/t1.meta" "the remote records the adopted task"
 [ "$(git -C "$RWT" symbolic-ref --short HEAD)" = feat/t1 ] || fail "the remote worker is not on the task's branch"
@@ -243,7 +248,8 @@ pass "teleport out moves work, records, transcript, and backlog item to the remo
 
 printf 'more remote work\n' >> "$RWT/remote.txt"
 : > "$FAKE_LOG"
-out=$(local_tp t1 --back 2>&1) || fail "teleport back failed: $out"
+out=$(FM_TELEPORT_CHUNK_BYTES=256 local_tp t1 --back 2>&1) || fail "teleport back failed: $out"
+[ "$(grep -c '^on fm-teleport.sh chunk-get t1 ' "$FAKE_LOG")" -gt 1 ] || fail "the payload did not come back as several chunks"
 assert_contains "$out" "teleported t1 back from alwayson" "back-teleport reports its source"
 BWT="$LOCAL/pool/t1"
 assert_present "$LOCAL/state/t1.meta" "the local home records the returned task"

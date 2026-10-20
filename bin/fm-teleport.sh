@@ -20,7 +20,8 @@
 #              "Teleporting a task" shows how.
 #
 # Protocol verbs. Each runs in the home that owns that side of the move, either
-# directly or through bin/fm-on.sh; operators use the two forms above.
+# directly or through bin/fm-on.sh, with --stdin for chunk-put and adopt;
+# operators use the two forms above.
 #   fm-teleport.sh describe <task-id>
 #   fm-teleport.sh check <task-id> <project-key> <origin-url>
 #   fm-teleport.sh pack <task-id> [--session <id>]
@@ -510,6 +511,11 @@ on() { # <secondmate> <fm-command> [args...]
   "$HELPERS/fm-on.sh" "$@"
 }
 
+# fm-on.sh gives the remote command an empty stdin unless asked to forward it.
+on_input() { # <secondmate> <fm-command> [args...]; stdin is the command's input
+  "$HELPERS/fm-on.sh" --stdin "$@"
+}
+
 delete_wip_ref() { # <task> <git-dir>
   git -C "$2" push --quiet origin --delete "refs/heads/$(fm_teleport_ref "$1")" 2>/dev/null \
     || warn "could not delete $(fm_teleport_ref "$1") from origin; delete it by hand"
@@ -530,11 +536,11 @@ teleport_out() { # <task> <secondmate> <session>
   i=0
   while [ "$i" -lt "$chunks" ]; do
     sha=$(printf '%s\n' "$manifest" | sed -n "s/^chunk_$i=//p")
-    on "$sm" fm-teleport.sh chunk-put "$task" "$i" "$sha" < "$dir/part.$i" >/dev/null \
+    on_input "$sm" fm-teleport.sh chunk-put "$task" "$i" "$sha" < "$dir/part.$i" >/dev/null \
       || { on "$sm" fm-teleport.sh abort "$task" >/dev/null 2>&1 || true; die "could not send task $task to $sm; it stays here with its worker idle"; }
     i=$((i + 1))
   done
-  if ! adopted=$(printf '%s\n' "$manifest" | on "$sm" fm-teleport.sh adopt "$task"); then
+  if ! adopted=$(printf '%s\n' "$manifest" | on_input "$sm" fm-teleport.sh adopt "$task"); then
     on "$sm" fm-teleport.sh abort "$task" >/dev/null 2>&1 || warn "$sm may hold a partial copy of $task; run fm-on.sh $sm fm-teleport.sh abort $task"
     die "$sm could not take over task $task; it stays here with its worker idle"
   fi
