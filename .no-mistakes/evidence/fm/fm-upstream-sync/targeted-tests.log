@@ -1,0 +1,250 @@
+== fm-brief
+ok - fm-brief: scaffolds leave the worker role scope to the launch boundary and keep the secondmate contract
+ok - fm-brief.sh: bash -n succeeds
+/private/var/folders/tc/hhm5872n2ql638k7y8nh5nd40000gn/T/fm-brief.6aVfa8/heredoc-in-substitution.sh:2
+ok - fm-brief.sh: no heredoc is nested inside a command substitution (Bash 3.2 parse-safe)
+ok - fm-brief.sh: --help renders the complete header
+ok - fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly
+ok - fm-brief.sh: --forge forgejo names tea in Rule 3, the direct-PR DOD, and the draft read-back, marks the delivery contract, and the closed set refuses everything else
+ok - fm-brief.sh: --forge external renders the no-push rule, the review contract, and the adapter, and refuses every impossible shape
+ok - fm-brief.sh: ship --mode is required and closed-set validated
+ok - fm-brief.sh: the explicit ship mode wins over the registered posture
+ok - fm-brief.sh: --yolo and scout/secondmate --mode are refused, never silently dropped
+ok - fm-brief.sh: faster paths use configured authority without stacked review
+ok - fm-brief.sh: no-mistakes DOD keeps its apostrophe prose and bans --yes outright
+ok - fm-brief.sh: no-mistakes DOD detects a green PR from the drive call, not a status poll
+ok - fm-brief.sh: PR-based done requires a non-draft PR; a deliberate draft declares a wait
+ok - fm-brief.sh: no-mistakes ask-user findings use one event plus a verbatim snapshot
+ok - fm-brief.sh: ship project-memory wording bounds edits to corrections of wrong information
+ok - fm-brief.sh: --herdr-lab emits the complete hard safety contract
+ok - fm-brief.sh: --herdr-lab uses its quoted Firstmate-owned helper path
+ok - fm-brief.sh: unguarded ship and scout scaffolds keep omitted Herdr intent visible to firstmate and safe for the worker
+ok - fm-brief.sh: the documented {TASK} and {FIRSTMATE_SPEC} fills cannot corrupt the Herdr safety gate
+ok - fm-brief.sh: Herdr lab contract covers scouts and rejects secondmate misuse
+ok - fm-brief.sh: --no-projects scaffolds a project-less charter and guards misuse
+ok - fm-brief.sh: marked requests avoid generic acknowledgements and preserve material reporting
+ok - fm-brief.sh: relative directory inputs ignore CDPATH, render stable absolute charter paths, or fail loudly
+ok - fm-brief.sh: custom pause verb renders in every scaffold
+ok - fm-brief.sh: ship and scout scaffolds declare a validation-round pause once, then hold it
+ok - fm-brief.sh: investigation and visual-review completions load the shared decision policy
+ok - fm-brief: scout and secondmate code paths still scaffold well-formed briefs
+ok - fm-brief.sh: scout Lavish hosting follows the bootstrap lavish-axi floor
+ok - fm-brief: inbox listing is silent on empty/absent inbox and numerically ordered
+ok - fm-brief: workers end the turn on a decision, wait in one bounded shell command, and never poll
+ok - fm-brief: without config/wait-no-turns the brief and drive text stay as they were
+ok - fm-brief.sh: the home brief include lands last on ship and scout, verbatim, and fails closed
+ok - fm-brief.sh: --base-branch records the base, targets the PR at it, and is refused where no PR carries it
+ok - fm-brief.sh: --branch-prefix omitted defaults every ship mode to fm/<task-id>
+ok - fm-brief.sh: a --branch-prefix override renders identically across every generated section
+ok - fm-brief.sh: an empty --branch-prefix override resolves to a bare <task-id> branch
+ok - fm-brief.sh: --branch-prefix is refused on scout and secondmate scaffolds
+ok - fm-brief.sh: --branch-prefix value is validated against embedded spaces and a leading dash
+Switched to a new branch '$(touch${IFS}/private/var/folders/tc/hhm5872n2ql638k7y8nh5nd40000gn/T/fm-brief.6aVfa8/branch-prefix-shell-safe-marker)brief-branch-safe-g3'
+ok - fm-brief.sh: ref-format-valid shell metacharacters stay literal in generated branch commands
+ok - fm-brief.sh: every crewmate scaffold forbids administering the shared worktree pool
+ok - fm-brief.sh: every PR/MR-opening ship brief has the worker write the description itself in its forge's vocabulary
+ok - fm-brief.sh: ship, scout, and secondmate scaffolds ask for self-contained decision cards
+ok - fm-brief.sh: ship and scout briefs require RAG/memory grounding with reported outcome; secondmate charter does not duplicate it
+ok - fm-brief.sh: generated briefs name the RAG and carry no PP Brain text
+ok - fm-brief.sh: config/knowledge-store renames the RAG wording in ship and scout briefs
+ok - fm-brief.sh: a malformed config/knowledge-store is refused, not silently rendered
+ok - fm-brief.sh: a 0-byte config/knowledge-store is refused, not silently defaulted
+ok - fm-brief.sh: ship and scout briefs carry a firstmate-filled recall section where Nothing is a legal answer; secondmate charter does not
+ok - fm-brief.sh: ship and scout briefs require declaring prescribed skills/procedures invoked and not invoked in the first status line; secondmate charter does not duplicate it
+ok - fm-brief.sh: ship briefs carry the worker-operating contracts and keep a terminal done: line; scout/secondmate do not duplicate them
+ok - fm-brief.sh: every scaffold opens with a provenance paragraph instead of the identity-override line
+ok - fm-brief.sh: ship briefs carry a scope line, and only pipeline-less modes carry the verification paragraph
+ok - fm-brief.sh: --blind swaps Grounding for one neutral line on ship and scout briefs only
+ok - fm-brief.sh: the scout scaffold carries the extra-review, data-not-instructions, and captain-hold write guidance
+ok - fm-brief.sh: brief vocabulary matches the project's actual forge
+ok - fm-brief.sh: a bare .github directory alone never declares GitHub
+ok - fm-brief.sh: all three repo-argument spellings resolve the same clone's forge
+ok - fm-brief.sh: a project dir that is not its own clone root ignores the enclosing repo's forge
+ok - fm-brief.sh: forge detection honors FM_PROJECTS_OVERRIDE
+== fm-brief exit=0
+== fm-dod-lib
+ok - scout done: is not gated
+ok - unpushed ship done: is refused
+ok - no-mistakes pre-validation done: is not gated
+ok - named head on a remote-tracking ref is accepted
+ok - a moved remote branch that lacks the named head is refused
+ok - a 40-hex token in the note is not the named head
+ok - a recorded merged PR satisfies the gate after prune
+ok - the merged-PR short-circuit applies only to the recorded PR the done line names
+ok - a forge-recorded head for the named PR is accepted without a local object
+ok - a direct-PR recorded head does not cover a later unpushed commit
+ok - CI-ready notes require checks green and an actual PR reference
+ok - no-mistakes CI-ready done: with extra text is gated
+ok - keyed and spaced ship done: lines are gated
+ok - local-only linked named branch is reachable from the project clone
+ok - local-only detached HEAD only in the disposable copy is refused
+ok - standalone local-only done: requires the named head in the project clone
+ok - non-done lines are not gated
+ok - fenced and indented Captain lines are not authorized intent
+ok - PR-based DoD draft check uses gh-axi
+ok - promotion keeps a scout's recorded base branch and refuses local-only for it
+ok - forge=external composes with direct-PR only and refuses a base branch
+ok - external rule one forbids origin and task-prefixed pushes and names only the backup copy
+ok - external DoD renders the contract, the review grammar, and the adapter, and refuses without one
+ok - external review done: accepted on a canonical URL alone without a backup; PR, non-https, query, fragment, forge, and pattern mismatches refused
+ok - external review done with a backup: refused until HEAD is under refs/remotes/backup/backup/, then accepted
+ok - worker role names the skill and its fallback skill file
+all fm-dod-lib tests passed
+== fm-dod-lib exit=0
+== fm-pal-council
+ok - best tier takes each tool's top catalog model by its own ranking and skips non-Google models on agy
+ok - pro tier adds the economy seat from the catalog description and skips an unavailable optional tool
+ok - a required seat whose catalog cannot be read stops creation
+ok - quota-axi exhaustion excludes a seat and reports it
+ok - a quota exclusion that leaves one provider needs the captain's word, an explicit one-voice list does not
+ok - a single-provider council needs the captain's word, and explicit participants keep their personas
+ok - default budget, budget bounds, and the estimate refusal
+ok - the send gate refuses a clear name or a credential, and launch refuses before any spawn
+ok - launch builds gated scout briefs and spawns every worker
+ok - the round barrier waits for [STATUS] lines and records a late voice as late
+ok - delta packets carry only the others' new turns, the summary, and the dossier, pseudonymised per recipient
+ok - a council whose spend passes its budget cannot open another round
+ok - the synthesis gate, internal tagged knowledge payloads, and their pseudonymisation
+ok - cleanup waits for the completion gate, then cleans up every worker
+ok - a follow-up council inherits the earlier synthesis and composition
+ok - a sensitive council keeps only its pseudonymised form after the purge
+ok - a voice that cannot be reached is recorded as lost, never spoken for
+ok - a failed spawn is recorded, the council runs on, and a cancel still cleans up what started
+all fm-pal-council tests passed
+== fm-pal-council exit=0
+== fm-task-landed
+ok - clean landed task is LANDED-CLEAN
+ok - unpushed commits are UNLANDED-WORK
+ok - tracked change is work and is never folded into the leftover count
+ok - shared untracked debris alone is LEFTOVERS-ONLY, not work
+ok - untracked path in no sibling worktree is UNKNOWN, not a leftover
+ok - a new file inside a same-named debris directory is UNKNOWN and named
+ok - an untracked file whose sibling copy differs is only here
+ok - untracked entries matching a bare primary's files are UNKNOWN, not leftovers
+ok - deleted remote branch whose work merged is LANDED-CLEAN without erroring
+ok - squash-merged branch with its remote ref gone is LANDED-CLEAN by content
+ok - deleted remote branch with unproven landing is UNKNOWN
+ok - missing meta is UNKNOWN and a vanished worktree is NO-WORKTREE
+ok - a directory that is not itself a checkout root is UNKNOWN
+ok - commits only on the no-mistakes gate remote are UNLANDED-WORK
+ok - local-only work in the local default branch is landed even with origin/HEAD set
+ok - PR/MR state drives PR-CONFLICT/PR-OPEN and the sweep stays offline
+ok - reading a task never rewrites its worktree index
+ok - usage: --help, unknown option, and path-like id
+== fm-task-landed exit=0
+== fm-bearings-snapshot
+ok - a backlog deriving more than 128KB of JSON still snapshots and renders bearings
+ok - values moved off argv produce byte-identical bearings output
+ok - the unattended read passes an active away window that an ordinary read refuses
+ok - task teardown during metadata capture is omitted without aborting the snapshot
+ok - current state and decision hints share one captured status observation
+ok - reused live state is discarded when task generation changes
+ok - large local snapshot overlaps local reads with byte-identical serial and concurrent projections
+ok - remote ledgers collect concurrently under one budget, reuse aged cache, and cancel wedged collectors
+ok - a missing remote ledger stays explicitly unreadable without remote summary computation
+ok - Domain Alpha structured state overrides a stale parent Phase 7 event
+ok - GNU stat file reads select -c without BSD filesystem-report pollution
+ok - parent activity evidence is bounded and disclosed
+ok - Bearings excludes a status-only child decision
+ok - a structured child captain hold reaches Captain's Call
+ok - missing, invalid, unreadable, malformed, and unavailable-child homes stay explicit unknowns
+ok - oversized ledgers stay strict unknown
+ok - secondmate and per-home child counts are bounded, disclosed, and explicitly expandable
+ok - parent decisions remain untrusted contradiction evidence
+ok - parent evidence reconciliation distinguishes matching holds, blocks, and decisions
+ok - nonprogressing child states are explicit and inconsistent terminal rows invalidate
+ok - registry unavailability and bounded truncation remain explicit
+ok - repeated snapshots keep the same current landed baseline and ignore prior reports
+ok - default output is bounded, local-only, and marks omitted surfaces
+ok - TOON and JSON are parity representations of the same model
+ok - landed includes secondmate-managed merges alongside main-home merges
+skip: installed tasks-axi predates 0.2.6, so the real backlog mutations this regression needs are refused
+skip: installed tasks-axi predates 0.2.6, so the real backlog mutations this regression needs are refused
+ok - kindless v1 summaries retain report artifacts from fresh and cached ledgers
+ok - default landed selection balances one dominant home with sparse homes
+ok - landed selection refills capacity after sparse homes exhaust
+ok - landed selection uses deterministic home order when homes exceed the cap
+ok - landed selection preserves deterministic home and internal tie ordering
+ok - landed selection handles no landed items
+ok - --all-landed keeps the complete global landed output
+ok - landed stays bounded with per-home + overall caps and omitted[] disclosure
+ok - Bearings keeps a live blocker in structured live state and never converts it to Charted Next queue work
+ok - action-free items (working/done/queued/landed) do not leak into Captain's Call
+ok - main orphan in-flight stays out of Underway and is disclosed in omitted/gates
+ok - main unstructured current is disclosed while structured siblings still project
+ok - counterfactual meta clears main inventory warning and projects the live task
+ok - working captain holds retain main and secondmate bucket surfaces
+ok - active children reach Underway independently of a home captain hold
+ok - blank legacy summary names use their durable identifier
+ok - newest filed gates are selected before snapshot bounds
+ok - Underway rows carry the durable task name and gates carry their filed date
+ok - mixed secondmate roles, partial state, and captain readiness project independently
+ok - main and secondmate captain actionability use the same blocker readiness
+ok - a completed scout with decision-like report prose is a pointer, not pending
+ok - an authoritative captain hold surfaces end-to-end
+ok - a decision-card hold reason survives the main and secondmate projections whole
+ok - current report pointers surface
+ok - queued body prose never hides an item from the board
+ok - --include-prs is the only path that fetches, and it enriches correctly
+ok - --include-prs maps a custom branch-prefix PR back to its recorded task
+ok - a partial GitHub failure degrades gracefully
+ok - Perl fallback bounds stalled GitHub calls without coreutils timeout
+ok - all fleet-sized sections are capped with counted opt-in expansion
+ok - captain-held tasks of any kind reach Captain's Call, deferral is honored, and landed excludes answered calls
+ok - structured hold buckets decide Captain's Call, Charted Next, and the reveal
+ok - a blocked deferred hold stays gated when its date arrives and is revealed by --all-decisions
+ok - revealed deferred holds display their deferral reason while live calls stay unannotated
+ok - live PR enrichment caps repositories with counted expansion
+ok - per-repository open-PR caps are disclosed with an expansion knob
+ok - projection and TOON rendering failures exit nonzero with diagnostics
+== fm-bearings-snapshot exit=0
+== fm-jev
+ok - off by default: an ambient OPENROUTER_API_KEY neither logs nor calls the network
+ok - a STATE other than the key home's own state never enables Jev
+ok - shadow mode logs presentation, answer and acknowledgement without changing the drain
+ok - only the masked reason and last status line are sent; the key stays off argv and disk
+ok - config/jev-timeout overrides the 5 second default and invalid values keep it
+ok - one timeout skips only that wake and does not pause Jev
+ok - consecutive timeouts pause Jev for 60 minutes, reported by status and report
+ok - config/jev-timeout-streak and config/jev-timeout-pause configure the pause rule and invalid values keep the defaults
+ok - a successful classification resets the timeout streak
+ok - a timeout pause expires by itself, repeat pauses back off, and none outlasts the day
+ok - a legacy disabled file is read safely: old timeout records resume, other day pauses hold
+ok - entering any pause appends one check wake with the reason and the pause-until time
+ok - a resume wake follows only the first successful classification after an announced pause, once
+ok - pause-state prints one line while paused and nothing otherwise
+ok - HTTP errors, transport errors and a missing cost pause Jev until the next day
+ok - the daily spend cap stops requests and pauses Jev until the next day
+ok - config/jev-endpoint selects the local backend over an OPENROUTER_API_KEY, needs no key, and records the answering model
+ok - a native status uncertain/insufficient_evidence answer (null choice) classifies as doubt, never as an error
+ok - config/jev-timeout also overrides the local backend's request timeout
+ok - the local endpoint and load ceiling are read from the home's own config/, the same place that selected the backend
+ok - a whitespace-only config/jev-endpoint does not select the local backend
+ok - a local response with no usage.cost classifies normally instead of erroring
+ok - a non-loopback or path-carrying config/jev-endpoint is refused, never dialed, and pauses Jev
+ok - a 1-minute load average at or above config/jev-max-load skips only that wake; a later reading below it classifies again
+ok - a local timeout skips the rest of that drain and an API/transport error only its row, each logged with the reason; the next drain tries again with no day pause, unlike OpenRouter
+ok - the local backend pauses for a short while only after consecutive timeouts
+ok - status names the active backend, its endpoint or spend, and (for local) its load ceiling
+ok - the drain returns immediately while a slow Jev request runs detached
+ok - hooks record steers, decisions and how a turn ended, never its text
+ok - only sends firstmate itself makes count as steers; FM_JEV_OBSERVE=0 senders record nothing
+ok - the report credits named actions to their task's open wakes across drains and shares the rest
+ok - unacknowledged and pre-window wakes stay open, so their steers never spill onto unrelated wakes
+ok - the report computes agreement, wrongly absorbable wakes, go-live criteria and doubtful cases
+ok - absorption off by default: no network call, no digest, absorb-try refuses
+ok - absorption refuses any backend but local, even when requested
+ok - requested absorption without a met gate or an override never dials the classifier
+ok - a captain override skips the go-live gate and records a masked digest entry
+ok - config/jev-absorb-threshold below 0.9 refuses absorption outright
+ok - any doubt or below-threshold confidence falls through without a digest entry
+ok - a task with an open decision is never absorbed
+ok - a secondmate's status signal is never absorbed
+ok - only a working:/paused: verb is ever eligible for absorption
+ok - the deterministic veto refuses terminal statuses, check/heartbeat/merge reasons, and unread notes before any model call
+ok - absorb-gate reports classified/scored/agreement/wrongly-absorbable and the sample-gated go-live verdict
+ok - an absorbed wake surfaces exactly once with the next drain and never repeats
+ok - the drain tags each digest entry via jev or via rule, defaulting to jev when the field is absent
+ok - the digest is held while away mode drains and surfaces with the first drain after return
+ok - a malformed digest line never hides later entries, and a partial line waits until complete
+== fm-jev exit=0
