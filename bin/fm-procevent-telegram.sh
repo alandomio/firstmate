@@ -443,7 +443,12 @@ voice_body() {  # <key> <record-file> <body-file>
   local key=$1 rec=$2 bodyf=$3 tfile text caption
   jq -e '.voice != null' "$rec" >/dev/null 2>&1 || return 0
   fm_tg_optin || return 0
-  fm_tg_voice_enabled || return 0
+  local rc=0
+  fm_tg_voice_enabled || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    [ "$rc" -eq 2 ] && printf '\n[voice note arrived; transcription failed: %s]\n' "${VOICE_ERROR:-invalid voice transcription config}" >> "$bodyf"
+    return 0
+  fi
   tfile="$TG_MESSAGES/$key.transcript"
   if [ ! -s "$tfile" ]; then
     text=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-telegram-transcript.XXXXXX") || return 1

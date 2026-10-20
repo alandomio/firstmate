@@ -405,6 +405,13 @@ test_voice_off_unless_configured() {
   home=$(new_home voice-bad optin)
   printf '{"allowed_chats":[%s],"owner_user_id":%s,"voice_transcribe":{"ssh_host":"-oProxyCommand=x"}}' "$OWNER" "$OWNER" > "$home/config/telegram.json"
   assert_contains "$(tg "$home" status)" "invalid:" "a host that looks like an ssh option is refused"
+  home=$(new_home voice-badfile optin)
+  printf '{"ssh_host":"-oProxyCommand=x"}\n' > "$home/config/voice-transcribe.json"
+  FAKE_SSH_MODE=ok run_voice "$home" 721
+  note="$home/state/inbox/tg-$OWNER-1721.note"
+  assert_grep "(non-text message: voice)" "$note" "an invalid voice config keeps the placeholder"
+  assert_grep "voice note arrived; transcription failed" "$note" "an invalid voice config is reported in the note"
+  [ ! -e "$home/fake/ssh.log" ] || fail "an invalid voice config never sends audio"
   pass "voice transcription is off unless configured, and its host is validated"
 }
 
@@ -437,6 +444,12 @@ test_voice_note_command() {
   FAKE_SSH_MODE=fail FAKE_TG_DIR="$home/fake" FM_HOME="$home" "$ROOT/bin/fm-voice-note.sh" "$home/other.ogg" --source watch >/dev/null
   assert_grep "Connection refused" "$(grep -l other.ogg "$home"/state/inbox/voice-watch-*.note)" "a failed transcription is recorded with the reason"
   assert_present "$home/other.ogg" "a failed transcription never drops the audio"
+  # A retry once the host is back delivers the transcript beside the failure note.
+  FAKE_SSH_MODE=ok FAKE_TG_DIR="$home/fake" FM_HOME="$home" "$ROOT/bin/fm-voice-note.sh" "$home/other.ogg" --source watch >/dev/null
+  [ "$(grep -l other.ogg "$home"/state/inbox/voice-watch-*.note | wc -l | tr -d ' ')" = 2 ] || fail "a successful retry queues a new note"
+  grep -l other.ogg "$home"/state/inbox/voice-watch-*.note | xargs grep -l "ciao capitano" >/dev/null || fail "the retry note carries the transcript"
+  FAKE_SSH_MODE=ok FAKE_TG_DIR="$home/fake" FM_HOME="$home" "$ROOT/bin/fm-voice-note.sh" "$home/other.ogg" --source watch >/dev/null
+  [ "$(grep -l other.ogg "$home"/state/inbox/voice-watch-*.note | wc -l | tr -d ' ')" = 2 ] || fail "an unchanged outcome adds no note"
   out=$(FAKE_SSH_MODE=ok FAKE_TG_DIR="$home/fake" FM_HOME="$home" "$ROOT/bin/fm-voice-note.sh" --source watch --trust owner "$audio")
   assert_contains "$out" "queued voice-watch-" "the audio path may come last, as a relay launcher appends it"
   rc=0; FM_HOME="$home" "$ROOT/bin/fm-voice-note.sh" "$audio" --source text >/dev/null 2>&1 || rc=$?

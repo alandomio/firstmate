@@ -49,7 +49,7 @@ content_hash() {  # <file>: first 16 hex chars of the content's sha256
   fi
 }
 
-audio= source_name= trust=untrusted caption=
+audio='' source_name='' trust=untrusted caption=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -h|--help|help) usage ;;
@@ -94,6 +94,7 @@ else
   fi
   if [ -z "$body" ]; then
     body="[voice note arrived; transcription failed: ${VOICE_ERROR:-unknown error}]"
+    note_id="$note_id-failed"
   fi
 fi
 [ -z "$caption" ] || body="$body
