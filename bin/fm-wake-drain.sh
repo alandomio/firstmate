@@ -3,7 +3,8 @@
 # optionally acknowledge handled records,
 # annotate every unread line for validated signal status keys, surface unread
 # informational status lines, latest captain-facing statuses not covered by a
-# newer branch outcome, OPEN DECISIONS, captain-call record divergence, and on
+# newer branch outcome, OPEN DECISIONS, captain-call record divergence, PENDING
+# INBOX NOTES, and on
 # a supervision-host home the supervision session's new and unprocessed
 # outcomes (BRANCH OUTCOMES), then assert liveness.
 #
@@ -27,6 +28,8 @@ SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-inbox-pending-lib.sh
+. "$SCRIPT_DIR/fm-inbox-pending-lib.sh"
 # shellcheck source=bin/fm-jev-lib.sh
 . "$SCRIPT_DIR/fm-jev-lib.sh"
 # shellcheck source=bin/fm-lease-lib.sh
@@ -807,6 +810,10 @@ print_status_presentation() {  # [<deduped-raw-rows>]
     fi
   fi
   if [ "$rc" -eq 0 ] && [ -n "$snapshot" ]; then print_status_sections "$snapshot" "$fully_presented" || rc=1; fi
+  # Every pending captain inbox note, on every drain, so a note whose announcing
+  # wake was acknowledged unseen still reaches the session
+  # (bin/fm-inbox-pending-lib.sh owns "pending").
+  fm_inbox_pending_section "$STATE" || rc=1
   # The absorption digest (config/jev-absorb, config/absorb-unchanged-pause,
   # config/absorb-presented-stale; all off by default):
   # printed on every non-afk drain, whether the queue is empty or not, so an
