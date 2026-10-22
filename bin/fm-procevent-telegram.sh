@@ -503,6 +503,7 @@ surface_record() {  # <key>
   fi
   rm -f -- "$headers" "$bodyf"
   [ "$rc" -eq 0 ] || return 1
+  fm_voice_urgent_launch "$FM_HOME" "$note" "$trust" "$TG_MESSAGES/$key.transcript"
   printf '%s\n' "$note" | fm_tg_write_atomic "$marker"
 }
 

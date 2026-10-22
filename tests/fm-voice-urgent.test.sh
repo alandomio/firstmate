@@ -159,7 +159,35 @@ test_detach_returns_at_once() {
   pass "--detach returns at once and still queues the note"
 }
 
+test_urgente_on_a_later_line_never_launches() {
+  local h
+  h=$(new_home multiline)
+  printf 'clip-multi' > "$h/m.ogg"
+  FAKE_DIR="$h/fake" FAKE_TEXT=$'accendi il comodino\nUrgente per favore' FM_HOME="$h" \
+    "$ROOT/bin/fm-voice-note.sh" --source watch --trust owner "$h/m.ogg" >/dev/null || fail "multiline note not queued"
+  sleep 1
+  [ -z "$(find "$h/state/voice" -name '*.urgent')" ] || fail "urgente on a later line launched the executor"
+  pass "only the true start of the transcript can trigger the executor"
+}
+
+test_concurrent_urgent_runs_launch_once() {
+  local h i
+  h=$(new_home urgent-race)
+  printf 'clip-race' > "$h/r.ogg"
+  for i in 1 2 3; do
+    FAKE_DIR="$h/fake" FAKE_TEXT='urgente accendi il comodino' FM_HOME="$h" \
+      "$ROOT/bin/fm-voice-note.sh" --source watch --trust owner "$h/r.ogg" >/dev/null &
+  done
+  wait
+  sleep 2
+  [ "$(grep -c 'forwarded: no urgent executor configured' "$h/state/voice/urgent.log" 2>/dev/null)" = 1 ] \
+    || fail "concurrent runs launched the executor $(grep -c forwarded "$h/state/voice/urgent.log" 2>/dev/null) times"
+  pass "concurrent runs on one urgent clip launch the executor once"
+}
+
 test_urgent_note_launches_executor_and_plain_note_does_not
+test_urgente_on_a_later_line_never_launches
+test_concurrent_urgent_runs_launch_once
 test_untrusted_source_never_launches
 test_executor_runs_allowed_calls
 test_executor_refuses_outside_the_list

@@ -6,8 +6,10 @@
 # Usage:
 #   fm-voice-urgent.sh [--home <dir>] <note-id>
 #
-# bin/fm-voice-note.sh launches this in the background, after queueing the note,
-# when the transcript starts with the word "urgente". The note itself stays
+# bin/fm-voice-note.sh and the Telegram channel (bin/fm-procevent-telegram.sh)
+# launch this in the background through fm_voice_urgent_launch
+# (bin/fm-voice-lib.sh), after queueing the note, when the transcript starts
+# with the word "urgente". The note itself stays
 # pending in state/inbox/ either way: the primary session still reads it,
 # acknowledges it, and does whatever this executor did not.
 #

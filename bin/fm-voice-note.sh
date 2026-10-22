@@ -147,10 +147,5 @@ printf 'voice_source=%s\nvoice_audio=%s\n' "$source_name" "$(printf '%s' "$audio
 printf '%s\n' "$body" | "$SCRIPT_DIR/fm-inbox.sh" channel-note "$note_id" "$source_name" "$trust" "$headers" \
   || die "could not queue the note; the audio is untouched at $audio_abs"
 
-# The urgent carve-out (AUTHORITY above): only an owner transcript whose first
-# word is "urgente", only once per note, and never for a failed transcription.
-if [ "$trust" = owner ] && [ -s "$transcript" ] && [ ! -e "$cache_dir/$note_id.urgent" ] \
-  && head -c 200 -- "$transcript" | tr '[:upper:]' '[:lower:]' | grep -Eq '^[[:space:][:punct:]]*urgente([^[:alpha:]]|$)'; then
-  : > "$cache_dir/$note_id.urgent"
-  nohup "$SCRIPT_DIR/fm-voice-urgent.sh" --home "$FM_HOME" "$note_id" >/dev/null 2>>"$cache_dir/urgent.log" &
-fi
+# The urgent carve-out (AUTHORITY above).
+fm_voice_urgent_launch "$FM_HOME" "$note_id" "$trust" "$transcript"
