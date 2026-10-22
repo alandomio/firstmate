@@ -529,10 +529,27 @@ There is no pull request, no \`gh-axi\` call, and no forge CI result to report: 
 EOF
 }
 
+# Optional config/pr-language (docs/configuration.md): one language name that a
+# PR/MR title and description must be written in. Prints the trimmed name, or
+# nothing when absent; a present but blank or multi-line file is refused rather
+# than silently ignored.
+fm_pr_language() {
+  local cfg nonblank lang
+  cfg=${CONFIG:-${FM_CONFIG_OVERRIDE:-${FM_HOME:-}/config}}/pr-language
+  [ -e "$cfg" ] || return 0
+  nonblank=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$cfg" | grep -v '^$' || true)
+  lang=$(printf '%s\n' "$nonblank" | sed -n '1p')
+  if [ -z "$lang" ] || [ "$(printf '%s\n' "$nonblank" | wc -l)" -gt 1 ]; then
+    echo "error: $cfg must hold exactly one non-blank line naming a language" >&2
+    return 1
+  fi
+  printf '%s\n' "$lang"
+}
+
 fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>] [<host>]
   local mode=$1 id=$2 forge=${4:-none} base=${5:-} consent=${6:-}
   local branch=${3:-fm/$id} pr_base='' nm_base='' base_q contract_forge='' contract_consent='' forge_cli draft_check adapter
-  local abbr noun scope_rule verify_rule describe_rule
+  local abbr noun scope_rule verify_rule describe_rule pr_lang
   fm_forge_valid_for_mode "$forge" "$mode" fm_dod_block || return 1
   fm_base_branch_valid "$base" "$mode" "$forge" fm_dod_block || return 1
   if [ "$forge" = none ]; then
@@ -549,6 +566,9 @@ Name the check in a \`working:\` status line before \`done:\`; if none can run h
   describe_rule="Write the $noun description yourself.
 Create the $noun yourself and never wait for confirmation on a step this brief already authorizes.
 Do not include a \"Generated with Claude Code\" trailer or other orchestration vocabulary in the description."
+  pr_lang=$(fm_pr_language) || return 1
+  [ -z "$pr_lang" ] || describe_rule="$describe_rule
+$abbr title and description in $pr_lang."
   if [ -n "$consent" ]; then
     if [ "$mode" = local-only ]; then
       echo "error: fm_dod_block: upstream consent authorizes a publication that local-only never performs; drop it" >&2

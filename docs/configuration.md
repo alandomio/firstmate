@@ -746,6 +746,15 @@ Until then local files are the only memory owners.
 [`AGENTS.md`](../AGENTS.md) section 6 owns what a declaration changes about knowledge routing, and the internal [`stow` skill](../.agents/skills/stow/SKILL.md) owns how curation reads the declaration and protects tier-owned entries from pruning.
 The section counts toward the startup memory budget like the rest of its file, so keep it to the mapping rather than restating these rules.
 
+## PR/MR language (config/pr-language)
+
+The optional local, gitignored `config/pr-language` holds one non-blank line naming the language (e.g. `Italian`) in which the home's workers must write pull and merge request titles and descriptions.
+When set, `bin/fm-brief.sh` adds one line to the Definition of done of every ship brief that opens a pull or merge request (`direct-PR` and `no-mistakes`): `PR title and description in <language>.` on GitHub, `MR ...` on GitLab, and `PR/MR ...` when the forge is unknown.
+A `local-only` brief opens no pull or merge request and never carries the line.
+Absent adds no line, so briefs are byte-identical to those generated before this setting existed.
+A present file that is blank or holds more than one non-blank line is refused rather than ignored.
+It is inherited into secondmate homes (`FM_INHERITABLE_CONFIG` in [`bin/fm-config-inherit-lib.sh`](../bin/fm-config-inherit-lib.sh)), because a secondmate's own crewmates get briefs from the same code.
+
 ## Startup memory budget (config/startup-memory-budget)
 
 `config/startup-memory-budget` is the primary-authoritative per-home allowance for the startup prompt-memory surface: `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md` together.
