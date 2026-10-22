@@ -534,12 +534,12 @@ EOF
 # nothing when absent; a present but blank or multi-line file is refused rather
 # than silently ignored.
 fm_pr_language() {
-  local cfg lang lines
+  local cfg nonblank lang
   cfg=${CONFIG:-${FM_CONFIG_OVERRIDE:-${FM_HOME:-}/config}}/pr-language
   [ -e "$cfg" ] || return 0
-  lang=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$cfg" | sed -n '1p')
-  lines=$(grep -c . "$cfg" || true)
-  if [ -z "$lang" ] || [ "$lines" -gt 1 ]; then
+  nonblank=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$cfg" | grep -v '^$' || true)
+  lang=$(printf '%s\n' "$nonblank" | sed -n '1p')
+  if [ -z "$lang" ] || [ "$(printf '%s\n' "$nonblank" | wc -l)" -gt 1 ]; then
     echo "error: $cfg must hold exactly one non-blank line naming a language" >&2
     return 1
   fi
