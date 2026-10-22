@@ -20,7 +20,8 @@
 #              "Teleporting a task" shows how.
 #
 # Protocol verbs. Each runs in the home that owns that side of the move, either
-# directly or through bin/fm-on.sh; operators use the two forms above.
+# directly or through bin/fm-on.sh, with --stdin for chunk-put and adopt;
+# operators use the two forms above.
 #   fm-teleport.sh describe <task-id>
 #   fm-teleport.sh check <task-id> <project-key> <origin-url>
 #   fm-teleport.sh pack <task-id> [--session <id>]
@@ -39,13 +40,15 @@
 #      missing, dirty, or points at another origin.
 #   2. pack (sending home): refuses during an active validation run, interrupts
 #      the worker through bin/fm-control.sh, waits until it reads idle, commits
-#      the whole worktree as a WIP snapshot on fm/teleport/<task> without moving
-#      the worker's HEAD (bin/fm-teleport-lib.sh owns the git mechanics), pushes
-#      it, and packs the task's data/<task>/ directory plus the Claude transcript
-#      into a payload split into chunks under the 1 MiB fm-on input bound.
+#      the whole worktree as a WIP snapshot without moving the worker's HEAD
+#      (bin/fm-teleport-lib.sh owns the git mechanics), and packs that snapshot
+#      as a git bundle, the task's data/<task>/ directory, and the Claude
+#      transcript into a payload split into chunks under the 1 MiB fm-on input
+#      bound. Nothing is pushed to any remote of the project.
 #   3. chunk-put/chunk-get carry the payload, each chunk checked by sha256.
-#   4. adopt (adopting home): unpacks data/<task>/ with the sending home's paths
-#      rewritten to its own, then launches the worker through bin/fm-spawn.sh
+#   4. adopt (adopting home): installs the snapshot from the bundle into its
+#      clone, unpacks data/<task>/ with the sending home's paths rewritten to
+#      its own, then launches the worker through bin/fm-spawn.sh
 #      --teleport, which restores the work into a fresh pooled worktree. A Claude
 #      task resumes its transcript with an arrival note; any other harness, or a
 #      Claude task whose transcript is missing, starts from its instructions plus
@@ -60,8 +63,8 @@
 #      teleport still completes.
 #   6. release (sending home): only after the adopting home confirmed, stops the
 #      worker, proves the worktree still equals the snapshot, tears it down
-#      through bin/fm-teardown.sh, and deletes the sending copy of the transcript.
-#   7. The WIP ref is deleted from origin.
+#      through bin/fm-teardown.sh --teleported, and deletes the sending copy of
+#      the transcript and the snapshot ref.
 # Any failure before step 6 aborts the adopting side and leaves the sending task
 # in place with its worker alive and idle, its worktree and transcript untouched.
 #
@@ -197,7 +200,7 @@ cmd_check() { # <task> <project-key> <origin-url>
 }
 
 cmd_pack() { # <task> [--session <id>]
-  local task=$1 session='' crew transcript='' out wip ref origin branch base i sha bytes chunks src_host
+  local task=$1 session='' crew transcript='' out wip origin branch base i sha bytes chunks src_host
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -228,11 +231,7 @@ cmd_pack() { # <task> [--session <id>]
   "$HELPERS/fm-control.sh" "$task" interrupt >/dev/null || die "could not interrupt task $task's worker"
   wait_probe busy "$task" idle "$IDLE_WAIT" >/dev/null || die "task $task's worker did not read idle within ${IDLE_WAIT}s after the interrupt"
 
-  ref=$(fm_teleport_ref "$task")
   wip=$(fm_teleport_snapshot "$WT" "$task") || die "could not snapshot $WT"
-  git -C "$WT" push --quiet origin "+$wip:refs/heads/$ref" || die "could not push the snapshot to origin $ref"
-  git -C "$WT" fetch --quiet origin "+refs/heads/$ref:refs/remotes/origin/$ref" || die "could not confirm the pushed snapshot on origin"
-  [ "$(git -C "$WT" rev-parse "refs/remotes/origin/$ref")" = "$wip" ] || die "origin $ref does not hold the snapshot just pushed"
   origin=$(git -C "$WT" remote get-url origin)
   branch=$(git -C "$WT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   base=$(git -C "$WT" rev-parse "$wip^1")
@@ -245,6 +244,7 @@ cmd_pack() { # <task> [--session <id>]
   fi
   [ -z "$transcript" ] || cp "$transcript" "$out/payload/session.jsonl" || die "could not stage the transcript"
   [ ! -f "$STATE/$task.status" ] || tail -n 20 "$STATE/$task.status" > "$out/payload/status.tail"
+  fm_teleport_bundle_create "$WT" "$task" "$out/payload/snapshot.bundle" || die "could not bundle the snapshot"
   (cd "$out/payload" && tar czf ../payload.tgz .) || die "could not build the payload"
   bytes=$(LC_ALL=C wc -c < "$out/payload.tgz" | tr -d ' ')
   perl -e '
@@ -327,7 +327,7 @@ adopt_rollback_data() { # <task> <prior-dir>
 }
 
 cmd_adopt() { # <task>; manifest on stdin
-  local task=$1 dir manifest chunks i want payload ref wip proj session harness out note_file prior state
+  local task=$1 dir manifest chunks i want payload wip proj session harness out note_file prior state
   local -a spawn_args
   dir="$(staging "$task")/in"
   mkdir -p "$dir"
@@ -356,10 +356,9 @@ cmd_adopt() { # <task>; manifest on stdin
   mkdir -p "$payload"
   tar xzf "$dir/payload.tgz" -C "$payload" || die "could not unpack the payload"
 
-  ref=$(fm_teleport_ref "$task")
   wip=$(fm_meta_get "$manifest" wip)
-  git -C "$proj" fetch --quiet origin "+refs/heads/$ref:refs/remotes/origin/$ref" || die "could not fetch $ref into $proj"
-  [ "$(git -C "$proj" rev-parse "refs/remotes/origin/$ref")" = "$wip" ] || die "origin $ref does not hold the snapshot named in the manifest"
+  [ -f "$payload/snapshot.bundle" ] || die "the payload for $task carries no snapshot"
+  fm_teleport_bundle_import "$proj" "$task" "$payload/snapshot.bundle" "$wip" || die "could not install the snapshot of $task into $proj"
 
   prior="$dir/prior-data"
   rm -rf -- "$prior"
@@ -407,6 +406,7 @@ cmd_adopt() { # <task>; manifest on stdin
       "$SELF" abort "$task" >&2 || die "the adopting worker for $task failed to launch and could not be rolled back; inspect it here"
     else
       adopt_rollback_data "$task" "$prior"
+      drop_snapshot_ref "$task" "$proj"
       rm -rf -- "$dir"
     fi
     die "the adopting worker for $task could not be launched"
@@ -415,6 +415,7 @@ cmd_adopt() { # <task>; manifest on stdin
     "$SELF" abort "$task" >&2 || die "the adopting worker for $task never came up (it reads '$state') and could not be rolled back; inspect it here"
     die "the adopting worker for $task never came up (it reads '$state'); rolled back"
   fi
+  drop_snapshot_ref "$task" "$proj"
   rm -rf -- "$prior" "$dir"
   printf 'adopted %s worktree=%s\n' "$task" "$(fm_meta_get "$STATE/$task.meta" worktree)"
 }
@@ -448,17 +449,20 @@ retire_copy() { # <task>
   fi
   "$HELPERS/fm-control.sh" "$task" exit >/dev/null || die "could not stop task $task's worker"
   fm_teleport_settle_on_snapshot "$WT" "$task" || die "task $task's worktree no longer matches the teleport snapshot; it was left in place"
-  "$HELPERS/fm-teardown.sh" "$task" >&2 || die "cleanup of task $task's worktree failed; its worker is stopped and its worktree still holds the snapshot"
+  "$HELPERS/fm-teardown.sh" "$task" --teleported >&2 || die "cleanup of task $task's worktree failed; its worker is stopped and its worktree still holds the snapshot"
 }
 
 # Roll back a copy this home adopted (or half-adopted) and has not yet confirmed
 # to the sending home. Refuses a task this home did not adopt.
 cmd_abort() { # <task>
-  local task=$1 transcript prior in
+  local task=$1 transcript prior in proj
   in="$(staging "$task")/in"
   prior="$in/prior-data"
   if [ ! -f "$STATE/$task.meta" ]; then
     [ ! -f "$in/installed-data" ] || adopt_rollback_data "$task" "$prior"
+    if [ -f "$in/manifest" ] && proj=$(project_dir_for "$(fm_meta_get "$in/manifest" project)" 2>/dev/null); then
+      drop_snapshot_ref "$task" "$proj"
+    fi
     rm -rf -- "$in"
     printf 'nothing running to abort for %s\n' "$task"
     return 0
@@ -467,6 +471,7 @@ cmd_abort() { # <task>
   task_meta "$task"
   transcript=$(installed_transcript "$task" "$WT")
   retire_copy "$task"
+  drop_snapshot_ref "$task" "$PROJECT"
   [ -z "$transcript" ] || rm -f -- "$transcript"
   adopt_rollback_data "$task" "$prior"
   rm -f -- "$STATE/$task.meta"
@@ -479,6 +484,7 @@ cmd_release() { # <task> [--drop-backlog]
   [ "${2:-}" != --drop-backlog ] || drop=1
   transcript=$(fm_meta_get "$(staging "$task")/out/manifest" source_transcript)
   retire_copy "$task"
+  drop_snapshot_ref "$task" "$PROJECT"
   [ -z "$transcript" ] || rm -f -- "$transcript"
   if [ "$drop" = 1 ] && backlog_section "$BACKLOG" "$task" >/dev/null; then
     tasks-axi rm "$task" --file "$BACKLOG" >/dev/null || warn "could not remove $task from this home's backlog; remove it by hand"
@@ -506,13 +512,18 @@ cmd_backlog_start() { # <task>
 
 # --- operator flows ----------------------------------------------------------------
 
+# The snapshot ref is private to this home's clone and never pushed anywhere.
+drop_snapshot_ref() { # <task> <clone>
+  git -C "$2" update-ref -d "$(fm_teleport_ref "$1")" 2>/dev/null || true
+}
+
 on() { # <secondmate> <fm-command> [args...]
   "$HELPERS/fm-on.sh" "$@"
 }
 
-delete_wip_ref() { # <task> <git-dir>
-  git -C "$2" push --quiet origin --delete "refs/heads/$(fm_teleport_ref "$1")" 2>/dev/null \
-    || warn "could not delete $(fm_teleport_ref "$1") from origin; delete it by hand"
+# fm-on.sh gives the remote command an empty stdin unless asked to forward it.
+on_input() { # <secondmate> <fm-command> [args...]; stdin is the command's input
+  "$HELPERS/fm-on.sh" --stdin "$@"
 }
 
 teleport_out() { # <task> <secondmate> <session>
@@ -530,11 +541,11 @@ teleport_out() { # <task> <secondmate> <session>
   i=0
   while [ "$i" -lt "$chunks" ]; do
     sha=$(printf '%s\n' "$manifest" | sed -n "s/^chunk_$i=//p")
-    on "$sm" fm-teleport.sh chunk-put "$task" "$i" "$sha" < "$dir/part.$i" >/dev/null \
+    on_input "$sm" fm-teleport.sh chunk-put "$task" "$i" "$sha" < "$dir/part.$i" >/dev/null \
       || { on "$sm" fm-teleport.sh abort "$task" >/dev/null 2>&1 || true; die "could not send task $task to $sm; it stays here with its worker idle"; }
     i=$((i + 1))
   done
-  if ! adopted=$(printf '%s\n' "$manifest" | on "$sm" fm-teleport.sh adopt "$task"); then
+  if ! adopted=$(printf '%s\n' "$manifest" | on_input "$sm" fm-teleport.sh adopt "$task"); then
     on "$sm" fm-teleport.sh abort "$task" >/dev/null 2>&1 || warn "$sm may hold a partial copy of $task; run fm-on.sh $sm fm-teleport.sh abort $task"
     die "$sm could not take over task $task; it stays here with its worker idle"
   fi
@@ -555,7 +566,6 @@ teleport_out() { # <task> <secondmate> <session>
     fi
   fi
   "$SELF" release "$task" >/dev/null || die "$sm took over task $task, but cleaning up the copy here failed; the worker here is stopped or idle and its worktree is kept"
-  delete_wip_ref "$task" "$(project_dir_for "$key")"
   printf 'teleported %s to %s: %s\n' "$task" "$sm" "$adopted"
 }
 
@@ -595,7 +605,6 @@ teleport_back() { # <task> <secondmate>
     tasks-axi start "$task" --file "$BACKLOG" >/dev/null || warn "could not mark $task in flight in this home's backlog"
   fi
   on "$sm" fm-teleport.sh release "$task" --drop-backlog >/dev/null || die "this home took task $task back, but cleaning up its copy on $sm failed; inspect it there"
-  delete_wip_ref "$task" "$(project_dir_for "$key")"
   printf 'teleported %s back from %s: %s\n' "$task" "$sm" "$adopted"
 }
 

@@ -3,10 +3,10 @@
 # through bin/fm-teleport.sh with real git, real tasks-axi, and the real
 # bin/fm-teleport-lib.sh restore path. The worker, the spawn backend, teardown,
 # and the SSH route are fixtures under FM_TELEPORT_BIN: fm-on.sh runs the named
-# command in the remote home, fm-spawn.sh stands in for a treehouse-backed spawn
-# and calls fm_teleport_prepare_worktree exactly as bin/fm-spawn.sh --teleport
-# does, and fm-teardown.sh refuses a dirty worktree the way the landed-work
-# check would.
+# command in the remote home and, like the real one, forwards stdin only with
+# --stdin, fm-spawn.sh stands in for a treehouse-backed spawn and calls
+# fm_teleport_prepare_worktree exactly as bin/fm-spawn.sh --teleport does, and
+# fm-teardown.sh refuses a dirty worktree the way the landed-work check would.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -41,9 +41,13 @@ printf '%s\n' "${FAKE_CREW_STATE:-state: working · source: pane}"
 SH
 cat > "$FAKE/fm-on.sh" <<'SH'
 #!/usr/bin/env bash
+# Like bin/fm-on.sh, the remote command reads an empty stdin unless --stdin.
+forward=0
+if [ "$1" = --stdin ]; then forward=1; shift; fi
 [ "$1" = "$FAKE_SECONDMATE" ] || { echo "error: no route $1" >&2; exit 1; }
 shift
 printf 'on %s\n' "$*" >> "$FAKE_LOG"
+[ "$forward" -eq 1 ] || exec < /dev/null
 FM_HOME="$FAKE_REMOTE_HOME" CLAUDE_CONFIG_DIR="$FAKE_REMOTE_CLAUDE" exec "$FM_TEST_ROOT/bin/$1" "${@:2}"
 SH
 cat > "$FAKE/fm-backlog-handoff.sh" <<'SH'
@@ -90,13 +94,18 @@ echo "spawned $id"
 SH
 cat > "$FAKE/fm-teardown.sh" <<'SH'
 #!/usr/bin/env bash
-# Refuses uncommitted work like the real landed-work check, then returns the worktree.
-printf 'teardown %s %s\n' "$FM_HOME" "$1" >> "$FAKE_LOG"
+# Refuses uncommitted work like the real teardown; with --teleported it needs
+# HEAD on refs/teleport/<task> in place of the landed-work check.
+printf 'teardown %s %s\n' "$FM_HOME" "$*" >> "$FAKE_LOG"
 meta="$FM_HOME/state/$1.meta"
 wt=$(sed -n 's/^worktree=//p' "$meta")
 proj=$(sed -n 's/^project=//p' "$meta")
 [ -z "$(git -C "$wt" status --porcelain)" ] || { echo "refusing: uncommitted work in $wt" >&2; exit 1; }
-git -C "$wt" branch -r --contains HEAD | grep -q . || { echo "refusing: HEAD not on any remote" >&2; exit 1; }
+if [ "${2:-}" = --teleported ]; then
+  [ "$(git -C "$wt" rev-parse HEAD)" = "$(git -C "$wt" rev-parse --verify --quiet "refs/teleport/$1")" ] || { echo "refusing: HEAD is not the teleport snapshot" >&2; exit 1; }
+else
+  git -C "$wt" branch -r --contains HEAD | grep -q . || { echo "refusing: HEAD not on any remote" >&2; exit 1; }
+fi
 git -C "$proj" worktree remove --force "$wt"
 rm -f "$meta" "$FM_HOME/state/$1.dead"
 SH
@@ -111,6 +120,16 @@ printf 'ignored.log\n' > "$SEED/.gitignore"
 git -C "$SEED" add .gitignore && git -C "$SEED" commit -qm ignore
 git -C "$SEED" branch -M main
 git clone --quiet --bare "$SEED" "$ORIGIN"
+# The project's shared origin must never receive a push from a teleport.
+PUSH_LOG="$TMP_ROOT/origin-pushes.log"
+cat > "$ORIGIN/hooks/pre-receive" <<SH
+#!/usr/bin/env bash
+cat >> '$PUSH_LOG'
+echo "error: teleport pushed to the project's origin" >&2
+exit 1
+SH
+chmod +x "$ORIGIN/hooks/pre-receive"
+ORIGIN_REFS=$(git -C "$ORIGIN" for-each-ref)
 
 LOCAL="$TMP_ROOT/local"
 REMOTE="$TMP_ROOT/remote"
@@ -163,7 +182,7 @@ out=$(local_tp t1 2>&1); rc=$?
 expect_code 1 "$rc" "teleport into a dirty remote clone"
 assert_contains "$out" "uncommitted changes" "dirty remote refusal names the cause"
 assert_no_grep "control" "$FAKE_LOG" "a refused teleport never touches the local worker"
-git -C "$WT1" ls-remote --exit-code origin refs/heads/fm/teleport/t1 >/dev/null 2>&1 && fail "a refused teleport pushed a snapshot"
+git -C "$WT1" rev-parse --verify --quiet refs/teleport/t1 >/dev/null && fail "a refused teleport took a snapshot"
 rm -f "$REMOTE/projects/alpha/stray.txt"
 
 fm_write_meta "$REMOTE/state/t1.meta" "worktree=/elsewhere"
@@ -197,22 +216,23 @@ pass "a failed teleport leaves the local task intact and runnable"
 
 # --- WIP ref creation -------------------------------------------------------------
 
-WIP=$(git -C "$WT1" ls-remote origin refs/heads/fm/teleport/t1 | awk '{print $1}')
-[ -n "$WIP" ] || fail "pack pushed no fm/teleport/t1 ref"
+WIP=$(git -C "$WT1" rev-parse --verify --quiet refs/teleport/t1)
+[ -n "$WIP" ] || fail "pack recorded no refs/teleport/t1 snapshot"
 [ "$(git -C "$WT1" rev-parse "$WIP^1")" = "$HEAD_BEFORE" ] || fail "the WIP snapshot is not a child of the worker's HEAD"
 git -C "$WT1" show "$WIP:README.md" | grep -q edited || fail "the WIP snapshot lacks the tracked edit"
 git -C "$WT1" show "$WIP:untracked.txt" >/dev/null 2>&1 || fail "the WIP snapshot lacks the untracked file"
 git -C "$WT1" show "$WIP:ignored.log" >/dev/null 2>&1 && fail "the WIP snapshot carried an ignored file"
-msg=$(git -C "$WT1" log -1 --format=%B "$WIP")
-assert_contains "$msg" "Firstmate-Teleport: t1" "the snapshot names its task"
-assert_contains "$msg" "Teleport-Branch: feat/t1" "the snapshot names the worker's branch"
-pass "pack snapshots tracked and untracked work onto fm/teleport/<task> without moving the worker"
+msg=$(git -C "$WT1" log -1 --format='%B%an %ae %cn %ce' "$WIP")
+assert_contains "$msg" "WIP snapshot" "the snapshot carries a plain message"
+printf '%s\n' "$msg" | grep -qiE 'firstmate|teleport|t1' && fail "the snapshot commit names local tooling or the task: $msg"
+pass "pack snapshots tracked and untracked work under refs/teleport/<task> without moving the worker"
 
 # --- successful outbound teleport, Claude transcript resumed -------------------------
 
 : > "$FAKE_LOG"
-out=$(local_tp t1 2>&1) || fail "teleport out failed: $out"
+out=$(FM_TELEPORT_CHUNK_BYTES=256 local_tp t1 2>&1) || fail "teleport out failed: $out"
 assert_contains "$out" "teleported t1 to alwayson" "teleport reports the destination"
+[ "$(grep -c '^on fm-teleport.sh chunk-put t1 ' "$FAKE_LOG")" -gt 1 ] || fail "the payload did not travel as several chunks"
 RWT="$REMOTE/pool/t1"
 assert_present "$REMOTE/state/t1.meta" "the remote records the adopted task"
 [ "$(git -C "$RWT" symbolic-ref --short HEAD)" = feat/t1 ] || fail "the remote worker is not on the task's branch"
@@ -233,7 +253,9 @@ assert_absent "$TRANSCRIPT" "the local transcript is deleted after takeover"
 assert_absent "$LOCAL/state/t1.meta" "the local copy is torn down after takeover"
 assert_absent "$WT1" "the local worktree is returned after takeover"
 assert_grep "control $LOCAL t1 exit" "$FAKE_LOG" "the local worker is stopped after takeover"
-git -C "$LOCAL/projects/alpha" ls-remote --exit-code origin refs/heads/fm/teleport/t1 >/dev/null 2>&1 && fail "the WIP ref was left on origin"
+git -C "$LOCAL/projects/alpha" rev-parse --verify --quiet refs/teleport/t1 >/dev/null && fail "the snapshot ref stayed in the sending clone"
+git -C "$REMOTE/projects/alpha" rev-parse --verify --quiet refs/teleport/t1 >/dev/null && fail "the snapshot ref stayed in the adopting clone"
+assert_grep "teardown $LOCAL t1 --teleported" "$FAKE_LOG" "the local copy is retired as a teleported copy"
 tasks-axi show t1 --file "$REMOTE/data/backlog.md" >/dev/null 2>&1 || fail "the backlog item did not move to the remote"
 tasks-axi show t1 --file "$LOCAL/data/backlog.md" >/dev/null 2>&1 && fail "the backlog item stayed in the local backlog"
 grep -A3 '^## In flight' "$REMOTE/data/backlog.md" | grep -q 't1' || fail "the remote backlog does not show t1 in flight"
@@ -243,7 +265,8 @@ pass "teleport out moves work, records, transcript, and backlog item to the remo
 
 printf 'more remote work\n' >> "$RWT/remote.txt"
 : > "$FAKE_LOG"
-out=$(local_tp t1 --back 2>&1) || fail "teleport back failed: $out"
+out=$(FM_TELEPORT_CHUNK_BYTES=256 local_tp t1 --back 2>&1) || fail "teleport back failed: $out"
+[ "$(grep -c '^on fm-teleport.sh chunk-get t1 ' "$FAKE_LOG")" -gt 1 ] || fail "the payload did not come back as several chunks"
 assert_contains "$out" "teleported t1 back from alwayson" "back-teleport reports its source"
 BWT="$LOCAL/pool/t1"
 assert_present "$LOCAL/state/t1.meta" "the local home records the returned task"
@@ -257,6 +280,8 @@ assert_grep "control $REMOTE t1 interrupt" "$FAKE_LOG" "the remote worker is int
 assert_grep "$LOCAL/state/t1.status" "$LOCAL/data/t1/brief.md" "the brief's paths map back to the local home"
 tasks-axi show t1 --file "$LOCAL/data/backlog.md" >/dev/null 2>&1 || fail "the backlog item did not come back"
 tasks-axi show t1 --file "$REMOTE/data/backlog.md" >/dev/null 2>&1 && fail "the backlog item stayed on the remote"
+git -C "$LOCAL/projects/alpha" rev-parse --verify --quiet refs/teleport/t1 >/dev/null && fail "the snapshot ref stayed in the adopting clone after the return"
+git -C "$REMOTE/projects/alpha" rev-parse --verify --quiet refs/teleport/t1 >/dev/null && fail "the snapshot ref stayed in the sending clone after the return"
 pass "teleport --back reverses the move"
 
 # --- non-Claude fallback ----------------------------------------------------------------
@@ -316,14 +341,35 @@ notes=$(grep -c '^## Teleport note' "$REMOTE/data/t2/brief.md")
 [ "$notes" = 1 ] || fail "a second trip left $notes teleport notes in the brief"
 pass "a round trip replaces the earlier teleport note"
 
+# --- the project's origin is never pushed ------------------------------------------------
+
+assert_absent "$PUSH_LOG" "a teleport pushed to the project's origin"
+[ "$(git -C "$ORIGIN" for-each-ref)" = "$ORIGIN_REFS" ] || fail "the project's origin refs changed during the teleports"
+pass "no teleport, out or back, pushes anything to the project's origin"
+
+# --- an adopting clone behind origin fetches the snapshot's history first ---------------
+
+# Advance origin directly in the bare repository (no push), and let only the
+# sending clone see it.
+UPSTREAM=$(git -C "$ORIGIN" commit-tree "$(git -C "$ORIGIN" rev-parse 'main^{tree}')" -p "$(git -C "$ORIGIN" rev-parse main)" -m "upstream moved")
+git -C "$ORIGIN" update-ref refs/heads/main "$UPSTREAM"
+ORIGIN_REFS=$(git -C "$ORIGIN" for-each-ref)
+git -C "$LOCAL/projects/alpha" fetch --quiet origin
+git -C "$REMOTE/projects/alpha" merge-base --is-ancestor "$UPSTREAM" origin/main 2>/dev/null && fail "the adopting clone already had the new origin commit"
+new_local_task t8 codex
+out=$(local_tp t8 2>&1) || fail "teleport into a clone behind origin failed: $out"
+git -C "$REMOTE/pool/t8" merge-base --is-ancestor "$UPSTREAM" HEAD || fail "the adopted work lost the history origin had moved to"
+assert_present "$REMOTE/pool/t8/untracked.txt" "the work arrived in the clone that was behind"
+assert_absent "$PUSH_LOG" "the teleport into a clone behind origin pushed to origin"
+pass "an adopting clone behind origin fetches the snapshot's history before installing it"
+
 # --- guards ------------------------------------------------------------------------------
 
 new_local_task t4 claude
 out=$(FAKE_CREW_STATE='state: working · source: run-step · step=review' local_tp t4 2>&1); rc=$?
 expect_code 1 "$rc" "teleport during an active validation run"
 assert_contains "$out" "active validation run" "validation-run refusal names the cause"
-WIP4=$(git -C "$LOCAL/pool/t4" ls-remote origin refs/heads/fm/teleport/t4)
-[ -z "$WIP4" ] || fail "a refused pack pushed a snapshot"
+git -C "$LOCAL/pool/t4" rev-parse --verify --quiet refs/teleport/t4 >/dev/null && fail "a refused pack took a snapshot"
 pass "teleport refuses mid-validation"
 
 # abort never rolls back a task this home did not adopt.
@@ -381,18 +427,24 @@ TFAKE=$(fm_test_make_spawn_fakebin "$TCASE/fake")
 mkdir -p "$THOME/data" "$THOME/projects" "$THOME/state" "$THOME/config"
 printf 'claude\n' > "$THOME/config/crew-harness"
 touch "$THOME/state/.last-watcher-beat"
+# A real backlog makes the dispatch gate apply; the teleport flow, not this
+# spawn, carries the item, so the home has none for t7 yet.
+printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' > "$THOME/data/backlog.md"
+printf '%s\n' 'backend = "markdown"' '' '[markdown]' 'path = "data/backlog.md"' > "$THOME/.tasks.toml"
+TBACKLOG_BEFORE=$(cat "$THOME/data/backlog.md")
 fm_git_worktree "$TCASE/project" "$TWT" wt-launch
 fm_test_spawn_brief "$THOME" t7 "the original brief text"
 base=$(git -C "$TWT" rev-parse HEAD)
 printf 'teleported work\n' > "$TWT/wip.txt"
 git -C "$TWT" add wip.txt
-git -C "$TWT" commit -q -m "$(printf 'teleport: WIP snapshot of t7\n\nFirstmate-Teleport: t7\nTeleport-Branch: fm/t7\n')"
-git -C "$TWT" push -q origin "HEAD:refs/heads/fm/teleport/t7"
+git -C "$TWT" commit -q -m "WIP snapshot"
+TWIP=$(git -C "$TWT" rev-parse HEAD)
+git -C "$TWT" update-ref refs/teleport/t7 "$TWIP"
 git -C "$TWT" checkout -q --detach "$base"
 git -C "$TWT" branch -q -D wt-launch 2>/dev/null || true
 TSESSION=0f1e2d3c-aaaa-4bbb-8ccc-123456789abc
 mkdir -p "$THOME/data/t7/teleport"
-printf 'session=%s\nsource_worktree=/elsewhere/wt\nsource_home=/elsewhere/home\n' "$TSESSION" > "$THOME/data/t7/teleport/manifest"
+printf 'session=%s\nwip=%s\nbranch=fm/t7\nsource_worktree=/elsewhere/wt\nsource_home=/elsewhere/home\n' "$TSESSION" "$TWIP" > "$THOME/data/t7/teleport/manifest"
 printf '{"cwd":"/elsewhere/wt"}\n' > "$THOME/data/t7/teleport/session.jsonl"
 printf 'TELEPORT-ARRIVAL-MARKER: you now work in __WORKTREE__\n' > "$THOME/data/t7/teleport/arrival.md"
 : > "$TLOG"
@@ -404,4 +456,5 @@ assert_present "$TWT/wip.txt" "the teleported work was restored into the worktre
 record=$(grep -rl "TELEPORT-ARRIVAL-MARKER" "$THOME/state/operational-inbox" 2>/dev/null | head -n 1)
 [ -n "$record" ] || fail "the arrival note was not published as the launch record: $launch"
 grep -qF "the original brief text" "$record" && fail "the launch record carried the brief instead of the arrival note"
-pass "fm-spawn --teleport resumes the Claude session with the arrival note as its launch record"
+[ "$(cat "$THOME/data/backlog.md")" = "$TBACKLOG_BEFORE" ] || fail "the teleport spawn changed this home's backlog"
+pass "fm-spawn --teleport resumes the Claude session with the arrival note as its launch record, before its backlog item arrives"

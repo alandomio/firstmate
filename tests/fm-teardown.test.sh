@@ -1557,6 +1557,121 @@ test_scout_nested_clone_returns_with_no_untracked_entries() {
   pass "scout copy with a nested clone and a scratch file returns with no untracked entries"
 }
 
+# Leave the copy the way bin/fm-teleport.sh does before retiring it: detached
+# and clean on a pushed snapshot, with this home's staging manifest naming it.
+# Args: case_dir in|out
+prepare_teleported_copy() {
+  local case_dir=$1 side=$2 wip
+  printf 'carried work\n' > "$case_dir/wt/carried.txt"
+  git -C "$case_dir/wt" add carried.txt
+  git -C "$case_dir/wt" -c user.email=t@t -c user.name=t commit -q -m "WIP snapshot"
+  wip=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/wt" checkout -q --detach "$wip"
+  git -C "$case_dir/project" update-ref refs/teleport/task-x1 "$wip"
+  mkdir -p "$case_dir/state/teleport/task-x1/$side"
+  printf 'schema=fm-teleport.v1\ntask=task-x1\nwip=%s\n' "$wip" > "$case_dir/state/teleport/task-x1/$side/manifest"
+}
+
+test_teleported_scout_tears_down_without_its_report() {
+  local case_dir side rc
+  for side in out in; do
+    case_dir=$(make_case "teleported-scout-$side")
+    write_meta "$case_dir" no-mistakes scout
+    prepare_teleported_copy "$case_dir" "$side"
+
+    set +e
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+    expect_code 1 "$rc" "teleported-scout-$side: a scout without a report still refuses without --teleported"
+    assert_present "$case_dir/state/task-x1.meta" "teleported-scout-$side: the refused teardown removed the record"
+
+    set +e
+    run_teardown "$case_dir" --teleported > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+    expect_code 0 "$rc" "teleported-scout-$side: --teleported should retire the moved copy"
+    assert_absent "$case_dir/state/task-x1.meta" "teleported-scout-$side: the record survived"
+  done
+  pass "--teleported retires a scout copy that a teleport moved out or rolled back, without its report"
+}
+
+test_teleported_copy_whose_backlog_item_moved_needs_no_close() {
+  local case_dir rc
+  case_dir=$(make_case teleported-item-moved)
+  write_meta "$case_dir" no-mistakes scout
+  prepare_teleported_copy "$case_dir" out
+  seed_backlog_in_flight "$case_dir" scout
+  tasks-axi rm task-x1 --file "$case_dir/data/backlog.md" >/dev/null
+
+  set +e
+  run_teardown "$case_dir" --teleported > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "teleported-item-moved: a moved backlog item should not fail the teardown"
+  assert_absent "$case_dir/state/task-x1.meta" "teleported-item-moved: the record survived"
+  assert_absent "$case_dir/state/task-x1.backlog-close" "teleported-item-moved: a pending close was left behind"
+  assert_grep "moved with the teleport" "$case_dir/stdout" "teleported-item-moved: the follow-up does not say the item moved"
+
+  case_dir=$(make_case teleported-item-present)
+  write_meta "$case_dir" no-mistakes scout
+  prepare_teleported_copy "$case_dir" out
+  seed_backlog_in_flight "$case_dir" scout
+  set +e
+  run_teardown "$case_dir" --teleported > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "teleported-item-present: teardown should close the item still here"
+  [ "$(tasks-axi show task-x1 --file "$case_dir/data/backlog.md" 2>/dev/null | sed -n 's/^  state: *//p' | head -1)" = "done" ] \
+    || fail "teleported-item-present: the backlog item still here was not closed"
+  pass "--teleported treats a backlog item that moved with the task as nothing to close, and still closes one that stayed"
+}
+
+test_teleported_ship_tears_down_without_its_snapshot_on_a_remote() {
+  local case_dir rc
+  case_dir=$(make_case teleported-ship)
+  write_meta "$case_dir" no-mistakes ship
+  prepare_teleported_copy "$case_dir" out
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "teleported-ship: a snapshot on no remote still refuses without --teleported"
+  assert_grep "not on any remote" "$case_dir/stderr" "teleported-ship: the refusal is the landed-work check"
+
+  set +e
+  run_teardown "$case_dir" --teleported > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "teleported-ship: --teleported should retire the moved ship copy"
+  assert_absent "$case_dir/state/task-x1.meta" "teleported-ship: the record survived"
+  pass "--teleported retires a moved ship copy whose snapshot is on no remote"
+}
+
+test_teleported_refuses_without_proof_of_the_move() {
+  local case_dir name rc
+  for name in no-manifest moved-on dirty; do
+    case_dir=$(make_case "teleported-refuse-$name")
+    write_meta "$case_dir" no-mistakes scout
+    case "$name" in
+      no-manifest) ;;
+      moved-on) prepare_teleported_copy "$case_dir" out; wt_commit "$case_dir" "work after the snapshot" ;;
+      dirty) prepare_teleported_copy "$case_dir" out; printf 'later\n' > "$case_dir/wt/later.txt" ;;
+    esac
+
+    set +e
+    run_teardown "$case_dir" --teleported > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+    expect_code 1 "$rc" "teleported-refuse-$name: --teleported without proof should refuse"
+    assert_grep "needs proof that task task-x1 was teleported" "$case_dir/stderr" "teleported-refuse-$name: refusal names the missing proof"
+    assert_present "$case_dir/state/task-x1.meta" "teleported-refuse-$name: the refused teardown removed the record"
+    assert_present "$case_dir/wt" "teleported-refuse-$name: the refused teardown removed the copy"
+  done
+  pass "--teleported refuses unless the copy is clean on its teleport snapshot"
+}
+
 test_ship_nested_clone_is_refused_and_bytes_stay() {
   local case_dir wt rc head before after
   case_dir=$(make_case ship-nested-refuse)
@@ -5608,6 +5723,10 @@ test_untracked_only_refusal_diagnostic
 test_tracked_edit_refusal_diagnostic
 test_mixed_refusal_diagnostic
 test_scout_nested_clone_returns_with_no_untracked_entries
+test_teleported_scout_tears_down_without_its_report
+test_teleported_copy_whose_backlog_item_moved_needs_no_close
+test_teleported_ship_tears_down_without_its_snapshot_on_a_remote
+test_teleported_refuses_without_proof_of_the_move
 test_ship_nested_clone_is_refused_and_bytes_stay
 test_dirty_return_warns_which_slot_was_lost
 test_dirty_return_warns_even_when_a_later_step_refuses

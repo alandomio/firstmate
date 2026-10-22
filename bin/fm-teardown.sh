@@ -197,10 +197,20 @@
 # leased home releases its durable treehouse lease so the pool slot is freed,
 # never left leased forever. If the treehouse return fails, teardown leaves the
 # leased home and state in place instead of hiding a still-held lease.
-# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--teleported]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
+#   --teleported is passed only by bin/fm-teleport.sh when it retires a copy
+#   whose work another home holds: the copy it moved out, or an adoption it is
+#   rolling back. Teardown then requires proof of that move and refuses without
+#   it: this home's teleport staging holds a manifest for the task, and the
+#   worktree is clean and on that manifest's snapshot commit, which the clone's
+#   private refs/teleport/<task> also names. Given that proof it skips only the
+#   scout report and captain-call checks and the landed-work check (the work
+#   now lives in the other home, not on a remote), and treats a backlog item
+#   that is no longer in this home as moved with the task rather than as a
+#   failed close; every other check still applies.
 #   --legacy-record accepts a task record that predates the spawn_gen field:
 #   teardown then proceeds only when the recorded endpoint is confirmed dead or
 #   agent-less (bin/fm-backend.sh's recovery-grade classifier), and without
@@ -424,11 +434,13 @@ ID=$1
 TEARDOWN_LOST_SLOT_EXIT=4
 FORCE=
 LEGACY_RECORD_GIVEN=0
+TELEPORTED=0
 shift
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --force) FORCE=--force ;;
     --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
+    --teleported) TELEPORTED=1 ;;
     *)
       echo "error: invalid teardown request" >&2
       exit 2
@@ -1711,6 +1723,10 @@ backlog_refresh_reminder() {
   local backlog_display root backend=markdown
   [ "$KIND" = secondmate ] && return 0
   [ "$CLEANUP_RECOVERY" = orca ] && return 0
+  if [ "$BACKLOG_MOVED" = 1 ]; then
+    printf '%s\n' "Backlog: $ID's item moved with the teleport; this home has none to close."
+    return 0
+  fi
   if root=$(fm_backlog_root "$DATA"); then
     backend=$(fm_tasks_axi_backend "$root") || return 2
   fi
@@ -2006,9 +2022,15 @@ teardown_note_dirty_return() {
 }
 
 validate_worktree_teardown_safety() {
-  local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
+  local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch refusal
   [ -d "$WT" ] || return 0
   [ "$FORCE" != "--force" ] || return 0
+  if [ "$TELEPORTED" = 1 ]; then
+    refusal=$(teleported_copy_refusal)
+    [ -n "$refusal" ] || return 0
+    echo "REFUSED: --teleported needs proof that task $ID was teleported: $refusal." >&2
+    return 1
+  fi
   case "$KIND" in
     secondmate|scout) return 0 ;;
   esac
@@ -3598,7 +3620,32 @@ if [ "$KIND" = secondmate ] && [ "$FORCE" = "--force" ]; then
   cleanup_firstmate_home_children "$HOME_PATH" || exit $?
 fi
 
-if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
+# Prints why the copy is not proven to be a teleported one (see --teleported).
+teleported_copy_refusal() {
+  local manifest wip head ref_wip status
+  for manifest in "$STATE/teleport/$ID/out/manifest" "$STATE/teleport/$ID/in/manifest" ''; do
+    [ -n "$manifest" ] || { printf 'no teleport manifest for %s under %s\n' "$ID" "$STATE/teleport/$ID"; return 0; }
+    [ -f "$manifest" ] && [ ! -L "$manifest" ] && [ "$(fm_meta_get "$manifest" task)" = "$ID" ] && break
+  done
+  wip=$(fm_meta_get "$manifest" wip)
+  head=$(git -C "$WT" rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null) || head=
+  ref_wip=$(git -C "$WT" rev-parse --verify --quiet "refs/teleport/$ID^{commit}" 2>/dev/null) || ref_wip=
+  if [ -z "$wip" ] || [ "$head" != "$wip" ] || [ "$ref_wip" != "$wip" ]; then
+    printf 'worktree %s is not on the teleport snapshot of %s\n' "$WT" "$ID"
+    return 0
+  fi
+  status=$(git -C "$WT" status --porcelain --untracked-files=all 2>/dev/null) || { printf 'could not read worktree %s\n' "$WT"; return 0; }
+  [ -z "$status" ] || printf 'worktree %s changed after the teleport snapshot\n' "$WT"
+}
+if [ "$TELEPORTED" = 1 ]; then
+  TELEPORTED_REFUSAL=$(teleported_copy_refusal)
+  if [ -n "$TELEPORTED_REFUSAL" ]; then
+    echo "REFUSED: --teleported needs proof that task $ID was teleported: $TELEPORTED_REFUSAL." >&2
+    exit 1
+  fi
+fi
+
+if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ] && [ "$TELEPORTED" != 1 ]; then
   REPORT="$DATA/$ID/report.md"
   if [ ! -f "$REPORT" ]; then
     echo "REFUSED: scout task $ID has no report at $REPORT." >&2
@@ -3691,6 +3738,13 @@ if [ "$BACKEND" = herdr ]; then
   TEARDOWN_HERDR_PANE=$FM_BACKEND_HERDR_PANE
 fi
 
+# A teleported copy whose backlog item already moved with it has no row to close here.
+BACKLOG_MOVED=0
+if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ] && [ "$TELEPORTED" = 1 ] \
+   && ! fm_backlog_row_probe "$DATA" "$ID" && [ "$FM_BACKLOG_ROW_RESULT" = not_found ]; then
+  TEARDOWN_BACKLOG_APPLIES=0
+  BACKLOG_MOVED=1
+fi
 BACKLOG_CLOSED=0
 BACKLOG_TRANSITION=$TEARDOWN_BACKLOG_TRANSITION
 BACKLOG_TRANSITION_FLAGS=()
