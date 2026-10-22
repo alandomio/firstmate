@@ -88,6 +88,7 @@ bytes=$(wc -c | tr -d ' ')
 printf '%s\t%s\t%s\n' "$1" "$2" "$bytes" >> "$FAKE_TG_DIR/ssh.log"
 case "${FAKE_SSH_MODE:-ok}" in
   ok) printf 'ciao  capitano\nprova di trascrizione\n' ;;
+  urgent) printf 'Urgente, accendi il comodino\n' ;;
   empty) : ;;
   hang) sleep 30 ;;
   *) echo "ssh: connect to host $1 port 22: Connection refused" >&2; exit 255 ;;
@@ -372,6 +373,22 @@ test_voice_transcribed() {
   pass "a voice note is downloaded, transcribed over ssh, and recorded as a marked transcript"
 }
 
+test_voice_urgent_launches_executor_once() {
+  local home note i=0
+  home=$(voice_home voice-urgent '{"ssh_host":"nostromo"}')
+  FAKE_SSH_MODE=urgent run_voice "$home" 730
+  note="tg-$OWNER-1730"
+  assert_present "$home/state/inbox/$note.note" "an urgent voice message is still queued as a note"
+  while ! grep -q 'forwarded' "$home/state/voice/urgent.log" 2>/dev/null && [ "$i" -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
+  assert_grep "no urgent executor configured" "$home/state/voice/$note.urgent" "the urgent executor runs for an owner telegram note"
+  [ "$(grep -c forwarded "$home/state/voice/urgent.log")" = 1 ] || fail "the executor ran more than once"
+  home=$(voice_home voice-plain '{"ssh_host":"nostromo"}')
+  FAKE_SSH_MODE=ok run_voice "$home" 731
+  sleep 1
+  assert_absent "$home/state/voice/tg-$OWNER-1731.urgent" "a plain voice note never launches the executor"
+  pass "an owner telegram voice note starting with urgente launches the urgent executor"
+}
+
 test_voice_failures_keep_message() {
   local home note mode
   for mode in fail empty hang; do
@@ -462,6 +479,7 @@ test_voice_note_command() {
 test_inert_without_optin
 test_voice_note_command
 test_voice_transcribed
+test_voice_urgent_launches_executor_once
 test_voice_failures_keep_message
 test_voice_off_unless_configured
 test_discover_lists_ids_without_confirming

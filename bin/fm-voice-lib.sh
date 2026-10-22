@@ -90,3 +90,18 @@ fm_voice_transcribe_file() {  # <audio-file> <out-file>
   if [ -z "$out" ]; then fm_voice_set_error "no speech recognized"; return 1; fi
   printf '%s\n' "$out" > "$dest"
 }
+
+# The urgent carve-out: launch bin/fm-voice-urgent.sh for an already queued note
+# only when the sender is the owner and the transcript's first word is
+# "urgente", at most once per note (state/voice/<note-id>.urgent is claimed
+# atomically), and never for a failed transcription.
+fm_voice_urgent_launch() {  # <home> <note-id> <trust> <transcript-file>
+  local home=$1 note=$2 dir
+  [ "$3" = owner ] && [ -s "$4" ] || return 0
+  head -c 200 -- "$4" | tr '\n\r\t' '   ' | tr '[:upper:]' '[:lower:]' \
+    | grep -Eq '^[[:space:][:punct:]]*urgente([^[:alpha:]]|$)' || return 0
+  dir="$home/state/voice"
+  (umask 077; mkdir -p "$dir") || return 0
+  (set -C; : > "$dir/$note.urgent") 2>/dev/null || return 0
+  nohup "$SCRIPT_DIR_VOICE_LIB/fm-voice-urgent.sh" --home "$home" "$note" >/dev/null 2>>"$dir/urgent.log" &
+}

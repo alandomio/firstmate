@@ -147,6 +147,10 @@
 #   check: inactive-outcome bounded poll-loop reconciliation found a suspicious
 #                          inactive terminal outcome that still lacks its durable
 #                          upstream receipt
+#   check: inbox note <id> still unhandled - <words>
+#                          a captain inbox note is still pending past the
+#                          re-announce grace; repeats each grace period until it
+#                          is acknowledged (bin/fm-inbox-pending-lib.sh)
 #   check: secondmate wake-loop stalled: mate=<id> row=<seq> idle=<seconds>s
 #                          an actionable row in an endpoint-recorded local
 #                          secondmate home's durable wake queue did not advance
@@ -260,6 +264,8 @@ WATCH_HOME_EXISTED=0
 # (inbox_steer_check below).
 # shellcheck source=bin/fm-task-inbox-lib.sh
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+# shellcheck source=bin/fm-inbox-pending-lib.sh
+. "$SCRIPT_DIR/fm-inbox-pending-lib.sh"
 # The away-posture record (state/.afk-contract) is the posture in both the
 # attended and the afk session; bin/fm-afk-contract.sh owns its schema and its
 # away-or-quiet reading, which is all this watcher reads (away_record_present
@@ -3272,6 +3278,21 @@ while :; do
   else
     triage_log "inactive-outcome reconciliation unavailable"
   fi
+
+  # A captain inbox note still pending past the grace period is re-announced,
+  # repeating each period until it is handled, so a wake acknowledged unseen
+  # cannot lose it (bin/fm-inbox-pending-lib.sh owns the ladder).
+  inbox_pending_reason=
+  while IFS=$(printf '\t') read -r inbox_pending_id inbox_pending_words; do
+    [ -n "$inbox_pending_id" ] || continue
+    inbox_pending_reason="check: inbox note $inbox_pending_id still unhandled - $inbox_pending_words"
+    fm_wake_append check "inbox:$inbox_pending_id" "$inbox_pending_reason" || exit 1
+    fm_inbox_pending_record_announce "$STATE" "$inbox_pending_id" \
+      || triage_log "inbox re-announce state unwritable for $inbox_pending_id"
+  done <<EOF
+$(fm_inbox_pending_due "$STATE")
+EOF
+  [ -z "$inbox_pending_reason" ] || wake "$inbox_pending_reason"
 
   # Slow per-task checks (firstmate writes these, e.g. a merged-PR poll).
   # Time-based via .last-check mtime so the cadence survives watcher restarts.

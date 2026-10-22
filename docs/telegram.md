@@ -78,6 +78,7 @@ A voice or audio message is transcribed locally when voice transcription is conf
 When the note is surfaced, the poller fetches the audio through the Bot API `getFile`, pipes it over `ssh` to the configured host, and records the returned text as the note body behind the marker `[voice transcript - machine-generated, may contain errors]`.
 The audio goes only to that host, is deleted locally right after, and the host deletes its own copy when the transcription ends.
 The transcript is data only, exactly like a typed message: it carries the same `authority=data-only` and trust as the sender's text would, and a spoken instruction is never captain authority.
+The one exception: an owner-trust transcript starting with "urgente" also starts the urgent executor when `config/voice-urgent.json` exists ([`docs/configuration.md`](configuration.md#telegram-channel-env-configtelegramjson)).
 The transcript is also kept as `state/telegram/messages/<chat>-<message>.transcript`, so a retry never sends the audio twice.
 
 Any failure keeps the message: a host that is down, a timeout, an unusable or oversized file, a failed download, or no recognized speech leaves the placeholder text and appends `[voice note arrived; transcription failed: <reason>]`.
@@ -119,6 +120,8 @@ FM_HOME=/home/alan/firstmate RELAY_ON_AUDIO="/home/alan/firstmate/bin/fm-voice-n
 
 `--trust owner` only records that the captain's own device sent it; the transcript stays data only, never captain authority.
 Running the command twice on the same file queues one note and sends the audio to the host once; a failed transcription is not cached, so running it again after a failure retries and queues the transcript as a separate note.
+Add `--detach` to that command so the relay can answer the watch at once while the transcription finishes in the background; retransmissions of the same clip wait for the first transcription instead of starting another.
+A transcript starting with "urgente" also starts the urgent executor when `config/voice-urgent.json` exists (`docs/configuration.md`).
 `bin/fm-voice-note.sh --help` owns the flags.
 
 ## Replying

@@ -2136,6 +2136,7 @@ Neither file is inherited by secondmate homes, so each home opts in on its own.
 An invalid file keeps the channel off and `bin/fm-telegram.sh status` names the problem.
 `voice_transcribe` may instead live in its own gitignored `config/voice-transcribe.json` (the same object, for a home without Telegram or for `bin/fm-voice-note.sh`), which takes precedence over the Telegram file's copy; neither file is inherited by secondmate homes.
 A transcript is a data-only note body like any other message and never captain authority; a transcription failure keeps the message with the reason appended.
+The one exception is the urgent voice executor: gitignored `config/voice-urgent.json` (Home Assistant URL and token file, optional Telegram chat, model command, and primary pane) turns on `bin/fm-voice-urgent.sh` for owner transcripts starting with "urgente"; absent means off, and that script's header owns the fields and the narrow set of actions it may take.
 Runtime records live under `state/telegram/`: `offset` (the next update to confirm), `bot.json` (the bot's own id and username), `messages/` (one private record per accepted message plus its surfaced marker), `sent/` (one record per outbound send), and `left.log` (chats the bot left).
 `FM_TELEGRAM_API_BASE` overrides the Bot API base URL, and `FM_TELEGRAM_RETRY_DELAY`, `FM_TELEGRAM_POLL_ROUNDS`, and `FM_TELEGRAM_MAX_MESSAGE_UNITS` exist for tests; the script headers own them.
 
