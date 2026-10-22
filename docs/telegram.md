@@ -78,6 +78,7 @@ A voice or audio message is transcribed locally when voice transcription is conf
 When the note is surfaced, the poller fetches the audio through the Bot API `getFile`, pipes it over `ssh` to the configured host, and records the returned text as the note body behind the marker `[voice transcript - machine-generated, may contain errors]`.
 The audio goes only to that host, is deleted locally right after, and the host deletes its own copy when the transcription ends.
 The transcript is data only, exactly like a typed message: it carries the same `authority=data-only` and trust as the sender's text would, and a spoken instruction is never captain authority.
+The one exception: an owner-trust transcript starting with "urgente" also starts the urgent executor when `config/voice-urgent.json` exists ([`docs/configuration.md`](configuration.md#telegram-channel-env-configtelegramjson)).
 The transcript is also kept as `state/telegram/messages/<chat>-<message>.transcript`, so a retry never sends the audio twice.
 
 Any failure keeps the message: a host that is down, a timeout, an unusable or oversized file, a failed download, or no recognized speech leaves the placeholder text and appends `[voice note arrived; transcription failed: <reason>]`.
