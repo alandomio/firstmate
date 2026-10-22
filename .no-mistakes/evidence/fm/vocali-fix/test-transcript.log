@@ -1,0 +1,96 @@
+== fm-voice-urgent
+ok - only a transcript starting with urgente launches the executor
+ok - only the true start of the transcript can trigger the executor
+ok - concurrent runs on one urgent clip launch the executor once
+ok - an untrusted source never launches the executor
+ok - the executor makes allowlisted light and scene calls and leaves the note pending
+ok - the executor makes no call outside the allowlist and forwards instead
+ok - concurrent runs on one clip transcribe it once
+ok - --detach returns at once and still queues the note
+exit=0
+== fm-inbox-pending
+ok - every drain lists each pending note until it is handled
+ok - the re-announce ladder fires after the grace period, repeats per period, and stops once handled
+ok - the grace period is configurable
+exit=0
+== fm-telegram
+ok - channel is inert without both the .env token and a valid config
+ok - fm-voice-note.sh transcribes any audio file into a data-only inbox note and never drops the audio
+ok - a voice note is downloaded, transcribed over ssh, and recorded as a marked transcript
+ok - an owner telegram voice note starting with urgente launches the urgent executor
+ok - any transcription failure keeps the message with a reason, and the timeout bounds a hung host
+ok - voice transcription is off unless configured, and its host is validated
+ok - discover reads chat and user ids without consuming updates, and retire disarms
+ok - poll keeps only addressed allowlisted messages, marks the owner, and leaves foreign groups
+ok - re-delivery never doubles a record and unsurfaced records are re-offered
+ok - the runner turns accepted messages into marked inbox notes with one announcement each
+ok - a fatal Bot API error is captured once and retires the source
+ok - channel notes are idempotent by id and cannot forge captain authority
+ok - send refuses foreign chats, sends plain text by default, splits, and records
+exit=0
+== fm-voice-relay
+                          [--out-file OUT_FILE] [--input-device INPUT_DEVICE]
+                          [--output-device OUTPUT_DEVICE] [--timeout TIMEOUT]
+                          [--wait-for-reply | --no-wait-for-reply]
+                          [--gap-seconds GAP_SECONDS]
+                          [--audio-idle AUDIO_IDLE] [--verbose]
+fm-voice-client.py: error: --listen open-mic is not built yet: it needs end-of-speech detection to know when a turn ended, which lands with session continuity across turns, so it would stream forever and never end a turn. Use the default --listen push-to-talk.
+client: connection lost: stream ended after 2 of the 5 bytes of a frame header
+client: connection lost: [Errno 104] Connection reset by peer
+client: discarded 15 bytes your login shell printed before the relay started: b'You have mail.\n'
+ok - the laptop client builds the right remote command and survives a chatty login shell
+ok - the client runs from a laptop holding only the two files the guide names
+ok - --listen open-mic refuses at startup, before it opens anything
+ok - the narrow scope answers how much is waiting without saying what it is
+ok - the wide scope names open work and reports state without quoting event lines
+ok - an absent read-scope setting means the narrowest answer, not the widest
+ok - a home widens its own read scope by writing the setting
+ok - finished work and note bodies never reach a spoken answer at any scope
+ok - excluding a note body does not distort the counts
+ok - a denied item becomes a withheld count without hiding that work exists
+ok - the deny list matches regardless of case
+ok - an item denied in more than one list is counted as withheld once
+ok - one deny decision per item covers every list that item could appear in
+ok - the state verb is a closed vocabulary, so free text cannot ride out on it
+ok - the reader scans back through the tail for the newest status event
+ok - an unrecognised declaration cannot hide behind trailing prose either
+ok - the backlog and the state directory always come from the same home
+ok - a finished task's pull request is neither counted nor named
+ok - a deny substring on an open title removes its pull request and says so
+ok - an unknown read scope refuses instead of widening
+ok - the configured read scope is honoured
+ok - handover queues the request for firstmate and wakes it exactly once
+ok - the reader and the queue resolve the state directory the same way
+ok - an empty request is refused rather than queued as a blank note
+ok - a home with no records answers nothing rather than failing
+ok - a spoken turn goes out and comes back: the records answer, firstmate gets the work
+ok - a model session that ends mid-conversation costs one turn, not the relay
+ok - a desynchronised uplink is named to the client before the goodbye, not only to stderr
+ok - the desktop's own check answers from the records and times it from the talk end
+ok - a reply that arrives before the end of the clip is named as an unusable clock
+all voice relay cases passed
+exit=0
+== fm-wake-drain-unread-status
+ok - a note: answer buried under a later routine note: is surfaced with both lines
+ok - already-presented note: lines are not re-surfaced on the next drain
+ok - a brand-new note: after presentation is surfaced without replaying handled lines
+ok - a queued status signal annotates every unread note, not only the newest
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 116037.1792665131.lkfkwa
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 116037.1792665131.lkfkwa
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 116037.1792665131.lkfkwa
+ok - a pending-reply resolution buried under a later note surfaces once and closes OPEN DECISIONS
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 123868.1792665152.wlU4Bz
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 123868.1792665152.wlU4Bz
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 123868.1792665152.wlU4Bz
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 123868.1792665152.wlU4Bz
+ok - a self-announced pending-reply close does not wake yet still surfaces once in UNREAD STATUS
+ok - unread status over the former byte cap preserves every line
+ok - presentation cursor advances only through its captured endpoint
+ok - a reused task id starts its replacement status log unread at byte zero
+ok - fallback identity still presents and advances status state
+ok - snapshot failures are reported visibly
+ok - OPEN DECISIONS still folds needs-decision/blocked independently of unread notes
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 167501.1792665201.Zrwco7
+ok - an empty-queue backstop presentation still preserves the status for its later signal annotation
+ok - routine working and branch-covered done lines print nothing on an empty-queue drain
+exit=0
