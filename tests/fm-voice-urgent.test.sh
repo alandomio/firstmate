@@ -36,7 +36,9 @@ case "$url" in
   *) exit 22 ;;
 esac
 SH
-chmod +x "$FAKEBIN/ssh" "$FAKEBIN/curl"
+# tmux: a server with no panes, so delivery never reaches a real one.
+printf '#!/bin/sh\nexit 0\n' > "$FAKEBIN/tmux"
+chmod +x "$FAKEBIN/ssh" "$FAKEBIN/curl" "$FAKEBIN/tmux"
 export PATH="$FAKEBIN:$PATH"
 export FM_VOICE_URGENT_NO_DELIVER=1
 
@@ -185,6 +187,50 @@ test_concurrent_urgent_runs_launch_once() {
   pass "concurrent runs on one urgent clip launch the executor once"
 }
 
+test_default_model_resolves_under_a_bare_path() {
+  local h id
+  h=$(new_home barepath)
+  mkdir -p "$h/home/.local/bin"
+  printf '%s\n' '{"action":"ha","calls":[{"service":"light.turn_on","entity_id":"light.comodino"}],"reply":"fatto"}' > "$h/fake/answer.json"
+  # The default model command must find a user-local claude that the system PATH lacks.
+  printf '#!/bin/sh\ncat >/dev/null\ncat %s\n' "'$h/fake/answer.json'" > "$h/home/.local/bin/claude"
+  chmod +x "$h/home/.local/bin/claude"
+  jq -n --arg tok "$h/config/ha.token" '{ha_url:"https://ha.example", ha_token_file:$tok}' > "$h/config/voice-urgent.json"
+  id=voice-watch-bare$RANDOM
+  mkdir -p "$h/state/inbox"
+  printf 'id=%s\nsource=watch\n--\n%s\n' "$id" 'urgente accendi il comodino' > "$h/state/inbox/$id.note"
+  env -i HOME="$h/home" PATH="$FAKEBIN:/usr/bin:/bin" FAKE_DIR="$h/fake" FM_VOICE_URGENT_NO_DELIVER=1 \
+    "$ROOT/bin/fm-voice-urgent.sh" --home "$h" "$id" 2>/dev/null
+  grep -q '^executed' "$h/state/voice/$id.urgent" \
+    || fail "the default model command did not run under a bare PATH: $(cat "$h/state/voice/$id.urgent")"
+  pass "the default model command resolves a user-local claude under a bare PATH"
+}
+
+test_delivery_targets_the_lock_holder_pane() {
+  local h id pid err
+  [ -r /proc/self/environ ] || { pass "lock-holder pane resolution skipped: no /proc"; return; }
+  h=$(new_home lockpane)
+  ha_config "$h" '{"action":"forward"}'
+  # A live verified harness holding the session lock, launched from a pane.
+  mkdir -p "$h/harness"
+  printf '#!/bin/sh\nsleep 30\n' > "$h/harness/claude"
+  chmod +x "$h/harness/claude"
+  env -u HERDR_ENV TMUX_PANE=%fm-test-99 "$h/harness/claude" &
+  pid=$!
+  printf '%s\n' "$pid" > "$h/state/.lock"
+  sleep 0.3
+  id=voice-watch-lock$RANDOM
+  mkdir -p "$h/state/inbox"
+  printf 'id=%s\nsource=watch\n--\n%s\n' "$id" 'urgente che ore sono' > "$h/state/inbox/$id.note"
+  # Detached from every pane, as the nohup forward path is.
+  err=$(env -u TMUX -u TMUX_PANE -u HERDR_ENV -u HERDR_PANE_ID -u FM_SUPERVISOR_TARGET -u FM_VOICE_URGENT_NO_DELIVER \
+    FAKE_DIR="$h/fake" "$ROOT/bin/fm-voice-urgent.sh" --home "$h" "$id" 2>&1 >/dev/null)
+  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  printf '%s' "$err" | grep -q 'delivery skipped: %fm-test-99 not found on tmux' \
+    || fail "delivery did not target the lock holder's pane: $err"
+  pass "delivery targets the live session-lock holder's pane when detached from every pane"
+}
+
 test_urgent_note_launches_executor_and_plain_note_does_not
 test_urgente_on_a_later_line_never_launches
 test_concurrent_urgent_runs_launch_once
@@ -193,4 +239,6 @@ test_executor_runs_allowed_calls
 test_executor_refuses_outside_the_list
 test_concurrent_runs_transcribe_once
 test_detach_returns_at_once
+test_default_model_resolves_under_a_bare_path
+test_delivery_targets_the_lock_holder_pane
 exit "$FAILED"

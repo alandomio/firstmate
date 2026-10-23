@@ -36,10 +36,14 @@
 #   ha_token_file       file holding a long-lived HA access token       required
 #   telegram_chat       numeric chat id for the reply                   optional
 #   model_command       command reading the prompt on stdin, JSON out   optional
-#                       default: claude -p --model haiku --tools "" --strict-mcp-config
+#                       default: claude -p on haiku with no tools, MCP
+#                       servers, settings, hooks, plugins, or session record
+#                       (a full start can take ~20 s), run in a scratch
+#                       directory; ~/.local/bin is added to PATH
 #   timeout_seconds     bound on each model and HA call, 2-60 (8)       optional
 #   supervisor_target   primary pane target (bin/fm-supervisor-target-lib.sh
-#                       forms); else FM_SUPERVISOR_TARGET / pane env     optional
+#                       forms); else FM_SUPERVISOR_TARGET, else the pane
+#                       of the live session-lock holder, else pane env  optional
 #   supervisor_backend  tmux or herdr; else discovered                  optional
 #   primary_harness     primary harness name, for the record-backed
 #                       doorbell (bin/fm-operational-input.sh) (claude)  optional
@@ -59,6 +63,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 . "$SCRIPT_DIR/fm-operational-input.sh"
 # shellcheck source=bin/fm-supervisor-target-lib.sh
 . "$SCRIPT_DIR/fm-supervisor-target-lib.sh"
+# shellcheck source=bin/fm-session-lock-lib.sh
+. "$SCRIPT_DIR/fm-session-lock-lib.sh"
 
 usage() {
   awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
@@ -76,6 +82,11 @@ while [ "$#" -gt 0 ]; do
 done
 printf '%s' "$note_id" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' || usage
 export FM_HOME
+# The forward path launches this under nohup over ssh with the system PATH,
+# where the user-local claude and herdr clients do not resolve.
+if [ -n "${HOME:-}" ] && [ -d "$HOME/.local/bin" ]; then
+  case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$PATH:$HOME/.local/bin" ;; esac
+fi
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 note="$STATE/inbox/$note_id.note"
@@ -89,9 +100,13 @@ cfg='{}'
 cfg_get() { printf '%s' "$cfg" | jq -r "$1 // empty"; }
 
 deliver() {  # <one-line text>
-  local target backend harness composer msg verdict
+  local target backend harness composer msg verdict held
   target=$(cfg_get .supervisor_target)
   backend=$(cfg_get .supervisor_backend)
+  if [ -z "$target" ] && [ -z "${FM_SUPERVISOR_TARGET:-}" ] && held=$(discover_supervisor_from_lock "$STATE"); then
+    target=${held#* }
+    [ -n "$backend" ] || backend=${held%% *}
+  fi
   [ -n "$target" ] || target=$(discover_supervisor_target) || { log "delivery skipped: no supervisor target"; return 1; }
   [ -n "$backend" ] || backend=$(discover_supervisor_backend) || true
   harness=$(cfg_get .primary_harness); [ -n "$harness" ] || harness=claude
@@ -153,8 +168,8 @@ jq -c '[.[] | select(.entity_id | test("^(light|scene)\\.")) | {id: .entity_id, 
   printf 'Request: %s\n' "$transcript"
 } > "$work/prompt"
 model_cmd=$(cfg_get .model_command)
-[ -n "$model_cmd" ] || model_cmd='claude -p --model haiku --tools "" --strict-mcp-config'
-fm_run_timed "$secs" bash -c "$model_cmd" < "$work/prompt" > "$work/answer" 2>/dev/null \
+[ -n "$model_cmd" ] || model_cmd='CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 claude -p --model haiku --tools "" --strict-mcp-config --setting-sources "" --disable-slash-commands --no-session-persistence --no-chrome --system-prompt "Answer with one JSON object only."'
+(cd "$work" && fm_run_timed "$secs" bash -c "$model_cmd") < "$work/prompt" > "$work/answer" 2>/dev/null \
   || finish forwarded "model call failed or timed out"
 answer=$(sed -n '/{/,/}/p' "$work/answer" | tr '\n' ' ' | sed 's/^[^{]*//; s/[^}]*$//')
 printf '%s' "$answer" | jq -e 'type == "object"' >/dev/null 2>&1 || finish forwarded "model answer is not JSON"

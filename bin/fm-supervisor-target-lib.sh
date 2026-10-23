@@ -53,6 +53,31 @@ discover_supervisor_target() {
   return 1
 }
 
+# discover_supervisor_from_lock <state-dir>: resolve the pane of the live
+# session-lock holder from that process's own environment, for a caller that
+# runs detached from every pane (nohup over ssh) and so inherits no pane
+# variables. The holder is state/.lock's pid as classified by
+# fm_session_lock_inspect (bin/fm-session-lock-lib.sh, which the caller
+# sources); only a live verified harness counts. Reads /proc, so Linux only.
+# Prints "<backend> <target>" with the same pane precedence and target forms as
+# discover_supervisor_target; returns 1 when nothing resolves.
+discover_supervisor_from_lock() {
+  local env pane session
+  fm_session_lock_inspect "$1"
+  [ "$FM_LOCK_INSPECT_STATE" = held ] || return 1
+  env=$(tr '\0' '\n' < "/proc/$FM_LOCK_INSPECT_PID/environ" 2>/dev/null) || return 1
+  pane=$(printf '%s\n' "$env" | sed -n 's/^TMUX_PANE=//p' | head -n 1)
+  if [ -n "$pane" ]; then
+    printf 'tmux %s' "$pane"
+    return 0
+  fi
+  printf '%s\n' "$env" | grep -qx 'HERDR_ENV=1' || return 1
+  pane=$(printf '%s\n' "$env" | sed -n 's/^HERDR_PANE_ID=//p' | head -n 1)
+  [ -n "$pane" ] || return 1
+  session=$(printf '%s\n' "$env" | sed -n 's/^HERDR_SESSION=//p' | head -n 1)
+  printf 'herdr %s:%s' "${session:-default}" "$pane"
+}
+
 # discover_supervisor_backend: resolve the supervisor pane's BACKEND, independent
 # of the target string so an explicit FM_SUPERVISOR_TARGET override still knows
 # which primitives (tmux vs herdr) to dispatch through. Priority mirrors
