@@ -1,0 +1,11 @@
+ok - only a transcript starting with urgente launches the executor
+ok - only the true start of the transcript can trigger the executor
+ok - concurrent runs on one urgent clip launch the executor once
+ok - an untrusted source never launches the executor
+ok - the executor makes allowlisted light and scene calls and leaves the note pending
+ok - the executor makes no call outside the allowlist and forwards instead
+ok - concurrent runs on one clip transcribe it once
+ok - --detach returns at once and still queues the note
+ok - the default model command resolves a user-local claude under a bare PATH
+ok - delivery targets the live session-lock holder's pane when detached from every pane
+bash tests/fm-voice-urgent.test.sh  1,21s user 1,83s system 19% cpu 15,256 total
