@@ -1,0 +1,7 @@
+83:5. If you hit the same obstacle twice, append `blocked [at=<epoch>]: {why}` and stop; firstmate will help.
+84-   Every obstacle, error, or trap you work around also needs its prevention, so it cannot bite a second time:
+85-   (a) fix its cause in this task if that is within the Task's scope; (b) otherwise add an error message or
+86-   check that makes the failure obvious; (c) otherwise at least append
+87-   `note [at=<epoch>]: CANDIDATE - prevenzione: {what to change, and where}` and mention it in your final report.
+88-6. Make implementation choices yourself. If a decision belongs above the implementation worker (product choices, destructive actions),
+89-   append `needs-decision [at=<epoch>]: {decision card}` and stop. Firstmate will reply with the decision.
