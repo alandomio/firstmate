@@ -2248,6 +2248,46 @@ test_ship_worker_operating_contracts() {
   pass "fm-brief.sh: ship briefs carry the worker-operating contracts and keep a terminal done: line; scout/secondmate do not duplicate them"
 }
 
+# Rule 5 carries a prevention obligation for every worker that works around an
+# obstacle: fix the cause in scope, else add a clear error or check, else file a
+# note: CANDIDATE - prevenzione: line and mention it in the final report. It sits
+# in Rule 5 so the numbered cross-references (Rule 4, 6, 7) stay valid. A
+# secondmate charter routes work to crewmates whose briefs carry the rule.
+test_worker_briefs_require_error_prevention() {
+  local home brief mode id
+  home="$TMP_ROOT/prevention-home"
+  mkdir -p "$home/data"
+  write_project_clone "$home" gh-proj https://github.com/acme/gh-proj.git
+  id=0
+  for mode in "--mode no-mistakes" "--mode direct-PR" "--mode local-only" "--scout" "--scout --blind"; do
+    id=$((id + 1))
+    # shellcheck disable=SC2086 # the mode strings are deliberate word lists
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "brief-prevention-$id" gh-proj $mode >/dev/null 2>&1
+    brief="$home/data/brief-prevention-$id/brief.md"
+    assert_present "$brief" "brief ($mode) was not scaffolded"
+    assert_grep "also needs its prevention, so it cannot bite a second time" "$brief" \
+      "brief ($mode) lost the error-prevention obligation"
+    assert_grep "(a) fix its cause in this task if that is within the Task's scope" "$brief" \
+      "brief ($mode) lost the fix-the-cause step of the prevention obligation"
+    assert_grep "(b) otherwise add an error message or" "$brief" \
+      "brief ($mode) lost the clear-error step of the prevention obligation"
+    # shellcheck disable=SC2016 # single quotes are deliberate: the backticks must stay literal
+    assert_grep '`note [at=<epoch>]: CANDIDATE - prevenzione: {what to change, and where}` and mention it in your final report' "$brief" \
+      "brief ($mode) lost the prevention-candidate fallback"
+    assert_grep "5. If you hit the same obstacle twice" "$brief" \
+      "brief ($mode) lost Rule 5 that the prevention obligation extends"
+  done
+
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='sample domain' \
+    "$ROOT/bin/fm-brief.sh" brief-prevention-sm --secondmate --no-projects >/dev/null 2>&1
+  brief="$home/data/brief-prevention-sm/brief.md"
+  assert_present "$brief" "secondmate charter was not scaffolded"
+  assert_no_grep "cannot bite a second time" "$brief" \
+    "secondmate charter duplicated the worker prevention obligation"
+
+  pass "fm-brief.sh: ship and scout briefs require preventing a worked-around error from recurring"
+}
+
 # Every scaffold opens with a provenance paragraph: a Sonnet 5 worker refused a
 # review brief because an invisibly-prefixed "you are an autonomous agent" message
 # said nothing about who wrote it or why it wrote outside the repo. The paragraph
@@ -2617,6 +2657,7 @@ test_knowledge_store_config_empty_file_refuses
 test_firstmate_recall_section
 test_skill_declaration_required_in_first_status_line
 test_ship_worker_operating_contracts
+test_worker_briefs_require_error_prevention
 test_provenance_opens_every_scaffold
 test_ship_scope_and_verification_by_mode
 test_blind_replaces_grounding

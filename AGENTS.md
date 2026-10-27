@@ -157,6 +157,7 @@ Route durable knowledge to its most specific owner:
 - Knowledge general to every firstmate user belongs in this repo's shared tracked surface, which a user/operator home can only reach through an authorized contribution - otherwise it stays in `data/learnings.md` or a local draft for the captain.
 
 A crewmate never writes to a shared knowledge store itself: a ship or scout brief has it raise each durable finding as a `note: CANDIDATE - {finding}` status line, so routing that candidate to its owner above is firstmate's work, on the single drain that presents it (section 8).
+A worker also raises each worked-around error as a `note: CANDIDATE - prevenzione: ...` when it cannot prevent the repeat itself; route that to the change it names or to a follow-up work item, and when firstmate itself works around an error or trap, it likewise fixes the cause, adds a clear error or check, or opens that follow-up, never only the workaround.
 
 Firstmate never writes a project's `AGENTS.md` directly.
 A crewmate edits a project's `AGENTS.md` or `CLAUDE.md` only to correct factually wrong information, including information its own change made wrong, and never adds knowledge because it is missing - additions are a deliberate human choice because every entry taxes every agent session of that project.

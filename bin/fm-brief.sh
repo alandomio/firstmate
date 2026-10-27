@@ -204,6 +204,11 @@
 # the task's prescribed project-specific skills or procedures were invoked, and
 # which were not and why, or that none were prescribed; this lives in Rule 4's
 # status-protocol contract because it is required content of that line.
+# Ship and scout briefs extend Rule 5 with a prevention obligation (the shared
+# PREVENTION_RULE string): a worked-around obstacle, error, or trap is also
+# prevented from recurring by fixing its cause in scope, else adding a clear
+# error or check, else filing a note: CANDIDATE - prevenzione: line and naming
+# it in the final report. AGENTS.md section 6 owns firstmate's side of the rule.
 # Every scaffold asks for a needs-decision line written as a self-contained
 # decision card, whose elements captain-hold-lifecycle owns.
 # Ship and scout briefs also carry a firstmate-authored recall section between
@@ -859,6 +864,17 @@ IFS= read -r -d '' SHARED_INFRA_RULE <<'EOF' || true
 EOF
 SHARED_INFRA_RULE=${SHARED_INFRA_RULE%$'\n'}
 
+# One shared string keeps the ship and scout prevention obligation identical.
+# It extends Rule 5 (same-obstacle escalation) rather than adding a numbered
+# rule, so the Rule 4/6/7 cross-references elsewhere stay valid.
+IFS= read -r -d '' PREVENTION_RULE <<'EOF' || true
+   Every obstacle, error, or trap you work around also needs its prevention, so it cannot bite a second time:
+   (a) fix its cause in this task if that is within the Task's scope; (b) otherwise add an error message or
+   check that makes the failure obvious; (c) otherwise at least append
+   `note [at=<epoch>]: CANDIDATE - prevenzione: {what to change, and where}` and mention it in your final report.
+EOF
+PREVENTION_RULE=${PREVENTION_RULE%$'\n'}
+
 if [ -n "$BASE_BRANCH" ]; then
   SETUP_BASE="You are in a disposable git worktree of $REPO, at a detached HEAD on a clean copy of its base branch.
 Base branch: $BASE_BRANCH"
@@ -922,6 +938,7 @@ $CREWMATE_PAUSE_INSTRUCTIONS
    prescribed project-specific skills or procedures you invoked, and which prescribed ones you
    did not and why; if the Task section prescribed none, say so explicitly.
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
+$PREVENTION_RULE
 6. Make implementation choices yourself. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {decision card}\` and stop. Firstmate will reply with the decision.
 $DECISION_CARD_ITEM
@@ -1025,6 +1042,7 @@ ${PAUSE_NOTE:+$PAUSE_NOTE
    skills or procedures you invoked, and which prescribed ones you did not and why; if the Task
    section prescribed none, say so explicitly.
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
+$PREVENTION_RULE
 6. Make implementation choices yourself. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {decision card}\` and stop. Firstmate will reply with the decision.
 $DECISION_CARD_ITEM
