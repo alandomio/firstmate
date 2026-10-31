@@ -217,7 +217,12 @@ test_reach_follows_the_claude_config_dir() {
   HOME="$d/user" CLAUDE_CONFIG_DIR="$d/pinned" expect_reach missing claude "a pinned account whose store lacks the server"
   HOME="$d/pinned" CLAUDE_CONFIG_DIR="$d/user" expect_reach reachable claude "a pinned account whose store has the server"
   HOME="$d/user" CLAUDE_CONFIG_DIR='' expect_reach reachable claude "no pin reads the user home"
-  pass "fm-knowledge-store.sh: reach reads the Claude store the worker will read"
+  mkdir -p "$d/user/.codex" "$d/codex-home"
+  printf '[mcp_servers.rag_qdrant_server]\ncommand = "x"\n' > "$d/codex-home/config.toml"
+  printf '[mcp_servers.other]\ncommand = "x"\n' > "$d/user/.codex/config.toml"
+  HOME="$d/user" CODEX_HOME="$d/codex-home" expect_reach unknown codex "a CODEX_HOME whose config has the server"
+  HOME="$d/user" CODEX_HOME='' expect_reach missing codex "no CODEX_HOME reads the user home"
+  pass "fm-knowledge-store.sh: reach reads the Claude and Codex stores the worker will read"
 }
 
 spawn_warning_case() { # <name> <spawn-kind: ship|secondmate> [claude-json-content]; sets SPAWN_OUT and SPAWN_RC

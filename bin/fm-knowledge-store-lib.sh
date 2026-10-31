@@ -88,7 +88,7 @@ fm_knowledge_store_reach() {
   [ "$FM_KS_BACKEND" = rag ] || { echo unknown; return 0; }
   case "$harness" in
     claude) fm_ks_reach_json "${FM_KS_CLAUDE_JSON:-${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json}" "$server" ;;
-    codex) fm_ks_reach_codex "${FM_KS_CODEX_TOML:-$HOME/.codex/config.toml}" "$server" ;;
+    codex) fm_ks_reach_codex "${FM_KS_CODEX_TOML:-${CODEX_HOME:-$HOME/.codex}/config.toml}" "$server" ;;
     agy) fm_ks_reach_json "${FM_KS_AGY_MCP:-$HOME/.gemini/config/mcp_config.json}" "$server" ;;
     *) echo unknown ;;
   esac

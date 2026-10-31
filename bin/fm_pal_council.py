@@ -1204,6 +1204,10 @@ def spawn(council, seat):
     seat["status"] = "active" if code == 0 else "failed"
     if code != 0:
         seat["note"] = f"spawn failed: {(err or out).strip()[:300]}"
+    else:
+        for line in err.splitlines():
+            if line.startswith("warning:"):
+                print(line, file=sys.stderr)
     return code == 0
 
 
