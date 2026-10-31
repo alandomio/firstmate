@@ -83,7 +83,37 @@ test_malformed_files_are_refused() {
   pass "fm-knowledge-store.sh: malformed configs are refused, not silently defaulted"
 }
 
+test_reach_reports_user_level_registration() {
+  local home out d
+  home=$(new_home reach)
+  d="$TMP_ROOT/reach-cfg"; mkdir -p "$d"
+  printf '{"mcpServers":{"rag_qdrant_server":{"headers":{"Authorization":"SECRET-TOKEN"}}},"projects":{}}\n' > "$d/claude.json"
+  out=$(FM_HOME="$home" FM_KS_CLAUDE_JSON="$d/claude.json" "$KS" reach claude 2>&1)
+  [ "$out" = reachable ] || fail "a user-level claude entry must read as reachable"
+  assert_not_contains "$out" "SECRET" "reach must never print configuration values"
+  printf '{"mcpServers":{"agentmemory":{}},"projects":{"/p":{"mcpServers":{"rag_qdrant_server":{}}}}}\n' > "$d/claude.json"
+  out=$(FM_HOME="$home" FM_KS_CLAUDE_JSON="$d/claude.json" "$KS" reach claude 2>&1)
+  [ "$out" = missing ] || fail "a project-scoped-only claude entry must read as missing"
+  printf '[mcp_servers.other]\ncommand = "x"\n' > "$d/codex.toml"
+  out=$(FM_HOME="$home" FM_KS_CODEX_TOML="$d/codex.toml" "$KS" reach codex 2>&1)
+  [ "$out" = missing ] || fail "a codex config without the server must read as missing"
+  printf '[mcp_servers.rag_qdrant_server]\ncommand = "x"\n' >> "$d/codex.toml"
+  out=$(FM_HOME="$home" FM_KS_CODEX_TOML="$d/codex.toml" "$KS" reach codex 2>&1)
+  [ "$out" = reachable ] || fail "a codex config with the server must read as reachable"
+  printf '{"mcpServers":{}}\n' > "$d/agy.json"
+  out=$(FM_HOME="$home" FM_KS_AGY_MCP="$d/agy.json" "$KS" reach agy 2>&1)
+  [ "$out" = missing ] || fail "an agy config without the server must read as missing"
+  out=$(FM_HOME="$home" "$KS" reach opencode 2>&1)
+  [ "$out" = unknown ] || fail "an unchecked harness must read as unknown"
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+  printf 'PP Brain\n`search_knowledge` on the `pp-brain` MCP server\n' > "$home/config/knowledge-store"
+  out=$(FM_HOME="$home" FM_KS_CLAUDE_JSON="$d/claude.json" "$KS" reach claude 2>&1)
+  [ "$out" = unknown ] || fail "a non-rag backend must read as unknown"
+  pass "fm-knowledge-store.sh: reach reports user-level registration without printing values"
+}
+
 test_absent_file_resolves_the_rag
+test_reach_reports_user_level_registration
 test_pp_brain_file_derives_pp_brain_backend
 test_backend_derivation_and_explicit_override
 test_malformed_files_are_refused

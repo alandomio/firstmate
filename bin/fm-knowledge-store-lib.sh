@@ -65,3 +65,34 @@ fm_knowledge_store_read() {
   FM_KS_INSTRUCTIONS=$instructions
   FM_KS_BACKEND=$backend
 }
+
+# fm_knowledge_store_reach <harness>
+# Prints reachable, missing, or unknown for the store's MCP server as the
+# harness reads its USER-level configuration, which is the only registration a
+# worker in a disposable worktree inherits (a project-scoped entry matches only
+# the project's own path).  Only the `rag` backend on claude, codex, or agy is
+# checkable; every other pair prints unknown.  Reads configuration only: it
+# never prints a value from it, since the entries carry the server token.
+# Test seams: FM_KS_CLAUDE_JSON, FM_KS_CODEX_TOML, FM_KS_AGY_MCP.
+fm_knowledge_store_reach() {
+  local harness="$1" server=rag_qdrant_server file
+  [ "$FM_KS_BACKEND" = rag ] || { echo unknown; return 0; }
+  case "$harness" in
+    claude)
+      file="${FM_KS_CLAUDE_JSON:-$HOME/.claude.json}"
+      { [ -f "$file" ] && command -v jq >/dev/null 2>&1; } || { echo unknown; return 0; }
+      if jq -e --arg s "$server" '.mcpServers[$s] != null' "$file" >/dev/null 2>&1; then echo reachable; else echo missing; fi
+      ;;
+    codex)
+      file="${FM_KS_CODEX_TOML:-$HOME/.codex/config.toml}"
+      [ -f "$file" ] || { echo unknown; return 0; }
+      if grep -q "^\[mcp_servers\.$server\]" "$file"; then echo reachable; else echo missing; fi
+      ;;
+    agy)
+      file="${FM_KS_AGY_MCP:-$HOME/.gemini/config/mcp_config.json}"
+      { [ -f "$file" ] && command -v jq >/dev/null 2>&1; } || { echo unknown; return 0; }
+      if jq -e --arg s "$server" '.mcpServers[$s] != null' "$file" >/dev/null 2>&1; then echo reachable; else echo missing; fi
+      ;;
+    *) echo unknown ;;
+  esac
+}

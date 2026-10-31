@@ -6702,4 +6702,10 @@ SPAWN_ACCOUNT=
 # Opt-in Herdr project groups (docs/herdr-backend.md "Project groups") tag the
 # new endpoint now rather than at the next watcher poll; off costs one file test.
 [ ! -e "$CONFIG/herdr-project-groups" ] || [ "$BACKEND" != herdr ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-herdr-groups.sh" sync "$ID" || true
+# A worker whose harness has no user-level registration of the knowledge store's
+# MCP server cannot run its Grounding search; say so at spawn rather than leave
+# the worker to discover it (bin/fm-knowledge-store.sh reach).
+if [ "$KIND" != secondmate ] && [ "$(FM_HOME=$FM_HOME FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-knowledge-store.sh" reach "$HARNESS" 2>/dev/null)" = missing ]; then
+  echo "warning: $ID: the $HARNESS harness has no user-level registration of the knowledge store's MCP server, so this worker cannot run its Grounding search; register it for $HARNESS (docs/configuration.md \"Knowledge store naming\")" >&2
+fi
 echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT$SPAWN_ACCOUNT"
