@@ -1,0 +1,10 @@
+ok - fm-knowledge-store.sh: an absent file resolves the upstream RAG default
+ok - fm-knowledge-store.sh: reach reports what a bounded probe of the server found
+ok - fm-knowledge-store.sh: the probe keeps the URL and token out of curl's process arguments
+ok - fm-knowledge-store.sh: reach separates missing, disabled, unprobeable, and unreadable configuration
+ok - fm-knowledge-store.sh: reach reads the Claude and Codex stores the worker will read
+ok - fm-spawn.sh: warns a ship worker on a missing, unavailable, or unverifiable server, never blocks, spares secondmates
+ok - fm-knowledge-store.sh: a PP Brain config derives the pp-brain backend
+ok - fm-knowledge-store.sh: backend derives from the named server, and line 3 overrides it
+ok - fm-knowledge-store.sh: malformed configs are refused, not silently defaulted
+# all fm-knowledge-store tests passed

@@ -1,0 +1,24 @@
+SW-39 acceptance check, 2026-10-31: real query_rag_hybrid from headless harness sessions.
+Each session was given one read-only instruction and reported the tool result's status field. No worktree was changed.
+
+Host: this machine (user-level rag_qdrant_server registered for all 3 harnesses)
+  claude 2.1.316, ~/.treehouse/firstmate-753674/10/firstmate    TOOL_STATUS=ok
+  agy 1.4.12,     ~/.treehouse/firstmate-753674/10/firstmate    TOOL_STATUS=ok
+  codex 0.152.1 (worker flag --dangerously-bypass-approvals-and-sandbox), Treehouse worktrees:
+    firstmate-753674/10/firstmate   ABSENT x6 (5 exec, 1 interactive under tmux, prompted to search deferred tools in 4 of the exec runs)
+    firstmate-7bab20/1/firstmate    ok x1, then ABSENT x3
+    agentmemory-850acf/1/agentmemory ABSENT x4 (one of these runs did call list_mcp_resources on rag_qdrant_server)
+    => 1 ok of 11. The last 9 runs ran concurrently.
+  codex control, ~/dev/rag                ok x1 (query_rag_hybrid mcp_tool_call completed)
+  codex control, empty temp directory     ABSENT x1
+  direct MCP stdio call to the server codex is configured with: initialize ok, tools/list includes query_rag_hybrid, call status=ok
+  Interactive codex startup warned only: "MCP startup incomplete (failed: atlassian)"; rag_qdrant_server was not named as failed.
+  this test session (Claude Code, in a no-mistakes worktree): status=ok
+
+Host: WKS-DOMIO, ~/.treehouse/GOPlanner-a587ec/1/GOPlanner
+  claude   TOOL_STATUS=ok            reach -> reachable
+  agy      TOOL_STATUS=ABSENT        reach -> unknown (~/.gemini/config/mcp_config.json is 0 bytes)
+  codex    not installed             reach -> missing
+
+reach on this machine: claude -> reachable (3.0s), codex -> unknown, agy -> unknown
+Token check: the real token has 0 hits in the b090b96 tree, its diff, and this evidence directory; the real URL has 0 hits in the diff.

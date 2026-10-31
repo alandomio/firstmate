@@ -1,0 +1,8 @@
+# reach, one row per server state (fake token, loopback server)
+server answers 200          -> reachable
+server answers 503          -> unavailable
+expired token, 401          -> unavailable
+connection refused          -> unavailable
+no user-level entry         -> missing
+stdio entry, not probeable  -> unknown
+corrupt config              -> unknown
