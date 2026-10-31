@@ -806,7 +806,7 @@ Before your first substantive action, search $KS_NAME ($KS_INSTRUCTIONS) and the
 The \`# Task\` above is firstmate's assembly of that context: a starting point rather than a substitute.
 When you hit an obstacle, surprising behavior, or trap, check $KS_NAME before working around it - cite it if documented, or append \`note [at=<epoch>]: CANDIDATE - {finding}\` if it is not; never write to $KS_NAME or any shared memory directly, only firstmate promotes candidates.
 Report what you found and what it changed in your next status line, or state plainly that both were silent.
-If the search tool for $KS_NAME is absent from your session, say so in your next status line, go on with the local memory store and the codebase, and do not stop, retry, or work around it."
+If the search tool for $KS_NAME is absent from your session or its call fails, say so in your next status line, go on with the local memory store and the codebase, and do not stop, retry, or work around it."
 fi
 
 # Provenance opens every ship and scout brief (see the header).

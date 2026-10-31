@@ -1853,8 +1853,8 @@ test_grounding_section_requires_search_and_reporting() {
     "ship brief Grounding section did not require checking the RAG for gotchas before working around them"
   assert_grep "never write to the RAG or any shared memory directly, only firstmate promotes candidates" "$brief" \
     "ship brief Grounding section invited a gotcha candidate without forbidding a direct shared-store write"
-  assert_grep "If the search tool for the RAG is absent from your session, say so in your next status line, go on with the local memory store and the codebase" "$brief" \
-    "ship brief Grounding section did not tell the worker what to do when the search tool is absent"
+  assert_grep "If the search tool for the RAG is absent from your session or its call fails, say so in your next status line, go on with the local memory store and the codebase" "$brief" \
+    "ship brief Grounding section did not tell the worker what to do when the search tool is absent or failing"
 
   id="brief-grounding-scout"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1

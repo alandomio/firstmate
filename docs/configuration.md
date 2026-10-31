@@ -722,7 +722,11 @@ Optional line 3 is the backend key, `rag` or `pp-brain`, which tells `/retrospec
 Either of the first two lines present but blank, the file present but empty, or an unknown line-3 key is refused rather than silently falling back.
 Absent resolves to the RAG: briefs keep this script's historical wording naming the RAG's `query_rag_hybrid`/`query_rag` tool on the `rag_qdrant_server` MCP server, and `/retrospective` uses the `rag` backend.
 `bin/fm-knowledge-store.sh read` prints the resolved `name`, `backend`, and `search` values; `bin/fm-knowledge-store-lib.sh` is the one reader both consumers share.
-The Grounding section also tells a worker whose session lacks the search tool to say so in its next status line and go on, and `bin/fm-spawn.sh` warns when the `rag` backend's `rag_qdrant_server` is not registered in the spawned harness's user-level MCP configuration (`bin/fm-knowledge-store.sh reach <harness>`, checked for claude, codex, and agy).
+The Grounding section also tells a worker whose search tool is absent or failing to say so in its next status line and go on.
+`bin/fm-knowledge-store.sh reach <harness>` prints the state of the `rag` backend's `rag_qdrant_server` for a harness, and `bin/fm-spawn.sh` warns on `missing` and `unavailable` without ever blocking the spawn.
+`missing` means the harness's user-level MCP configuration has no enabled entry; Claude's is `$CLAUDE_CONFIG_DIR/.claude.json` when that is set.
+`reachable` and `unavailable` come from one HTTP probe of a claude or agy entry that names a URL, bounded at 3 seconds with no retry, which sends the configured headers and never prints the URL or token.
+`unknown` means nothing could be concluded, as for a stdio server, any registered codex entry, or an unreadable configuration, and draws no warning, so a registered entry alone never reads as `reachable`.
 A worker in a disposable worktree inherits only user-level registrations, since a project-scoped Claude entry matches only that project's own path, so register the server at user level for each harness workers run on, and never commit its token.
 It is inherited into secondmate homes (`FM_INHERITABLE_CONFIG` in [`bin/fm-config-inherit-lib.sh`](../bin/fm-config-inherit-lib.sh)): a secondmate's own crewmates get generated briefs from the same code, so an uninherited setting would silently regress them to a knowledge store the home's MCP servers do not have installed, reproducing the same failure this setting exists to fix.
 

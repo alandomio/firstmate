@@ -67,32 +67,69 @@ fm_knowledge_store_read() {
 }
 
 # fm_knowledge_store_reach <harness>
-# Prints reachable, missing, or unknown for the store's MCP server as the
-# harness reads its USER-level configuration, which is the only registration a
-# worker in a disposable worktree inherits (a project-scoped entry matches only
-# the project's own path).  Only the `rag` backend on claude, codex, or agy is
-# checkable; every other pair prints unknown.  Reads configuration only: it
-# never prints a value from it, since the entries carry the server token.
+# Prints the store's MCP server state as the harness's USER-level configuration
+# defines it, which is the only registration a worker in a disposable worktree
+# inherits (a project-scoped entry matches only the project's own path):
+#   reachable    a bounded HTTP probe of the configured server got a 2xx
+#   unavailable  the probe got no answer, a 5xx, or a refusal of the configured
+#                credentials
+#   missing      the configuration has no enabled entry for the server
+#   unknown      nothing can be concluded: a backend other than `rag`, a harness
+#                other than claude, codex, or agy, an unreadable configuration,
+#                or an entry with no probeable server (stdio, a codex entry, a
+#                value left for the harness to expand, or an answer that neither
+#                confirms nor rules out the server)
+# Never prints a value from the configuration, and passes the URL and headers to
+# curl on stdin so they stay out of the process table.  The probe is one attempt
+# bounded by --max-time, so an open SSE stream costs that long on a healthy server.
 # Test seams: FM_KS_CLAUDE_JSON, FM_KS_CODEX_TOML, FM_KS_AGY_MCP.
 fm_knowledge_store_reach() {
-  local harness="$1" server=rag_qdrant_server file
+  local harness="$1" server=rag_qdrant_server
   [ "$FM_KS_BACKEND" = rag ] || { echo unknown; return 0; }
   case "$harness" in
-    claude)
-      file="${FM_KS_CLAUDE_JSON:-$HOME/.claude.json}"
-      { [ -f "$file" ] && command -v jq >/dev/null 2>&1; } || { echo unknown; return 0; }
-      if jq -e --arg s "$server" '.mcpServers[$s] != null' "$file" >/dev/null 2>&1; then echo reachable; else echo missing; fi
-      ;;
-    codex)
-      file="${FM_KS_CODEX_TOML:-$HOME/.codex/config.toml}"
-      [ -f "$file" ] || { echo unknown; return 0; }
-      if grep -q "^\[mcp_servers\.$server\]" "$file"; then echo reachable; else echo missing; fi
-      ;;
-    agy)
-      file="${FM_KS_AGY_MCP:-$HOME/.gemini/config/mcp_config.json}"
-      { [ -f "$file" ] && command -v jq >/dev/null 2>&1; } || { echo unknown; return 0; }
-      if jq -e --arg s "$server" '.mcpServers[$s] != null' "$file" >/dev/null 2>&1; then echo reachable; else echo missing; fi
-      ;;
+    claude) fm_ks_reach_json "${FM_KS_CLAUDE_JSON:-${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json}" "$server" ;;
+    codex) fm_ks_reach_codex "${FM_KS_CODEX_TOML:-$HOME/.codex/config.toml}" "$server" ;;
+    agy) fm_ks_reach_json "${FM_KS_AGY_MCP:-$HOME/.gemini/config/mcp_config.json}" "$server" ;;
+    *) echo unknown ;;
+  esac
+}
+
+fm_ks_reach_codex() { # <toml-file> <server>
+  [ -f "$1" ] || { echo unknown; return 0; }
+  awk -v header="[mcp_servers.$2]" '
+    index($0, header) == 1 { found = 1; inside = 1; next }
+    /^\[/ { inside = 0 }
+    inside && /^enabled[ \t]*=[ \t]*false/ { disabled = 1 }
+    END { print (found && !disabled) ? "unknown" : "missing" }
+  ' "$1"
+}
+
+fm_ks_reach_json() { # <json-file> <server>
+  local entry rc=0
+  { [ -f "$1" ] && command -v jq >/dev/null 2>&1; } || { echo unknown; return 0; }
+  entry=$(jq -ce --arg s "$2" '.mcpServers[$s] | if . == null or .disabled == true then null else . end' "$1" 2>/dev/null) || rc=$?
+  case "$rc" in
+    0) fm_ks_probe "$entry" ;;
+    1) echo missing ;;
+    *) echo unknown ;;
+  esac
+}
+
+fm_ks_probe() { # <mcp-server-entry-json>
+  local config code
+  command -v curl >/dev/null 2>&1 || { echo unknown; return 0; }
+  config=$(printf '%s' "$1" | jq -r '
+    (.url // .serverUrl // .httpUrl) as $url
+    | if ($url | type) != "string" or ($url | test("^https?://") | not) or any(.. | strings; contains("${")) then empty
+      else "url = \($url | tojson)", (.headers // {} | to_entries[] | "header = \("\(.key): \(.value)" | tojson)")
+      end
+  ' 2>/dev/null) || config=
+  [ -n "$config" ] || { echo unknown; return 0; }
+  code=$(printf '%s\n' "$config" | curl -s -o /dev/null -w '%{http_code}' --max-time 3 -H 'Accept: text/event-stream' -K - 2>/dev/null) || true
+  case "$code" in
+    2??) echo reachable ;;
+    000|5??) echo unavailable ;;
+    401|403) case "$config" in *'header = '*) echo unavailable ;; *) echo unknown ;; esac ;;
     *) echo unknown ;;
   esac
 }

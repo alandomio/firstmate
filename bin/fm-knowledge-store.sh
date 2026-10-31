@@ -10,10 +10,12 @@
 # file prints the upstream RAG default; a malformed one exits 1 naming the
 # problem.  bin/fm-knowledge-store-lib.sh owns the format and derivation.
 #
-# `reach <harness>` prints reachable, missing, or unknown: whether that
-# harness's user-level MCP configuration registers the store's server, which
-# is what a worker in a disposable worktree inherits.  bin/fm-spawn.sh warns
-# on missing.  It never prints configuration values (they carry the token).
+# `reach <harness>` prints reachable, unavailable, missing, or unknown: the state
+# of the store's server as that harness's user-level MCP configuration defines
+# it, which is what a worker in a disposable worktree inherits, using one bounded
+# HTTP probe where the entry names a server to probe.  bin/fm-spawn.sh warns on
+# missing and unavailable.  It never prints configuration values (they carry the
+# server URL and token).
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,7 +27,7 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-knowledge-store-lib.sh"
 
 usage() {
-  sed -n '2,16{s/^# \{0,1\}//;p;}' "$0"
+  sed -n '2,18{s/^# \{0,1\}//;p;}' "$0"
 }
 
 case "${1:-}" in
