@@ -14,7 +14,7 @@
 # of the store's server as that harness's user-level MCP configuration defines
 # it, which is what a worker in a disposable worktree inherits, using one bounded
 # HTTP probe where the entry names a server to probe.  bin/fm-spawn.sh warns on
-# missing and unavailable.  It never prints configuration values (they carry the
+# all but reachable.  It never prints configuration values (they carry the
 # server URL and token).
 set -eu
 

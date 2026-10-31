@@ -6704,11 +6704,14 @@ SPAWN_ACCOUNT=
 [ ! -e "$CONFIG/herdr-project-groups" ] || [ "$BACKEND" != herdr ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-herdr-groups.sh" sync "$ID" || true
 # A worker whose harness cannot reach the knowledge store's MCP server cannot run
 # its Grounding search; say so at spawn rather than leave the worker to discover
-# it (bin/fm-knowledge-store.sh reach). The probe is bounded and only ever warns.
+# it (bin/fm-knowledge-store.sh reach). The probe is bounded and only ever warns,
+# and a result it cannot confirm warns too, since silence would read as healthy.
 if [ "$KIND" != secondmate ]; then
   case "$(FM_HOME=$FM_HOME FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-knowledge-store.sh" reach "$HARNESS" 2>/dev/null || true)" in
     missing) echo "warning: $ID: the $HARNESS harness has no enabled user-level registration of the knowledge store's MCP server, so this worker cannot run its Grounding search; register it for $HARNESS (docs/configuration.md \"Knowledge store naming\")" >&2 ;;
     unavailable) echo "warning: $ID: the knowledge store's MCP server registered for $HARNESS is unavailable (no answer, a server error, or a refused credential), so this worker's Grounding search may fail; check the server and its token (docs/configuration.md \"Knowledge store naming\")" >&2 ;;
+    reachable) ;;
+    *) echo "warning: $ID: the knowledge store could not be verified for the $HARNESS harness, so this worker must state it in its next status line if the search tool is absent or its call fails (docs/configuration.md \"Knowledge store naming\")" >&2 ;;
   esac
 fi
 echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT$SPAWN_ACCOUNT"

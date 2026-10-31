@@ -223,9 +223,9 @@ test_reach_follows_the_claude_config_dir() {
 spawn_warning_case() { # <name> <spawn-kind: ship|secondmate> [claude-json-content]; sets SPAWN_OUT and SPAWN_RC
   local name=$1 kind=$2 case_dir="$TMP_ROOT/spawn-$1" id="ks-$1-z1" home proj wt fakebin sm
   home="$case_dir/home"; proj="$case_dir/project"; wt="$case_dir/wt"
-  fakebin=$(fm_test_make_spawn_fakebin "$case_dir/fake")
+  fakebin=$(fm_test_make_spawn_fakebin "$case_dir/fake" codex)
   mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config"
-  printf 'claude\n' > "$home/config/crew-harness"
+  printf '%s\n' "${SPAWN_HARNESS:-claude}" > "$home/config/crew-harness"
   fm_git_worktree "$proj" "$wt" "wt-$name"
   touch "$home/state/.last-watcher-beat"
   fm_test_spawn_brief "$home" "$id"
@@ -258,14 +258,26 @@ test_spawn_warns_without_blocking() {
   assert_not_contains "$SPAWN_OUT" "127.0.0.1" "the spawn warning leaked the server URL"
   assert_contains "$SPAWN_OUT" "spawned ks-down-z1" "the spawn did not finish after the warning"
 
+  spawn_warning_case stdio ship '{"mcpServers":{"rag_qdrant_server":{"command":"x","env":{"K":"SECRET-TOKEN"}}}}'
+  expect_code 0 "$SPAWN_RC" "a spawn on an unprobeable entry must still succeed"$'\n'"$SPAWN_OUT"
+  assert_contains "$SPAWN_OUT" "warning: ks-stdio-z1: the knowledge store could not be verified for the claude harness" "no warning for an entry that cannot be probed"
+  assert_contains "$SPAWN_OUT" "must state it in its next status line" "the warning did not say what the worker must do"
+  assert_not_contains "$SPAWN_OUT" "SECRET" "the unverified warning leaked configuration"
+  assert_contains "$SPAWN_OUT" "spawned ks-stdio-z1" "the spawn did not finish after the warning"
+
+  printf '[mcp_servers.rag_qdrant_server]\ncommand = "x"\n' > "$TMP_ROOT/spawn-codex.toml"
+  FM_KS_CODEX_TOML="$TMP_ROOT/spawn-codex.toml" SPAWN_HARNESS=codex spawn_warning_case codex ship
+  expect_code 0 "$SPAWN_RC" "a codex spawn on a registered entry must still succeed"$'\n'"$SPAWN_OUT"
+  assert_contains "$SPAWN_OUT" "warning: ks-codex-z1: the knowledge store could not be verified for the codex harness" "no warning for a registered codex entry"
+
   spawn_warning_case live ship "$(server_entry "$STUB/ok")"
   expect_code 0 "$SPAWN_RC" "a spawn with a live server must succeed"$'\n'"$SPAWN_OUT"
-  assert_not_contains "$SPAWN_OUT" "knowledge store's MCP server" "a live server drew a warning"
+  assert_not_contains "$SPAWN_OUT" "knowledge store" "a live server drew a warning"
 
   spawn_warning_case mate secondmate "$no_server"
   expect_code 0 "$SPAWN_RC" "a secondmate spawn must succeed"$'\n'"$SPAWN_OUT"
-  assert_not_contains "$SPAWN_OUT" "knowledge store's MCP server" "a secondmate spawn drew the worker warning"
-  pass "fm-spawn.sh: warns a ship worker on a missing or unavailable server, never blocks, spares secondmates"
+  assert_not_contains "$SPAWN_OUT" "knowledge store" "a secondmate spawn drew the worker warning"
+  pass "fm-spawn.sh: warns a ship worker on a missing, unavailable, or unverifiable server, never blocks, spares secondmates"
 }
 
 start_mcp_stub
