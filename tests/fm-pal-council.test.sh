@@ -85,6 +85,7 @@ fake() {
 fake spawn <<'EOF2'
 echo "$*" >> "$PAL_TEST_LOGS/spawn.log"
 case "$1" in *"${FAKE_SPAWN_FAIL:-none}"*) exit 1 ;; esac
+[ -z "${FAKE_SPAWN_WARNING:-}" ] || { echo "warning: $1: $FAKE_SPAWN_WARNING" >&2; echo "note: $1: not a warning" >&2; }
 EOF2
 fake send <<'EOF2'
 echo "$1 $2" >> "$PAL_TEST_LOGS/send.log"
@@ -231,7 +232,10 @@ pass "the send gate refuses a clear name or a credential, and launch refuses bef
 
 # --- launch and round 1 ------------------------------------------------------------------
 
-out=$("$PAL" launch "$C" 2>&1) || fail "launch failed: $out"
+out=$(FAKE_SPAWN_WARNING="store unavailable" "$PAL" launch "$C" 2>"$TMP/launch.err") || fail "launch failed: $out"
+assert_grep "warning: pal-$C-codex: store unavailable" "$TMP/launch.err" "a successful launch dropped a seat's spawn warning"
+assert_no_grep "not a warning" "$TMP/launch.err" "launch relayed spawn stderr that is not a warning"
+assert_not_contains "$out" "store unavailable" "the spawn warning leaked into launch stdout"
 [ "$(wc -l < "$LOGS/spawn.log")" -eq 4 ] || fail "three voices and the researcher are spawned"
 assert_grep "pal-$C-codex $ROOT --scout --harness codex --model model-a --effort high" "$LOGS/spawn.log" "a voice spawns as a scout with explicit harness, model, and effort"
 for s in claude codex agy researcher; do

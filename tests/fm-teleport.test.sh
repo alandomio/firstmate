@@ -90,6 +90,7 @@ git -C "$proj" worktree add --quiet --detach "$wt" origin/main
 fm_teleport_prepare_worktree "$wt" "$id" "$FM_HOME/data" "$FM_HOME" "$FM_HOME/state"
 printf 'worktree=%s\nproject=%s\nharness=%s\nkind=%s\nmode=%s\nyolo=%s\n' "$wt" "$proj" "$harness" "$kind" "$mode" "$yolo" > "$FM_HOME/state/$id.meta"
 [ -z "${FAKE_SPAWN_DEAD:-}" ] || : > "$FM_HOME/state/$id.dead"
+[ -z "${FAKE_SPAWN_WARNING:-}" ] || echo "warning: $id: $FAKE_SPAWN_WARNING" >&2
 echo "spawned $id"
 SH
 cat > "$FAKE/fm-teardown.sh" <<'SH'
@@ -230,8 +231,9 @@ pass "pack snapshots tracked and untracked work under refs/teleport/<task> witho
 # --- successful outbound teleport, Claude transcript resumed -------------------------
 
 : > "$FAKE_LOG"
-out=$(FM_TELEPORT_CHUNK_BYTES=256 local_tp t1 2>&1) || fail "teleport out failed: $out"
+out=$(FM_TELEPORT_CHUNK_BYTES=256 FAKE_SPAWN_WARNING="store unavailable" local_tp t1 2>&1) || fail "teleport out failed: $out"
 assert_contains "$out" "teleported t1 to alwayson" "teleport reports the destination"
+assert_contains "$out" "warning: t1: store unavailable" "a successful adopt dropped the adopting spawn's warning"
 [ "$(grep -c '^on fm-teleport.sh chunk-put t1 ' "$FAKE_LOG")" -gt 1 ] || fail "the payload did not travel as several chunks"
 RWT="$REMOTE/pool/t1"
 assert_present "$REMOTE/state/t1.meta" "the remote records the adopted task"

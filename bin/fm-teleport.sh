@@ -411,6 +411,7 @@ cmd_adopt() { # <task>; manifest on stdin
     fi
     die "the adopting worker for $task could not be launched"
   fi
+  printf '%s\n' "$out" | grep '^warning:' >&2 || true
   if ! state=$(wait_probe agent "$task" alive "$LAUNCH_WAIT"); then
     "$SELF" abort "$task" >&2 || die "the adopting worker for $task never came up (it reads '$state') and could not be rolled back; inspect it here"
     die "the adopting worker for $task never came up (it reads '$state'); rolled back"
