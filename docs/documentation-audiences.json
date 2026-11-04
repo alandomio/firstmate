@@ -661,6 +661,10 @@
       "audience": "operator-example"
     },
     {
+      "path": "docs/slack-socket-adapter.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/telegram.md",
       "audience": "operator-current"
     },

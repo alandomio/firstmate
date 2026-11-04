@@ -1,0 +1,45 @@
+// Small private state file in the host-provided FIRSTMATE_EXTENSION_STATE
+// directory: recently delivered messages (so a Slack retry of an event that
+// already woke firstmate is skipped), the last result per request id (so a
+// pre-capture retry with the same request id replays it), and when an auth
+// failure was last reported (so a broken token wakes firstmate about once an
+// hour instead of on every watcher cycle).
+
+import { readFile, rename, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+const FILE = "state.json";
+const MAX_RECENT = 500;
+
+function empty() {
+  return { recent: [], last: null, auth_failure_reported_at: 0 };
+}
+
+export async function loadState(directory) {
+  if (!directory) return empty();
+  try {
+    const parsed = JSON.parse(await readFile(path.join(directory, FILE), "utf8"));
+    const state = empty();
+    if (Array.isArray(parsed.recent)) state.recent = parsed.recent.filter((key) => typeof key === "string").slice(-MAX_RECENT);
+    if (parsed.last && typeof parsed.last.request_id === "string" && typeof parsed.last.output === "string") {
+      state.last = { request_id: parsed.last.request_id, output: parsed.last.output };
+    }
+    if (Number.isFinite(parsed.auth_failure_reported_at)) state.auth_failure_reported_at = parsed.auth_failure_reported_at;
+    return state;
+  } catch {
+    return empty();
+  }
+}
+
+export async function saveState(directory, state) {
+  if (!directory) return;
+  const target = path.join(directory, FILE);
+  const temporary = `${target}.${process.pid}.tmp`;
+  const body = {
+    recent: state.recent.slice(-MAX_RECENT),
+    last: state.last,
+    auth_failure_reported_at: state.auth_failure_reported_at,
+  };
+  await writeFile(temporary, `${JSON.stringify(body)}\n`, { mode: 0o600 });
+  await rename(temporary, target);
+}

@@ -1,0 +1,15 @@
+{
+  "schema": "firstmate.extension-manifest.v1",
+  "id": "de.peter-park.devops.slack-socket-adapter",
+  "version": "1.1.0",
+  "host_protocols": [1],
+  "entrypoint": "bin/slack-socket-adapter.mjs",
+  "capabilities": [
+    {
+      "name": "process-event-adapter",
+      "versions": [1],
+      "adapter_names": ["slack-socket"]
+    }
+  ],
+  "required_consents": ["network", "credential-store"]
+}
