@@ -1,0 +1,10 @@
+ok - fm-control-lib: the live Claude permission prompt and confirm menu parse into text and options
+ok - fm-control-lib: a prompt needs its footer, one cursor, numbering from 1, two options, and its top edge
+ok - fm-control-lib: box borders and wrapped labels parse, and only verified shapes are read
+ok - fm-control-lib: the prompt sha follows text and labels, never the cursor
+ok - fm-control prompt: prints the showing prompt as JSON, exits 1 without one, and sends nothing
+ok - fm-control answer: sends only the option digit, verifies the prompt left, and logs it
+ok - fm-control answer: a changed sha, unshown option, vanished prompt, stopped agent, or unverified harness sends nothing
+ok - fm-control answer: one digit option and a full prompt sha are required
+ok - fm-control answer: a prompt that stays up after the key fails as unconfirmed and is logged
+ok - fm-control: the verb list is closed - no raw keys, arbitrary text, or clear verb
