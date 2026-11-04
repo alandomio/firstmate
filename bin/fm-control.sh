@@ -7,6 +7,8 @@
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>] [--advisor <model>[:<effort>]]
 #                                         (--note <text> | --note-file <path>)
+#        fm-control.sh <task-id> prompt
+#        fm-control.sh <task-id> answer <option> --expect-prompt-sha <sha>
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
 # DATA plane: conversational text for the agent to read, always routing-marked
@@ -93,6 +95,27 @@
 #              state; it never leaves a half-transitioned task claiming to be
 #              running.
 #
+#   prompt     Read-only. Print the confirmation prompt the agent is showing
+#              as one JSON object - harness, prompt text, numbered options
+#              (with the one the cursor is on), and the prompt's sha - or exit
+#              1 when no prompt is showing. The sha covers the text and the
+#              option labels, not the cursor (fm_control_prompt_sha).
+#   answer     Choose one numbered option of the prompt a person was shown.
+#              The caller passes the sha `prompt` printed; answer re-reads
+#              the screen and refuses, sending nothing, when no prompt is
+#              showing, the sha differs, or <option> is not one of the shown
+#              options. Otherwise it sends that option's digit (plus Enter
+#              only where fm_control_answer_needs_enter says so), then
+#              verifies that prompt left the screen and the agent is still
+#              running (or stopped, when the chosen option ends the session).
+#              It never sends free text. Each delivered answer is logged as a
+#              note line in the task's status file, written as this home's own
+#              append so it does not wake firstmate.
+#              Detection is per harness (fm_control_prompt_shape); a harness
+#              with no verified prompt shape refuses both verbs. Both need a
+#              backend with a viewport read, and answer also needs a
+#              recovery-grade agent-state classifier (tmux, herdr).
+#
 # Teardown and discard are NOT verbs here and never will be. `exit` stops an
 # agent and preserves everything else; removing a worktree, killing an
 # endpoint, or discarding work stays with bin/fm-teardown.sh, which owns the
@@ -135,6 +158,8 @@
 #   FM_CONTROL_EXIT_WAIT         alive->dead wait after the exit command (30)
 #   FM_CONTROL_LAUNCH_WAIT       dead->alive wait after a relaunch (90)
 #   FM_CONTROL_EXIT_RETRIES      Enter retries for the exit command (3)
+#   FM_CONTROL_ANSWER_WAIT       wait for an answered prompt to leave the
+#                                screen (10)
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -188,6 +213,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-worker-account-lib.sh"
 # shellcheck source=bin/fm-exclude-tools-lib.sh
 . "$SCRIPT_DIR/fm-exclude-tools-lib.sh"
+# shellcheck source=bin/fm-line-cap-lib.sh
+. "$SCRIPT_DIR/fm-line-cap-lib.sh"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
@@ -195,6 +222,7 @@ ARM_WAIT=${FM_CONTROL_ARM_WAIT:-1.5}
 EXIT_WAIT=${FM_CONTROL_EXIT_WAIT:-30}
 LAUNCH_WAIT=${FM_CONTROL_LAUNCH_WAIT:-90}
 EXIT_RETRIES=${FM_CONTROL_EXIT_RETRIES:-3}
+ANSWER_WAIT=${FM_CONTROL_ANSWER_WAIT:-10}
 
 die() {  # <message>
   echo "error: $1" >&2
@@ -257,6 +285,9 @@ EFFORT_SET=0
 ADVISOR_SET=0
 NOTE=
 NOTE_SET=0
+ANSWER_OPTION=
+EXPECT_SHA=
+EXPECT_SHA_SET=0
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -269,6 +300,7 @@ for control_arg in "$@"; do
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
       advisor) NEW_ADVISOR=$control_arg; ADVISOR_SET=1 ;;
       note) NOTE=$control_arg; NOTE_SET=1 ;;
+      expect_sha) EXPECT_SHA=$control_arg; EXPECT_SHA_SET=1 ;;
       note_file)
         [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
         NOTE=$(cat "$control_arg")
@@ -295,12 +327,32 @@ for control_arg in "$@"; do
       NOTE=$(cat "${control_arg#--note-file=}")
       NOTE_SET=1
       ;;
-    *) die "unexpected argument '$control_arg'" ;;
+    --expect-prompt-sha) control_want_value=expect_sha ;;
+    --expect-prompt-sha=*) EXPECT_SHA=${control_arg#--expect-prompt-sha=}; EXPECT_SHA_SET=1 ;;
+    -*) die "unexpected argument '$control_arg'" ;;
+    *)
+      [ "$VERB" = answer ] && [ -z "$ANSWER_OPTION" ] \
+        || die "unexpected argument '$control_arg'"
+      ANSWER_OPTION=$control_arg
+      ;;
   esac
 done
 if [ -n "$control_want_value" ]; then
   [ "$control_want_value" = note_file ] && die "--note-file requires a value"
+  [ "$control_want_value" = expect_sha ] && die "--expect-prompt-sha requires a value"
   die "--$control_want_value requires a value"
+fi
+if [ "$VERB" = answer ]; then
+  [ -n "$ANSWER_OPTION" ] || die "answer requires an option number: fm-control.sh <task-id> answer <option> --expect-prompt-sha <sha>"
+  case "$ANSWER_OPTION" in
+    [1-9]) ;;
+    *) die "answer option '$ANSWER_OPTION' is not a single option digit 1-9; answer sends only a shown option's number, never text" ;;
+  esac
+  [ "$EXPECT_SHA_SET" = 1 ] || die "answer requires --expect-prompt-sha <sha>: the sha 'prompt' printed for the prompt the person was shown"
+  printf '%s' "$EXPECT_SHA" | LC_ALL=C grep -Eq '^[0-9a-f]{64}$' \
+    || die "--expect-prompt-sha must be the 64-digit lowercase hex sha that 'prompt' printed"
+else
+  [ "$EXPECT_SHA_SET" = 0 ] || die "--expect-prompt-sha applies to 'answer' only"
 fi
 
 if [ "$VERB" != relaunch ]; then
@@ -1254,10 +1306,124 @@ do_relaunch() {
   echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT$advisor_report"
 }
 
+# --- prompt identity --------------------------------------------------------
+#
+# The `prompt` and `answer` verbs. bin/fm-control-lib.sh owns which prompt
+# shape a harness renders, how one is parsed, and its sha.
+
+# read_prompt: parse the visible viewport. Sets PROMPT_RECORD and PROMPT_SHA
+# and returns 0 when a prompt is showing, 1 when none is, and 2 when the screen
+# could not be read. Refuses a harness or backend that cannot answer the
+# question at all.
+read_prompt() {
+  local shape screen
+  shape=$(fm_control_prompt_shape "$HARNESS") || shape=
+  [ -n "$shape" ] \
+    || die "harness $HARNESS has no verified prompt shape, so fm-control cannot tell whether task $ID is showing a prompt; refusing rather than guessing"
+  fm_backend_visible_capture_supported "$BACKEND" \
+    || die "task $ID runs on the $BACKEND backend, which has no verified viewport read, so its prompt cannot be read safely"
+  PROMPT_RECORD=
+  PROMPT_SHA=
+  screen=$(fm_backend_visible_capture "$BACKEND" "$T" "$LABEL" 2>/dev/null) || return 2
+  PROMPT_RECORD=$(fm_control_prompt_parse "$HARNESS" "$screen") || return 1
+  [ -n "$PROMPT_RECORD" ] || return 1
+  PROMPT_SHA=$(fm_control_prompt_sha "$HARNESS" "$PROMPT_RECORD")
+}
+
+prompt_json() {
+  command -v jq >/dev/null 2>&1 || die "jq is required to print the prompt as JSON"
+  printf '%s\n' "$PROMPT_RECORD" | jq -R -s -c \
+    --arg task "$ID" --arg harness "$HARNESS" --arg sha "$PROMPT_SHA" '
+      split("\n") | map(select(length > 0) | split("\t")) as $rows
+      | {task: $task, harness: $harness, sha: $sha,
+         prompt: ([$rows[] | select(.[0] == "P") | .[1]] | join("\n")),
+         options: [$rows[] | select(.[0] == "O")
+                   | {option: (.[1] | tonumber), label: .[3], selected: (.[2] == "1")}]}'
+}
+
+prompt_option_label() {  # <option>
+  printf '%s\n' "$PROMPT_RECORD" | LC_ALL=C awk -F '\t' -v o="$1" '$1 == "O" && $2 == o { print $4; found = 1 } END { exit !found }'
+}
+
+# log_answer <outcome>: a note in the task's own status file, appended as
+# this home's own bookkeeping so it does not wake firstmate (bin/fm-wake-lib.sh
+# fm_wake_status_append_self_announced). A failed log never undoes the answer.
+log_answer() {  # <outcome>
+  local line
+  if ! command -v status_stamp_width >/dev/null 2>&1; then
+    # shellcheck source=bin/fm-classify-lib.sh
+    . "$SCRIPT_DIR/fm-classify-lib.sh" || return 0
+  fi
+  line="note: fm-control answered the on-screen prompt with option $ANSWER_OPTION (\"$ANSWER_LABEL\"), prompt sha ${EXPECTED_SHA_SHORT}; $1"
+  fm_cap_line_var "$line" "$((FM_LINE_CAP_DEFAULT - $(status_stamp_width)))"
+  fm_wake_status_append_self_announced "$STATE" "$STATE/$ID.status" "$FM_LINE_CAP_LINE" >/dev/null 2>&1 || true
+}
+
+do_answer() {
+  local state key elapsed=0 after_state next=none rc
+  require_state_verified_backend answer
+  state=$(agent_state)
+  [ "$state" = alive ] \
+    || die "task $ID's agent is '$state', not running, so there is no prompt to answer"
+  rc=0; read_prompt || rc=$?
+  [ "$rc" != 2 ] || die "task $ID's screen could not be read; nothing was sent"
+  [ "$rc" = 0 ] \
+    || die "task $ID is not showing a prompt (it changed or disappeared since it was read); nothing was sent"
+  [ "$PROMPT_SHA" = "$EXPECT_SHA" ] \
+    || die "task $ID's prompt changed since it was shown (expected sha $EXPECT_SHA, now $PROMPT_SHA); nothing was sent. Read it again with 'prompt' and show the new one"
+  ANSWER_LABEL=$(prompt_option_label "$ANSWER_OPTION") \
+    || die "option $ANSWER_OPTION is not one of the options task $ID's prompt shows; nothing was sent"
+  key=$ANSWER_OPTION
+  fm_control_backend_supports_key "$BACKEND" "$key" \
+    || die "the $BACKEND backend cannot deliver option key $key; nothing was sent"
+  EXPECTED_SHA_SHORT=$(printf '%s' "$EXPECT_SHA" | cut -c1-12)
+  fm_backend_send_key "$BACKEND" "$T" "$key" "$LABEL" \
+    || die "option key $key was not delivered to task $ID"
+  if fm_control_answer_needs_enter "$HARNESS"; then
+    fm_backend_send_key "$BACKEND" "$T" Enter "$LABEL" || {
+      log_answer "Enter after the option key was not delivered"
+      die "option key $key reached task $ID, but the Enter that confirms it did not; the prompt may still be waiting"
+    }
+  fi
+  while :; do
+    sleep "$POLL"
+    elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
+    rc=0; read_prompt || rc=$?
+    if [ "$rc" = 2 ]; then
+      log_answer "unconfirmed: the screen could not be read after the option key"
+      die "answer-delivered $ID option=$ANSWER_OPTION answer=unconfirmed; the screen could not be read after the option key was sent"
+    fi
+    if [ "$rc" = 1 ]; then
+      next=none
+      break
+    fi
+    if [ "$PROMPT_SHA" != "$EXPECT_SHA" ]; then
+      next=$PROMPT_SHA
+      break
+    fi
+    awk -v e="$elapsed" -v t="$ANSWER_WAIT" 'BEGIN{exit !(e < t)}' || {
+      log_answer "unconfirmed: the prompt was still showing after ${ANSWER_WAIT}s"
+      die "answer-delivered $ID option=$ANSWER_OPTION answer=unconfirmed; the same prompt was still showing after ${ANSWER_WAIT}s"
+    }
+  done
+  after_state=$(agent_state)
+  case "$after_state" in
+    alive|dead) ;;
+    *)
+      log_answer "prompt left the screen but the agent reads '$after_state'"
+      die "answer-delivered $ID option=$ANSWER_OPTION prompt=gone agent-state=$after_state; the agent's state could not be confirmed"
+      ;;
+  esac
+  log_answer "prompt=gone agent-state=$after_state next-prompt=$next"
+  printf 'answered %s option=%s label="%s" sha=%s prompt=gone agent-state=%s next-prompt=%s' \
+    "$ID" "$ANSWER_OPTION" "$ANSWER_LABEL" "$EXPECT_SHA" "$after_state" "$next"
+}
+
 # --- verbs ------------------------------------------------------------------
 
 # Opt-in Jev shadow measurement: a lifecycle action is firstmate acting.
-fm_jev_observe "$FM_HOME" "$STATE" steer "$ID"
+# Reading a prompt is not an action.
+[ "$VERB" = prompt ] || fm_jev_observe "$FM_HOME" "$STATE" steer "$ID"
 
 case "$VERB" in
   interrupt)
@@ -1282,5 +1448,16 @@ case "$VERB" in
     ;;
   relaunch)
     do_relaunch
+    ;;
+  prompt)
+    prompt_rc=0
+    read_prompt || prompt_rc=$?
+    [ "$prompt_rc" != 2 ] || die "task $ID's screen could not be read"
+    [ "$prompt_rc" = 0 ] || die "task $ID is not showing a prompt"
+    prompt_json
+    ;;
+  answer)
+    result=$(do_answer)
+    echo "$result harness=$HARNESS backend=$BACKEND"
     ;;
 esac
