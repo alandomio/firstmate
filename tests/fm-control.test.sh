@@ -146,6 +146,15 @@ case "${1:-}" in
           picker) [ -n "${FM_FAKE_DEVIN_PICKER_STUCK:-}" ] || printf idle > "$D/devin" ;;
         esac
       fi
+      # An option digit answers a modelled prompt: the screen becomes
+      # answer-next unless FM_FAKE_PROMPT_STICKS keeps the prompt up.
+      case "$payload" in
+        [1-9])
+          if [ -f "$D/answer-next" ] && [ -z "${FM_FAKE_PROMPT_STICKS:-}" ]; then
+            cp "$D/answer-next" "$D/pane"
+          fi
+          ;;
+      esac
       if [ -n "${FM_FAKE_INTERRUPT_STOPS_AGENT:-}" ] \
          && { [ "$payload" = Escape ] || [ "$payload" = C-c ]; }; then
         printf 'zsh' > "$D/command"
@@ -262,6 +271,7 @@ run_control() {
     FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK="${FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK:-}" \
     FM_FAKE_INTERRUPT_STOPS_AGENT="${FM_FAKE_INTERRUPT_STOPS_AGENT:-}" \
     FM_FAKE_DEVIN_PICKER_STUCK="${FM_FAKE_DEVIN_PICKER_STUCK:-}" \
+    FM_FAKE_PROMPT_STICKS="${FM_FAKE_PROMPT_STICKS:-}" FM_CONTROL_ANSWER_WAIT=0.05 \
     "$CONTROL" "$@" 2>&1
 }
 
@@ -520,6 +530,16 @@ test_backend_key_capability_matrix() {
     && fail "orca's terminal API has no composer clear and must not claim one"
   fm_control_backend_supports_key orca C-c || fail "orca should deliver C-c"
   fm_control_backend_supports_key orca Enter || fail "orca should deliver Enter"
+  # Option digits exist only for `answer`, on the two backends it runs on.
+  for backend in tmux herdr; do
+    fm_control_backend_supports_key "$backend" 1 || fail "$backend should deliver an option digit"
+    fm_control_backend_supports_key "$backend" 9 || fail "$backend should deliver option digit 9"
+    fm_control_backend_supports_key "$backend" 0 && fail "$backend must not claim digit 0, which is no option"
+    fm_control_backend_supports_key "$backend" 12 && fail "$backend must not claim a multi-digit key"
+  done
+  for backend in zellij cmux orca; do
+    fm_control_backend_supports_key "$backend" 1 && fail "$backend has no verified option-digit delivery"
+  done
   pass "fm-control-lib: the backend key matrix matches each adapter's real send-key surface"
 }
 
@@ -774,6 +794,224 @@ test_interrupt_and_exit_lock_before_task_state_resolution() {
 }
 
 # --- 4. verb allowlist ------------------------------------------------------
+
+# --- prompt identity: the `prompt` and `answer` verbs -------------------------
+#
+# The fixtures are Claude Code 2.1.318 screens captured live in a tmux pane:
+# a Bash permission prompt ("Do you want to proceed?") and an "Enter to
+# confirm" menu. Variants below are derived from them in place.
+
+PROMPT_FIXTURES="$ROOT/tests/fixtures/claude-2.1.318-prompts"
+
+parse_rc() {  # <harness> <screen> -> exit code of the parser
+  fm_control_prompt_parse "$1" "$2" >/dev/null
+}
+
+test_prompt_parse_reads_live_claude_prompts() {
+  local rec
+  rec=$(fm_control_prompt_parse claude "$(cat "$PROMPT_FIXTURES/bash-permission.screen")") \
+    || fail "the live Bash permission prompt should parse"
+  assert_contains "$rec" $'P\tDo you want to proceed?' "the question should be prompt text"
+  assert_contains "$rec" $'P\ttouch answered.txt' "the command being approved should be prompt text"
+  assert_contains "$rec" $'O\t1\t1\tYes' "option 1 is Yes and carries the cursor"
+  assert_contains "$rec" $'O\t4\t0\tNo' "option 4 is No"
+  [ "$(printf '%s\n' "$rec" | grep -c '^O')" = 4 ] || fail "the permission prompt shows four options, got: $rec"
+  rec=$(fm_control_prompt_parse claude "$(cat "$PROMPT_FIXTURES/enter-confirm-menu.screen")") \
+    || fail "the live Enter-to-confirm menu should parse"
+  assert_contains "$rec" $'P\tTeach auto mode about your environment?' "the menu title should be prompt text"
+  assert_contains "$rec" $'O\t3\t0\tDon\'t show again' "the menu's third option should parse"
+  pass "fm-control-lib: the live Claude permission prompt and confirm menu parse into text and options"
+}
+
+test_prompt_parse_refuses_anything_less_than_a_whole_prompt() {
+  local screen variant
+  screen=$(cat "$PROMPT_FIXTURES/bash-permission.screen")
+  parse_rc claude "$(cat "$PROMPT_FIXTURES/after-answer.screen")" \
+    && fail "a working agent's screen is not a prompt"
+  parse_rc claude "" && fail "an empty screen is not a prompt"
+  # Each variant removes one structural signal; any one missing refuses.
+  variant=$(printf '%s\n' "$screen" | sed '/Esc to cancel/d')
+  parse_rc claude "$variant" && fail "a menu without its Esc-to-cancel footer is not a prompt"
+  variant=$(printf '%s\n' "$screen" | sed 's/❯ 1\. Yes/  1. Yes/')
+  parse_rc claude "$variant" && fail "a menu with no cursor row is not a prompt"
+  variant=$(printf '%s\n' "$screen" | sed 's/   2\. Yes, and/ ❯ 2. Yes, and/')
+  parse_rc claude "$variant" && fail "a menu with two cursor rows is not a prompt"
+  variant=$(printf '%s\n' "$screen" | sed 's/   3\. Yes, and switch/   5. Yes, and switch/')
+  parse_rc claude "$variant" && fail "options that skip a number are not a prompt"
+  variant=$(printf '%s\n' "$screen" | sed '/^─*$/d')
+  parse_rc claude "$variant" && fail "a dialog whose top edge is off screen must refuse, since its text would shift"
+  variant=$(printf '%s\n' "$screen" | sed '/2\. Yes, and/,/4\. No/d')
+  parse_rc claude "$variant" && fail "a single option is not a choice"
+  # The trust dialog is an unnumbered menu: it cannot be answered by a digit.
+  variant=$(printf '%s\n' '────' ' Quick safety check: Is this a project you trust?' '' ' ❯ No, exit' '   Yes, I trust this folder' '' ' Enter to confirm · Esc to cancel')
+  parse_rc claude "$variant" && fail "an unnumbered menu is not a numbered prompt"
+  # The same rows quoted in a transcript above an ordinary composer.
+  variant=$(printf '%s\n' "$screen" '────' '❯ ' '────' '  ⏸ manual mode on · ? for shortcuts')
+  parse_rc claude "$variant" && fail "prompt rows above a live composer are not a showing prompt"
+  pass "fm-control-lib: a prompt needs its footer, one cursor, numbering from 1, two options, and its top edge"
+}
+
+test_prompt_parse_box_wrap_and_harness_scope() {
+  local rec boxed
+  boxed=$(printf '%s\n' \
+    '╭──────────────────────────────╮' \
+    '│ Bash command                 │' \
+    '│                              │' \
+    '│   rm -rf build               │' \
+    '│                              │' \
+    '│ Do you want to proceed?      │' \
+    '│ ❯ 1. Yes                     │' \
+    '│   2. Yes, and do not ask     │' \
+    '│      again for rm commands   │' \
+    '│   3. No                      │' \
+    '╰──────────────────────────────╯' \
+    '   Esc to cancel')
+  rec=$(fm_control_prompt_parse claude "$boxed") || fail "a bordered Claude prompt should parse"
+  assert_contains "$rec" $'P\trm -rf build' "the boxed command should be prompt text"
+  assert_contains "$rec" $'O\t2\t0\tYes, and do not ask again for rm commands' \
+    "a wrapped option label should be joined onto its option"
+  parse_rc codex "$(cat "$PROMPT_FIXTURES/bash-permission.screen")" \
+    && fail "a harness with no verified prompt shape must not parse a prompt"
+  parse_rc not-a-harness "$boxed" && fail "an unknown harness must not parse a prompt"
+  [ -z "$(fm_control_prompt_shape codex)" ] || fail "codex has no verified prompt shape"
+  fm_control_answer_needs_enter claude && fail "Claude acts on the option digit alone"
+  pass "fm-control-lib: box borders and wrapped labels parse, and only verified shapes are read"
+}
+
+test_prompt_sha_ignores_cursor_and_tracks_text() {
+  local screen a b c
+  screen=$(cat "$PROMPT_FIXTURES/bash-permission.screen")
+  a=$(fm_control_prompt_sha claude "$(fm_control_prompt_parse claude "$screen")")
+  printf '%s' "$a" | grep -Eq '^[0-9a-f]{64}$' || fail "the sha should be 64 hex digits, got: $a"
+  b=$(fm_control_prompt_sha claude "$(fm_control_prompt_parse claude \
+    "$(printf '%s\n' "$screen" | sed 's/❯ 1\. Yes/  1. Yes/; s/   4\. No/ ❯ 4. No/')")")
+  [ "$a" = "$b" ] || fail "moving the cursor must not change the prompt's identity"
+  c=$(fm_control_prompt_sha claude "$(fm_control_prompt_parse claude \
+    "$(printf '%s\n' "$screen" | sed 's/touch answered.txt$/rm -rf answered.txt/')")")
+  [ "$a" != "$c" ] || fail "a different command under the same question must change the sha"
+  c=$(fm_control_prompt_sha claude "$(fm_control_prompt_parse claude \
+    "$(printf '%s\n' "$screen" | sed 's/4\. No$/4. Nope/')")")
+  [ "$a" != "$c" ] || fail "a different option label must change the sha"
+  pass "fm-control-lib: the prompt sha follows text and labels, never the cursor"
+}
+
+# prompt_case <name> [harness] -> a case whose claude agent shows the live
+# Bash permission prompt and moves on to the after-answer screen.
+prompt_case() {
+  local dir harness=${2:-claude}
+  dir=$(new_case "$1")
+  add_task "$dir" t1 "$harness"
+  alive_as "$dir" "$harness"
+  cp "$PROMPT_FIXTURES/bash-permission.screen" "$dir/fake/pane"
+  cp "$PROMPT_FIXTURES/after-answer.screen" "$dir/fake/answer-next"
+  printf '%s\n' "$dir"
+}
+
+live_prompt_sha() {
+  fm_control_prompt_sha claude "$(fm_control_prompt_parse claude "$(cat "$PROMPT_FIXTURES/bash-permission.screen")")"
+}
+
+test_prompt_verb_prints_json_and_sends_nothing() {
+  local dir out rc
+  command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; return 0; }
+  dir=$(prompt_case prompt-json)
+  out=$(run_control "$dir" t1 prompt); rc=$?
+  expect_code 0 "$rc" "prompt should succeed while a prompt shows"$'\n'"$out"
+  [ "$(printf '%s' "$out" | jq -r .sha)" = "$(live_prompt_sha)" ] || fail "prompt should print the prompt's sha, got: $out"
+  [ "$(printf '%s' "$out" | jq -r '.options | length')" = 4 ] || fail "prompt should list four options, got: $out"
+  [ "$(printf '%s' "$out" | jq -r '.options[0] | "\(.option) \(.label) \(.selected)"')" = "1 Yes true" ] \
+    || fail "option 1 should be Yes with the cursor, got: $out"
+  printf '%s' "$out" | jq -r .prompt | grep -qx 'Do you want to proceed?' || fail "prompt text should hold the question, got: $out"
+  [ -z "$(keys_sent "$dir")$(literals "$dir")" ] || fail "prompt is read-only and must send nothing"
+  cp "$PROMPT_FIXTURES/after-answer.screen" "$dir/fake/pane"
+  out=$(run_control "$dir" t1 prompt); rc=$?
+  expect_code 1 "$rc" "prompt should exit 1 when no prompt shows"
+  assert_contains "$out" "is not showing a prompt" "the no-prompt exit should say so"
+  dir=$(prompt_case prompt-codex codex)
+  out=$(run_control "$dir" t1 prompt); rc=$?
+  expect_code 1 "$rc" "prompt on a harness with no verified shape should refuse"
+  assert_contains "$out" "no verified prompt shape" "the refusal should name the missing shape"
+  pass "fm-control prompt: prints the showing prompt as JSON, exits 1 without one, and sends nothing"
+}
+
+test_answer_sends_the_option_digit_and_logs_it() {
+  local dir out rc sha
+  dir=$(prompt_case answer-ok)
+  sha=$(live_prompt_sha)
+  out=$(run_control "$dir" t1 answer 1 --expect-prompt-sha "$sha"); rc=$?
+  expect_code 0 "$rc" "answer should succeed on the matching prompt"$'\n'"$out"
+  [ "$(cat "$dir/fake/keys")" = 1 ] || fail "answer should send exactly the digit 1 with no Enter, got: $(cat "$dir/fake/keys")"
+  [ -z "$(literals "$dir")" ] || fail "answer must never type text, got: $(literals "$dir")"
+  assert_contains "$out" 'answered t1 option=1 label="Yes"' "answer should report the chosen option"
+  assert_contains "$out" "prompt=gone agent-state=alive next-prompt=none" "answer should report the verified postcondition"
+  assert_contains "$(cat "$dir/home/state/t1.status")" 'fm-control answered the on-screen prompt with option 1 ("Yes"), prompt sha '"${sha:0:12}" \
+    "the answer should be logged in the task's status trail"
+  pass "fm-control answer: sends only the option digit, verifies the prompt left, and logs it"
+}
+
+test_answer_refuses_before_sending_on_any_mismatch() {
+  local dir out rc sha
+  sha=$(live_prompt_sha)
+  dir=$(prompt_case answer-stale-sha)
+  out=$(run_control "$dir" t1 answer 1 --expect-prompt-sha "$(printf '%064d' 0)"); rc=$?
+  expect_code 1 "$rc" "a different sha should refuse"
+  assert_contains "$out" "prompt changed since it was shown" "the refusal should say the prompt changed"
+  dir=$(prompt_case answer-not-an-option)
+  out=$(run_control "$dir" t1 answer 5 --expect-prompt-sha "$sha"); rc=$?
+  expect_code 1 "$rc" "an option the prompt does not show should refuse"
+  assert_contains "$out" "is not one of the options" "the refusal should name the option"
+  [ -z "$(keys_sent "$dir")" ] || fail "a refused answer must send no key"
+  dir=$(prompt_case answer-gone)
+  cp "$PROMPT_FIXTURES/after-answer.screen" "$dir/fake/pane"
+  out=$(run_control "$dir" t1 answer 1 --expect-prompt-sha "$sha"); rc=$?
+  expect_code 1 "$rc" "no showing prompt should refuse"
+  assert_contains "$out" "is not showing a prompt" "the refusal should say the prompt disappeared"
+  [ -z "$(keys_sent "$dir")" ] || fail "an answer to a vanished prompt must send no key"
+  dir=$(prompt_case answer-dead)
+  alive_as "$dir" zsh
+  out=$(run_control "$dir" t1 answer 1 --expect-prompt-sha "$sha"); rc=$?
+  expect_code 1 "$rc" "a stopped agent has no prompt to answer"
+  dir=$(prompt_case answer-codex codex)
+  out=$(run_control "$dir" t1 answer 1 --expect-prompt-sha "$sha"); rc=$?
+  expect_code 1 "$rc" "a harness with no verified prompt shape should refuse"
+  [ -z "$(keys_sent "$dir")" ] || fail "an unverified harness must get no key"
+  [ ! -e "$dir/home/state/t1.status" ] || fail "a refused answer must log nothing"
+  pass "fm-control answer: a changed sha, unshown option, vanished prompt, stopped agent, or unverified harness sends nothing"
+}
+
+test_answer_argument_contract() {
+  local dir out rc sha
+  sha=$(live_prompt_sha)
+  dir=$(prompt_case answer-args)
+  out=$(run_control "$dir" t1 answer 1); rc=$?
+  expect_code 1 "$rc" "answer without the prompt sha should refuse"
+  assert_contains "$out" "requires --expect-prompt-sha" "the refusal should name the missing sha"
+  out=$(run_control "$dir" t1 answer --expect-prompt-sha "$sha"); rc=$?
+  expect_code 1 "$rc" "answer without an option should refuse"
+  for bad in yes 10 0 '1 ' 'Yes'; do
+    out=$(run_control "$dir" t1 answer "$bad" --expect-prompt-sha "$sha"); rc=$?
+    expect_code 1 "$rc" "answer option '$bad' should refuse"
+  done
+  out=$(run_control "$dir" t1 answer 1 --expect-prompt-sha ABC); rc=$?
+  expect_code 1 "$rc" "a malformed sha should refuse"
+  out=$(run_control "$dir" t1 answer 1 2 --expect-prompt-sha "$sha"); rc=$?
+  expect_code 1 "$rc" "a second option should refuse"
+  out=$(run_control "$dir" t1 exit --expect-prompt-sha "$sha"); rc=$?
+  expect_code 1 "$rc" "--expect-prompt-sha belongs to answer only"
+  [ -z "$(keys_sent "$dir")$(literals "$dir")" ] || fail "a malformed answer must send nothing"
+  pass "fm-control answer: one digit option and a full prompt sha are required"
+}
+
+test_answer_that_does_not_land_fails_and_is_logged() {
+  local dir out rc
+  dir=$(prompt_case answer-sticks)
+  out=$(FM_FAKE_PROMPT_STICKS=1 run_control "$dir" t1 answer 4 --expect-prompt-sha "$(live_prompt_sha)"); rc=$?
+  expect_code 1 "$rc" "an answer the prompt ignores must not report success"
+  assert_contains "$out" "answer=unconfirmed" "the failure should say the answer is unconfirmed"
+  [ "$(cat "$dir/fake/keys")" = 4 ] || fail "the one delivered key should be the digit 4"
+  assert_contains "$(cat "$dir/home/state/t1.status")" 'option 4 ("No")' "the unconfirmed answer should still be logged"
+  pass "fm-control answer: a prompt that stays up after the key fails as unconfirmed and is logged"
+}
 
 test_verb_allowlist_is_closed() {
   local dir out rc
@@ -1238,6 +1476,15 @@ test_unknown_task_is_refused
 test_record_bound_to_another_task_is_refused
 test_remote_secondmate_is_refused_by_placement
 test_interrupt_and_exit_lock_before_task_state_resolution
+test_prompt_parse_reads_live_claude_prompts
+test_prompt_parse_refuses_anything_less_than_a_whole_prompt
+test_prompt_parse_box_wrap_and_harness_scope
+test_prompt_sha_ignores_cursor_and_tracks_text
+test_prompt_verb_prints_json_and_sends_nothing
+test_answer_sends_the_option_digit_and_logs_it
+test_answer_refuses_before_sending_on_any_mismatch
+test_answer_argument_contract
+test_answer_that_does_not_land_fails_and_is_logged
 test_verb_allowlist_is_closed
 test_resume_is_refused_with_its_reason
 test_relaunch_only_flags_are_rejected_on_other_verbs
