@@ -1,0 +1,32 @@
+✔ cred defaults to keychain on macOS and secret-tool elsewhere (1.06ms)
+✔ keychain backend calls security find-generic-password with the service (2597.609416ms)
+✔ secret-tool backend looks up attribute service with the same name (1732.410042ms)
+✔ secret-tool failures name the item and never the value (2948.059084ms)
+✔ secret-tool reaches the per-user D-Bus socket when no bus address is set (1755.097542ms)
+✔ file backend reads a 0600 file owned by the current user (1842.396ms)
+✔ file backend refuses loose modes, symlinks, non-files, and bad content (3524.423541ms)
+✔ returns the first top-level human message and acks every envelope (2779.505125ms)
+✔ asks channel wakes only on mentions or direct-ask phrases (4969.8485ms)
+✔ returns no-result when the wait window ends (3243.130875ms)
+✔ reconnects on a refresh disconnect and on an abrupt close (3016.806917ms)
+✔ auth failure is a failed response, then quiet within the hour (1896.778584ms)
+✔ link_disabled disconnect is an operator error (563.494416ms)
+✔ rate limited open is retried after Retry-After (3778.028958ms)
+✔ truncates text to 2000 characters (3703.208916ms)
+✔ replays a retried request id and skips a redelivered event (3359.885084ms)
+✔ buffers extra matches from one session, keeps them across restarts, and never delivers twice (5421.219333ms)
+✔ handshake echoes identity and only its own adapter name (910.376583ms)
+✔ classify, terminal, and silent verdicts (4195.752083ms)
+✔ unknown operation and bad config_ref are invalid-request (1757.3295ms)
+✔ missing keychain item or a non-xapp value fails without printing the value (2014.155458ms)
+✔ listen refuses a non-local plain http API base (108.509875ms)
+✔ config_ref parsing (1.400667ms)
+✔ event filter edge cases (0.58125ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 24
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 32877.587334
