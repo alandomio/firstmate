@@ -3,16 +3,18 @@
 // already woke firstmate is skipped), the last result per request id (so a
 // pre-capture retry with the same request id replays it), and when an auth
 // failure was last reported (so a broken token wakes firstmate about once an
-// hour instead of on every watcher cycle).
+// hour instead of on every watcher cycle), and matches acked from Slack but
+// not yet returned (delivered oldest first on the next polls).
 
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const FILE = "state.json";
 const MAX_RECENT = 500;
+export const MAX_PENDING = 100;
 
 function empty() {
-  return { recent: [], last: null, auth_failure_reported_at: 0 };
+  return { recent: [], pending: [], last: null, auth_failure_reported_at: 0 };
 }
 
 export async function loadState(directory) {
@@ -21,6 +23,12 @@ export async function loadState(directory) {
     const parsed = JSON.parse(await readFile(path.join(directory, FILE), "utf8"));
     const state = empty();
     if (Array.isArray(parsed.recent)) state.recent = parsed.recent.filter((key) => typeof key === "string").slice(-MAX_RECENT);
+    if (Array.isArray(parsed.pending)) {
+      state.pending = parsed.pending
+        .filter((entry) => entry && typeof entry.key === "string" && typeof entry.output === "string")
+        .map((entry) => ({ key: entry.key, output: entry.output }))
+        .slice(-MAX_PENDING);
+    }
     if (parsed.last && typeof parsed.last.request_id === "string" && typeof parsed.last.output === "string") {
       state.last = { request_id: parsed.last.request_id, output: parsed.last.output };
     }
@@ -37,6 +45,7 @@ export async function saveState(directory, state) {
   const temporary = `${target}.${process.pid}.tmp`;
   const body = {
     recent: state.recent.slice(-MAX_RECENT),
+    pending: state.pending.slice(-MAX_PENDING),
     last: state.last,
     auth_failure_reported_at: state.auth_failure_reported_at,
   };

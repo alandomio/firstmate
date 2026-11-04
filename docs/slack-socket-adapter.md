@@ -24,6 +24,9 @@ A history-based polling check that reads the channels with a bot token sees ever
 ## What it delivers
 
 One `source.poll` reads the app-level token, opens a Socket Mode connection, acks every envelope at once, and returns the first matching message as a `result`.
+After the first match it keeps the socket open for a quarter of a second, then closes it; other matches acked in that burst go to a bounded buffer (100 messages, deduplicated by `channel:ts`) in the package state, which survives restarts.
+The next poll returns the oldest buffered message before it opens a new connection.
+Messages that arrive while no socket is open, between two polls, go to another open connection or are not delivered at all; the history-based polling backup above covers them.
 When nothing matches before the wait window ends, it returns `no-result`, and the watcher's next reconcile starts the next poll.
 The result is untrusted evidence with this shape:
 

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { after, before, test } from "node:test";
 import { hello, messageEnvelope, startFakeSlack } from "./fake-slack.mjs";
 import { REQUEST_ID, TOKEN, fakeSecurity, pollRequest, run, tempDir } from "./helpers.mjs";
@@ -253,3 +255,33 @@ test("replays a retried request id and skips a redelivered event", async () => {
 });
 
 after(() => {});
+
+test("buffers extra matches from one session, keeps them across restarts, and never delivers twice", async () => {
+  const state = await tempDir();
+  const fake = await startFakeSlack({
+    token: TOKEN,
+    scenario: (connection, { sendEnvelope }) => {
+      connection.send(hello());
+      if (connection.index !== 0) return;
+      setTimeout(() => {
+        sendEnvelope(messageEnvelope({ channel: ASK, user: "U01HUMAN", ts: "9.000001", text: "first ask" }));
+        sendEnvelope(messageEnvelope({ channel: ASK, user: "U01HUMAN", ts: "9.000002", text: "second ask" }));
+        sendEnvelope(messageEnvelope({ channel: ASK, user: "U01HUMAN", ts: "9.000002", text: "second ask" }));
+      }, 50);
+    },
+  });
+  try {
+    const first = output((await poll(fake, "slack-socket:v1;wait=2", { state })).response);
+    assert.equal(first.text, "first ask");
+    assert.equal(fake.state.opens, 1);
+    const saved = JSON.parse(await readFile(path.join(state, "state.json"), "utf8"));
+    assert.deepEqual(saved.pending.map((entry) => entry.key), [`${ASK}:9.000002`], "buffer persisted for the next process");
+    const second = output((await poll(fake, "slack-socket:v1;wait=2", { state, requestId: `sha256:${"d".repeat(64)}` })).response);
+    assert.equal(second.text, "second ask");
+    assert.equal(fake.state.opens, 1, "buffered match returned without reconnecting");
+    const third = (await poll(fake, "slack-socket:v1;wait=1", { state, requestId: `sha256:${"e".repeat(64)}` })).response;
+    assert.deepEqual(third.result, { status: "no-result", output: "" }, "duplicate not delivered twice");
+  } finally {
+    await fake.close();
+  }
+});

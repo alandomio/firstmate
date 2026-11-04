@@ -11,6 +11,7 @@ const DEFAULT_API_BASE = "https://slack.com/api";
 const HTTP_TIMEOUT_MS = 10000;
 const HELLO_TIMEOUT_MS = 10000;
 const MAX_BACKOFF_MS = 30000;
+const MATCH_GRACE_MS = 250;
 // apps.connections.open errors that no retry can fix: the operator must act.
 const AUTH_ERRORS = new Set([
   "invalid_auth",
@@ -103,11 +104,15 @@ function runSocket(url, { config, deadline, log, isSeen, onConnected }) {
   return new Promise((resolve) => {
     let finished = false;
     let socket;
+    let graceTimer;
+    const matches = [];
+    const keys = new Set();
     const finish = (outcome) => {
       if (finished) return;
       finished = true;
       clearInterval(clock);
       clearTimeout(helloTimer);
+      clearTimeout(graceTimer);
       try {
         socket.close();
       } catch {
@@ -117,7 +122,7 @@ function runSocket(url, { config, deadline, log, isSeen, onConnected }) {
     };
     // Poll the wall clock so a laptop sleep cannot stretch the wait.
     const clock = setInterval(() => {
-      if (Date.now() >= deadline) finish({ kind: "deadline" });
+      if (Date.now() >= deadline) finish(matches.length ? { kind: "match", matches } : { kind: "deadline" });
     }, 250);
     const helloTimer = setTimeout(() => finish({ kind: "retry", reason: "no hello within 10 s" }), HELLO_TIMEOUT_MS);
     try {
@@ -127,6 +132,7 @@ function runSocket(url, { config, deadline, log, isSeen, onConnected }) {
       return;
     }
     socket.onmessage = (message) => {
+      if (finished) return;
       const text = decode(message.data);
       if (text === null) return;
       let envelope;
@@ -159,16 +165,25 @@ function runSocket(url, { config, deadline, log, isSeen, onConnected }) {
       if (envelope.type === "events_api") {
         const event = envelope.payload && envelope.payload.event;
         const reason = matchEvent(event, config);
-        if (reason && !isSeen(`${event.channel}:${event.ts}`)) finish({ kind: "match", event, reason });
+        const key = reason ? `${event.channel}:${event.ts}` : null;
+        if (key && !keys.has(key) && !isSeen(key)) {
+          keys.add(key);
+          matches.push({ event, reason });
+          if (matches.length === 1) {
+            graceTimer = setTimeout(() => finish({ kind: "match", matches }), MATCH_GRACE_MS);
+          }
+        }
       }
     };
-    socket.onclose = () => finish({ kind: "retry", reason: "socket closed" });
-    socket.onerror = () => finish({ kind: "retry", reason: "socket error" });
+    const lost = (reason) => finish(matches.length ? { kind: "match", matches } : { kind: "retry", reason });
+    socket.onclose = () => lost("socket closed");
+    socket.onerror = () => lost("socket error");
   });
 }
 
-// Waits until the deadline for the first matching message.
-// Returns { event, reason } or null; throws AuthError when the operator must act.
+// Waits until the deadline for the first matching message, then keeps the
+// socket open briefly so matches acked in the same burst are not lost.
+// Returns a non-empty array of { event, reason } (oldest first) or null; throws AuthError when the operator must act.
 export async function listen({ config, token, base, deadline, log = () => {}, isSeen = () => false, onConnected }) {
   let backoff = 1000;
   while (Date.now() < deadline) {
@@ -192,7 +207,7 @@ export async function listen({ config, token, base, deadline, log = () => {}, is
         if (onConnected) onConnected(hello);
       },
     });
-    if (outcome.kind === "match") return { event: outcome.event, reason: outcome.reason };
+    if (outcome.kind === "match") return outcome.matches;
     if (outcome.kind === "fatal") throw new AuthError(outcome.message);
     if (outcome.kind === "deadline") break;
     if (outcome.kind === "refresh") {

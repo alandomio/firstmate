@@ -19,7 +19,7 @@ import { ConfigError, MAX_WAIT_SECONDS, parseConfigRef } from "../lib/config.mjs
 import { RESULT_SCHEMA, resultFor } from "../lib/filter.mjs";
 import { readToken } from "../lib/credentials.mjs";
 import { AuthError, apiBase, listen } from "../lib/slack.mjs";
-import { loadState, saveState } from "../lib/state.mjs";
+import { MAX_PENDING, loadState, saveState } from "../lib/state.mjs";
 
 const EXTENSION_ID = "de.peter-park.devops.slack-socket-adapter";
 const EXTENSION_VERSION = "1.1.0";
@@ -101,8 +101,14 @@ async function poll(request) {
     log("replaying the stored result for a retried request id");
     return ok(requestId, { status: "result", output: state.last.output });
   }
-  const deadline = Date.now() + config.waitSeconds * 1000;
   const seen = new Set(state.recent);
+  state.pending = state.pending.filter((entry) => !seen.has(entry.key));
+  const buffered = state.pending.shift();
+  if (buffered) {
+    log("returning a buffered message");
+    return deliver(stateDir, state, requestId, buffered);
+  }
+  const deadline = Date.now() + config.waitSeconds * 1000;
   let found;
   try {
     const base = apiBase();
@@ -113,7 +119,7 @@ async function poll(request) {
       base,
       deadline,
       log,
-      isSeen: (key) => seen.has(key),
+      isSeen: (key) => seen.has(key) || state.pending.some((entry) => entry.key === key),
       onConnected: () => {
         if (state.auth_failure_reported_at) {
           state.auth_failure_reported_at = 0;
@@ -134,11 +140,23 @@ async function poll(request) {
     return failed(requestId, "unavailable", false, error.message);
   }
   if (!found) return ok(requestId, { status: "no-result", output: "" });
-  const output = JSON.stringify(resultFor(found.event, found.reason));
-  state.recent.push(`${found.event.channel}:${found.event.ts}`);
-  state.last = { request_id: requestId, output };
+  const [first, ...rest] = found.map(({ event, reason }) => ({
+    key: `${event.channel}:${event.ts}`,
+    output: JSON.stringify(resultFor(event, reason)),
+  }));
+  state.pending.push(...rest);
+  if (state.pending.length > MAX_PENDING) {
+    log(`buffer full: dropping ${state.pending.length - MAX_PENDING} oldest buffered messages`);
+    state.pending = state.pending.slice(-MAX_PENDING);
+  }
+  return deliver(stateDir, state, requestId, first);
+}
+
+async function deliver(stateDir, state, requestId, entry) {
+  state.recent.push(entry.key);
+  state.last = { request_id: requestId, output: entry.output };
   await saveState(stateDir, state);
-  return ok(requestId, { status: "result", output });
+  return ok(requestId, { status: "result", output: entry.output });
 }
 
 async function invoke(request) {
@@ -212,7 +230,7 @@ async function listenCli(args) {
         if (options.connectOnly) finish({ status: "connected" });
       },
     });
-    if (found) return finish({ status: "result", result: resultFor(found.event, found.reason) });
+    if (found) return finish({ status: "result", result: resultFor(found[0].event, found[0].reason) });
     return finish({ status: "no-result", connected });
   } catch (error) {
     if (!(error instanceof AuthError)) throw error;
