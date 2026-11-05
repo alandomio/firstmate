@@ -42,9 +42,18 @@ export async function loadState(directory) {
   }
 }
 
-export async function saveState(directory, state) {
-  if (!directory) return;
+const writes = new Map();
+
+export function saveState(directory, state) {
+  if (!directory) return Promise.resolve();
   const target = path.join(directory, FILE);
+  const previous = writes.get(target) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(() => writeState(target, state));
+  writes.set(target, next);
+  return next;
+}
+
+async function writeState(target, state) {
   const temporary = `${target}.${process.pid}.tmp`;
   const body = {
     recent: state.recent.slice(-MAX_RECENT),
