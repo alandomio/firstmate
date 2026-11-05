@@ -6,10 +6,13 @@
 // hour instead of on every watcher cycle), and matches acked from Slack but
 // not yet returned (delivered oldest first on the next polls).
 
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const FILE = "state.json";
+const SLEEP_STOP_FILE = "sleep-stop.json";
+const SLEEP_STOP_WINDOW_MS = 15 * 60 * 1000;
 const MAX_RECENT = 500;
 export const MAX_PENDING = 100;
 
@@ -51,4 +54,24 @@ export async function saveState(directory, state) {
   };
   await writeFile(temporary, `${JSON.stringify(body)}\n`, { mode: 0o600 });
   await rename(temporary, target);
+}
+
+// Synchronous: the host allows 250 ms between its SIGTERM and SIGKILL.
+export function markSleepStop(directory, now = Date.now()) {
+  if (!directory) return;
+  writeFileSync(path.join(directory, SLEEP_STOP_FILE), `${JSON.stringify({ at: now })}\n`, { mode: 0o600 });
+}
+
+// True once for a stop marked in the last 15 minutes; the mark is consumed.
+export function takeSleepStop(directory, now = Date.now()) {
+  if (!directory) return false;
+  const file = path.join(directory, SLEEP_STOP_FILE);
+  let at;
+  try {
+    at = JSON.parse(readFileSync(file, "utf8")).at;
+  } catch {
+    return false;
+  }
+  rmSync(file, { force: true });
+  return Number.isFinite(at) && now - at >= 0 && now - at <= SLEEP_STOP_WINDOW_MS;
 }

@@ -29,7 +29,7 @@ out=$(cd "$EXT" && node --test --test-reporter=spec test/*.test.mjs 2>&1) || {
   printf '%s\n' "$out"
   fail "slack-socket-adapter node:test suites failed"
 }
-pass "slack-socket-adapter protocol, poll, and credential suites pass"
+pass "slack-socket-adapter protocol, poll, credential, and sleep suites pass"
 
 # --- bind and verify through the real host -----------------------------------
 PKG="$TMP_ROOT/packages/slack-socket-adapter"

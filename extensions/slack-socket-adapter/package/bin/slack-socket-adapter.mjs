@@ -19,13 +19,15 @@ import { ConfigError, MAX_WAIT_SECONDS, parseConfigRef } from "../lib/config.mjs
 import { RESULT_SCHEMA, resultFor } from "../lib/filter.mjs";
 import { readToken } from "../lib/credentials.mjs";
 import { AuthError, apiBase, listen } from "../lib/slack.mjs";
-import { MAX_PENDING, loadState, saveState } from "../lib/state.mjs";
+import { MAX_PENDING, loadState, markSleepStop, saveState, takeSleepStop } from "../lib/state.mjs";
+import { wasSuspended } from "../lib/suspend.mjs";
 
 const EXTENSION_ID = "de.peter-park.devops.slack-socket-adapter";
 const EXTENSION_VERSION = "1.1.0";
 const ADAPTER = "slack-socket";
 const MAX_INPUT_BYTES = 65536;
 const AUTH_REPORT_COOLDOWN_MS = 60 * 60 * 1000;
+const HOST_ERROR_SCHEMA = "firstmate.process-event-extension-error.v1";
 
 function log(message) {
   process.stderr.write(`slack-socket-adapter: ${message}\n`);
@@ -74,6 +76,18 @@ function handshake(request) {
     capability_version: 1,
     adapter_names: requested.filter((name) => name === ADAPTER),
   });
+}
+
+// The host's poll timer keeps running while the system sleeps, so on wake it
+// stops the poll before the poll can answer. Such a stop is routine, not news.
+function isSleepStop(content) {
+  try {
+    const parsed = JSON.parse(content);
+    if (!parsed || parsed.schema !== HOST_ERROR_SCHEMA || parsed.code !== "timeout") return false;
+  } catch {
+    return false;
+  }
+  return takeSleepStop(process.env.FIRSTMATE_EXTENSION_STATE || "");
 }
 
 function classify(content) {
@@ -174,7 +188,7 @@ async function invoke(request) {
       // Never terminal: the registration stays and the watcher re-arms it.
       return ok(requestId, { value: false });
     case "result.silent":
-      return ok(requestId, { value: false });
+      return ok(requestId, { value: isSleepStop(content) });
     default:
       return failed(requestId, "invalid-request", false, `unsupported operation ${String(request.operation).slice(0, 64)}`);
   }
@@ -244,6 +258,10 @@ try {
   if (verb === "handshake") {
     handshake(await readRequest());
   } else if (verb === "invoke") {
+    process.on("SIGTERM", () => {
+      if (wasSuspended()) markSleepStop(process.env.FIRSTMATE_EXTENSION_STATE || "");
+      process.exit(143);
+    });
     await invoke(await readRequest());
   } else if (verb === "listen") {
     await listenCli(process.argv.slice(3));

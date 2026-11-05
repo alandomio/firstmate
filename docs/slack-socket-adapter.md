@@ -40,6 +40,11 @@ Only new top-level human messages match: thread replies, edits, deletes, joins, 
 A rejected or missing token, or Socket Mode turned off for the app, returns a failed `unavailable` response once and then stays quiet for an hour, so a broken token does not flood the home.
 Transient network errors and rate limits are retried inside the wait window and never wake anyone.
 
+A system sleep usually kills the connection without a close, so a poll that sees the wall clock jump after a wake opens a new connection at once.
+On macOS the host's poll time limit keeps running while the system sleeps, so on wake the host stops the poll before it can answer and captures a `timeout` error.
+The package marks a stop that lands on a wake and answers the host's silence check with yes for that one capture, so it wakes nobody and the next reconcile starts a new poll.
+A timeout while the system was awake is a real fault and still wakes the handler.
+
 ## Slack app settings
 
 On the app's page at `https://api.slack.com/apps`:
@@ -187,5 +192,6 @@ If the old token is revoked first, the running poll reports `unavailable` once; 
 ## Tests
 
 `tests/fm-slack-socket-adapter.test.sh` runs the package's `node:test` suites in `extensions/slack-socket-adapter/test/` against a local fake of Slack and fake credential tools, then binds a copy of the package with the real host and verifies its handshake.
+The sleep suite freezes the adapter with `SIGSTOP` to stand in for a system sleep.
 The suites never reach Slack, a real keychain, or a real keyring.
 Three environment variables exist only for those tests, and the host never passes them: `SLACK_SOCKET_ADAPTER_API_BASE` (https, or plain http only to `127.0.0.1` or `localhost`), `SLACK_SOCKET_ADAPTER_SECURITY`, and `SLACK_SOCKET_ADAPTER_SECRET_TOOL`.

@@ -27,7 +27,7 @@ export async function fakeSecurity(directory, { value = TOKEN, exitCode = 0 } = 
 // secret-tool elsewhere). A fake credential tool prints its value whatever its
 // arguments, so a test that sets only the security stand-in gets the same
 // stand-in for secret-tool and behaves the same on every platform.
-export function run(args, { stdin = "", env = {} } = {}) {
+export function run(args, { stdin = "", env = {}, onSpawn = null } = {}) {
   const tools = env.SLACK_SOCKET_ADAPTER_SECURITY && !env.SLACK_SOCKET_ADAPTER_SECRET_TOOL
     ? { SLACK_SOCKET_ADAPTER_SECRET_TOOL: env.SLACK_SOCKET_ADAPTER_SECURITY }
     : {};
@@ -36,6 +36,7 @@ export function run(args, { stdin = "", env = {} } = {}) {
       env: { PATH: process.env.PATH, HOME: process.env.HOME, ...tools, ...env },
       stdio: ["pipe", "pipe", "pipe"],
     });
+    if (onSpawn) onSpawn(child);
     const stdout = [];
     const stderr = [];
     child.stdout.on("data", (chunk) => stdout.push(chunk));

@@ -4,6 +4,7 @@
 
 import { AuthError } from "./errors.mjs";
 import { matchEvent } from "./filter.mjs";
+import { onSuspend } from "./suspend.mjs";
 
 export { AuthError };
 
@@ -113,6 +114,7 @@ function runSocket(url, { config, deadline, log, isSeen, onConnected }) {
       clearInterval(clock);
       clearTimeout(helloTimer);
       clearTimeout(graceTimer);
+      stopSuspendWatch();
       try {
         socket.close();
       } catch {
@@ -125,6 +127,12 @@ function runSocket(url, { config, deadline, log, isSeen, onConnected }) {
       if (Date.now() >= deadline) finish(matches.length ? { kind: "match", matches } : { kind: "deadline" });
     }, 250);
     const helloTimer = setTimeout(() => finish({ kind: "retry", reason: "no hello within 10 s" }), HELLO_TIMEOUT_MS);
+    // After a sleep the old connection is usually dead without a close, so
+    // events would go nowhere until the deadline: open a fresh one instead.
+    const stopSuspendWatch = onSuspend((gap) => {
+      if (Date.now() >= deadline) return;
+      lost(`the system was suspended for ${Math.round(gap / 1000)} s`);
+    });
     try {
       socket = new WebSocket(url);
     } catch {
