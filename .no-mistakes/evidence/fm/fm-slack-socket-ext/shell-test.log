@@ -1,0 +1,3 @@
+ok - slack-socket-adapter protocol, poll, credential, and sleep suites pass
+ok - the shipped package binds and passes the host handshake
+all tests passed

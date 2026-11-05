@@ -1,0 +1,35 @@
+✔ cred defaults to keychain on macOS and secret-tool elsewhere (5.862416ms)
+✔ keychain backend calls security find-generic-password with the service (1266.040625ms)
+✔ secret-tool backend looks up attribute service with the same name (1138.889208ms)
+✔ secret-tool failures name the item and never the value (642.58425ms)
+✔ secret-tool reaches the per-user D-Bus socket when no bus address is set (1303.623833ms)
+✔ file backend reads a 0600 file owned by the current user (1216.967834ms)
+✔ file backend refuses loose modes, symlinks, non-files, and bad content (433.983458ms)
+✔ returns the first top-level human message and acks every envelope (751.423333ms)
+✔ asks channel wakes only on mentions or direct-ask phrases (2085.626917ms)
+✔ returns no-result when the wait window ends (2104.841708ms)
+✔ reconnects on a refresh disconnect and on an abrupt close (1538.66475ms)
+✔ auth failure is a failed response, then quiet within the hour (1205.90075ms)
+✔ link_disabled disconnect is an operator error (169.40125ms)
+✔ rate limited open is retried after Retry-After (1459.540208ms)
+✔ truncates text to 2000 characters (436.462167ms)
+✔ replays a retried request id and skips a redelivered event (957.047333ms)
+✔ buffers extra matches from one session, keeps them across restarts, and never delivers twice (1920.433125ms)
+✔ handshake echoes identity and only its own adapter name (227.96975ms)
+✔ classify, terminal, and silent verdicts (621.865042ms)
+✔ unknown operation and bad config_ref are invalid-request (178.92325ms)
+✔ missing keychain item or a non-xapp value fails without printing the value (565.379417ms)
+✔ listen refuses a non-local plain http API base (118.193875ms)
+✔ config_ref parsing (1.566542ms)
+✔ event filter edge cases (0.5745ms)
+✔ after a sleep the poll drops the stale connection and listens on a new one (7871.4185ms)
+✔ a host timeout that lands on wake from sleep is silent once; any other timeout wakes (6747.200625ms)
+✔ concurrent saves both succeed and the last state wins (42.797333ms)
+ℹ tests 27
+ℹ suites 0
+ℹ pass 27
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 14861.305125
