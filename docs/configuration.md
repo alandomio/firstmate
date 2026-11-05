@@ -2372,6 +2372,7 @@ bin/fm-extension.sh verify org.firstmate.example.file-signal
 ```
 
 Use an absent destination for the copy so the source identity remains inspectable and reproducible.
+The optional Slack Socket Mode listener in `extensions/slack-socket-adapter/` is bound the same way; [`slack-socket-adapter.md`](slack-socket-adapter.md) owns its setup.
 For a non-default home, set `FM_HOME=<that-home>` on every command; local and remote secondmate homes bind the package independently, and bindings are not inherited.
 
 **Bind on a remote secondmate**
