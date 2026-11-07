@@ -1440,6 +1440,44 @@ That watcher and away-daemon reporting is covered by fakes in `tests/fm-watch-tr
 No recorded screen was available for a model-downgrade confirmation, an MCP approval, or a Claude exit confirmation other than this picker, so those dialogs are not covered.
 Refusing an Enter that would confirm a dialog restores an existing safety path, so it is not gated behind a flag.
 
+### Claude confirmation prompts
+
+Measured 2026-11-04 against Claude Code 2.1.318, first in an isolated tmux session and then through Herdr 0.8.2 in an isolated lab session.
+In default permission mode, a Bash tool call renders this dialog at the bottom of the pane, below a full-width `─` rule:
+
+```
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+ Create empty file answered.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ touch answered.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and always allow access to /private/tmp/fm-advisor-multiturn-lab from this project
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend
+```
+
+Sending the digit `1` alone ran the command, and the digit `4` alone declined it with `Interrupted · What should Claude do instead?`; neither needed Enter.
+The "Teach auto mode about your environment?" menu, whose footer is `Enter to confirm · Esc to cancel`, also closed on the digit `2` alone, and nothing reached the composer.
+`fm_control_answer_needs_enter` records that no Enter follows for Claude, and `tests/fixtures/claude-2.1.318-prompts/` holds the captured screens the portable tests parse.
+The live guard reproduces this through `bin/fm-control.sh` on Herdr:
+
+```sh
+HERDR_LAB_HELPER=<home>/bin/fm-herdr-lab.sh FM_CONTROL_ANSWER_LIVE=1 bash tests/fm-control-answer-live-e2e.test.sh
+```
+
+```text
+ok - live answer: Claude Code (2.1.318 (Claude Code)) on herdr 0.8.2 approves a permission prompt with its option digit through fm-control
+ok - live answer: Claude Code (2.1.318 (Claude Code)) on herdr 0.8.2 refuses a stale sha and declines a prompt with its No option
+ok - live answer: both delivered answers are logged and the refused one is not
+```
+
+The folder-trust and external-imports dialogs render unnumbered options, so `prompt` does not report them and `answer` cannot choose in them.
+
 ### Prune and respawn
 
 The real label-collision reproduction is owned by:
