@@ -1,0 +1,26 @@
+AGENTS.md always-loaded size
+  before (130c652): 54193 bytes, 451 lines
+  after  (9542821): 27713 bytes, 260 lines
+  reduction: 48.9%
+
+Skills receiving moved procedure (frontmatter check):
+  task-intake            name=OK description=OK bytes=10205
+  worker-steering        name=OK description=OK bytes=2666
+  wake-handling          name=OK description=OK bytes=4945
+  captain-reporting      name=OK description=OK bytes=3867
+  knowledge-routing      name=OK description=OK bytes=3109
+  backlog-management     name=OK description=OK bytes=2911
+  ship-landing           name=OK description=OK bytes=4736
+  quota-array-dispatch   name=OK description=OK bytes=12474
+  stow                   name=OK description=OK bytes=38912
+
+Skills named by AGENTS.md that resolve to .agents/skills: 22; 'load `X`' targets unresolved: none
+  trigger index lists task-intake: yes; named in AGENTS.md: yes
+  trigger index lists worker-steering: yes; named in AGENTS.md: yes
+  trigger index lists wake-handling: yes; named in AGENTS.md: yes
+  trigger index lists captain-reporting: yes; named in AGENTS.md: yes
+  trigger index lists knowledge-routing: yes; named in AGENTS.md: yes
+  trigger index lists backlog-management: yes; named in AGENTS.md: yes
+
+AGENTS.md sections present: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+Cross-repo 'AGENTS.md section N' references pointing to a missing section: none
