@@ -8,6 +8,15 @@ metadata:
 
 # Ship landing
 
+## Review rigor by delivery path
+
+`AGENTS.md` section 7 owns which delivery path carries which review; this section owns the review procedure.
+The single independent scout review of a `direct-PR` pull or merge request runs when its worker reports the PR, before the configured merge authority decides; the reviewing scout never changes code, and its findings return as a captain decision under `AGENTS.md` section 9.
+A further review or audit beyond that single direct-PR pass is allowed only when the captain explicitly requests that deliverable or the authorized task is a knowledge-only review; one named question remains scoped to that question.
+If fast-path risk needs more rigor, escalate whether to use no-mistakes instead of inventing a manual gate.
+
+## Ready signal and landing
+
 For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done [at=<epoch>]: PR <url> checks green` after CI is green, while `direct-PR` reports `done [at=<epoch>]: PR <url>` after opening the PR, each only for a non-draft PR; a lane that deliberately holds a draft declares a wait instead, and `bin/fm-pr-check.sh` refuses to arm merge monitoring on a draft.
 A brief generated for a GitLab project carries the same signal in merge-request wording (`MR <url>` in place of `PR <url>`), and a brief whose project forge could not be determined carries the combined `PR/MR` noun, so treat the noun as the project's forge vocabulary, not a different contract.
 Run `bin/fm-pr-check.sh <id> <PR url>` with the URL copied from that ready signal or the resolved checks-green `fm-crew-state.sh` line - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
