@@ -222,7 +222,7 @@ A local skill exists only in this home, so offloading an entry out of `data/capt
    Look for operational learnings, captain preferences expressed in passing, project-intrinsic facts, standing decisions, and undone next steps.
    Include what workers reported from harnesses that cannot reach a declared tier, because this session is their only capture path.
 2. **Route each finding using AGENTS.md's knowledge-routing table.**
-   AGENTS.md section 6 is the source of truth for destinations.
+   The `knowledge-routing` skill is the source of truth for destinations.
    Do not re-derive or duplicate that mapping here.
    Match each finding against the home's declared memory tiers first and capture a tier-owned finding to that tier, falling back to the local files only for classes no declared tier owns.
    When the owning tier is unreachable from this session, write the finding to the startup-loaded local memory file its class would otherwise use, or keep it where it already lives, carrying the pending-capture marker for that tier; it is still an exception for the receipt, never a reason to treat the local copy as sufficient.

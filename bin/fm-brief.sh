@@ -208,7 +208,7 @@
 # PREVENTION_RULE string): a worked-around obstacle, error, or trap is also
 # prevented from recurring by fixing its cause in scope, else adding a clear
 # error or check, else filing a note: CANDIDATE - prevenzione: line and naming
-# it in the final report. AGENTS.md section 6 owns firstmate's side of the rule.
+# it in the final report. The knowledge-routing skill owns firstmate's side.
 # Every scaffold asks for a needs-decision line written as a self-contained
 # decision card, whose elements captain-hold-lifecycle owns.
 # Ship and scout briefs also carry a firstmate-authored recall section between

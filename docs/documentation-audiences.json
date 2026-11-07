@@ -585,6 +585,30 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/backlog-management/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/captain-reporting/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/knowledge-routing/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/task-intake/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/wake-handling/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/worker-steering/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/aws-goplanner-skills/SKILL.md",
       "audience": "agent-runtime"
     },
