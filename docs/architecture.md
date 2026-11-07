@@ -316,7 +316,7 @@ The refusal library's header owns the gate detection, lab-home exception, test-h
 ## Two task shapes
 
 Ship tasks change projects and ship by project mode (`no-mistakes`, `direct-PR`, or `local-only`); scout tasks leave standalone investigation reports at `data/<id>/report.md` and never push.
-The intake and authority contract in `AGENTS.md` owns when separate scout research is warranted.
+The internal [`task-intake` skill](../.agents/skills/task-intake/SKILL.md) owns when separate scout research is warranted.
 
 ## Dispatch profiles
 
