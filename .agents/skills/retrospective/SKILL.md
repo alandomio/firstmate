@@ -1,6 +1,6 @@
 ---
 name: retrospective
-description: Performs comprehensive analysis of the active session, examines git logs, updates codebase guidelines (CLAUDE.md), persists lessons to agentmemory and the org-wide knowledge store this home is configured with (the RAG or PP Brain), and writes a detailed retrospective report. Invoke when the user asks for a retrospective, when a session that produced durable learnings or a failure receipt is ending, or when a supervising agent needs to close out its own session's learnings.
+description: Analyzes the active session for failure receipts, captain corrections, repeated work and shared-instruction gaps, turns them into agentmemory lessons, feedback memory, scripts and CLAUDE.md proposals, and writes a dated retrospective report. Invoke when the user asks for a retrospective, when a session that produced a captain correction or a failure receipt is ending, or when a supervising agent needs to close out its own session's learnings.
 user-invocable: true
 metadata:
   internal: true
@@ -8,62 +8,46 @@ metadata:
 
 # Session Retrospective Protocol
 
-Extracts what this session learned, routes each learning to the substrate whose reach matches it, and writes a dated report, so no session re-derives what an earlier one learned ("NPC Mode").
+Extracts what this session learned that nothing else captures, routes each learning to the substrate whose reach matches it, and writes a dated report, so no session re-derives what an earlier one learned ("NPC Mode").
 
+Durable knowledge reaches the org store through the daily memory-board pass, so this skill never drafts, batches or writes org-store items; it only notes in its report any knowledge it saw that the board should pick up.
 Run the steps in order. Step 0 decides how many of them apply.
 
 ## Who invoked this, and what that changes
 
 This skill runs three ways, and the difference matters only at the approval gates.
 
-- **User typed `/retrospective`** — a human is present. Everything below applies unchanged.
-- **An agent invoked it while a human is in the conversation** (a supervising session closing out
-  its own work). Same as above: ask the questions, wait for the answers.
-- **An agent invoked it with no human reachable** — a subagent, a scheduled run, an autonomous
-  loop. There is nobody to answer, so every gated write is **skipped, not assumed**.
+- **A human is present** (the user typed `/retrospective`, or a supervising session closing out its own work). Everything below applies unchanged.
+- **No human reachable** — a subagent, a scheduled run, an autonomous loop, the compaction hook. Every gated write is **skipped, not assumed**.
 
-In that third case, and only in it:
+With no human reachable, and only then:
 
-- Skip the Step 2 substantive questions. Say in the report that they were not asked and why. Do
-  not invent the answers you would have got.
-- The **auto-detector alone** chooses full vs quick. A missing answer never counts as "routine".
-- `CLAUDE.md` / `AGENTS.md` edits, ADRs, org-store writes, and `feedback`/`user` memory files are
-  **not written**. Draft each one verbatim into section 4 as pending, with the approver named.
-  These gates exist because the write changes behaviour or reaches the whole org; an absent human
-  is a withheld answer, never an implied yes.
-- Ungated writes still happen: the report, agentmemory lessons and memories, and `project` /
-  `reference` memory creations, which are auto-create by design.
-- Never open a review surface, post to a channel, or message anyone to obtain the approval. Leave
-  it pending and let the invoking session carry it to its human.
+- Skip the Step 2 substantive questions and say in the report that they were not asked. Do not invent the answers you would have got.
+- The **auto-detector alone** chooses full vs short. A missing answer never counts as "routine".
+- `CLAUDE.md` / `AGENTS.md` edits, ADRs and `feedback`/`user` memory files are **not written**. Draft each one verbatim into section 4 as pending, with the approver named. An absent human is a withheld answer, never an implied yes.
+- Ungated writes still happen: the report, agentmemory lessons and memories, and `project` / `reference` memory creations.
+- Never open a review surface, post to a channel, or message anyone to obtain the approval. Leave it pending and let the invoking session carry it to its human.
 
-If you cannot tell which case you are in, assume the third. The cost of a wrongly-skipped write is
-one pending line in a report; the cost of a wrongly-assumed approval is an unreviewed rule in a
-shared repo or an unapproved publication to the org.
+If you cannot tell which case you are in, assume the second.
 
 ## Step 0 — Cheap evidence scan, then triage
 
 Run the free part of Step 2 FIRST — `git status --short`, `git diff --stat`, `git log --oneline <base>..HEAD`, and a transcript scan for errors and corrections — then decide.
 
-**Triage is deterministic**, decided from that evidence. Take the **full** path if ANY of these is observably true:
+Take the **full** path only if the session shows at least one **captain correction** or one **failure receipt** (a command that errored, an assumption corrected).
+Otherwise take the **short** path: Step 1 recall, one `memory_lesson_save`, a **short dated report** (sections 1, 3 if any, and 5 only), and a short chat summary. No `CLAUDE.md` proposal, no ADR.
 
-- a failure receipt exists — a command that errored, an assumption corrected, a user correction;
-- a decision was made that a future session would need explained;
-- the diff touches >=3 files, or the branch carries >=1 commit;
+**Flags override the detector**: `/retrospective --full` or `/retrospective --quick` (the short path).
 
-Otherwise take the **quick** path: pre-flight recall (Step 1), one `memory_lesson_save`, the org-store items a colleague could use drafted and proposed through the Step 5 batch (usually one or none), a **short dated report** (sections 1, 4 and 5 only), and a short chat summary. No `CLAUDE.md` proposal, no ADR.
-
-**Flags override the detector**: `/retrospective --full` or `/retrospective --quick`.
-
-**The quick path is where knowledge goes to die, so it is not silent, and it never claims an unverified write.** State what is being skipped and quote the identifier you got back: *"Quick retrospective — lesson `lsn_…` saved; N org-store items proposed for your approval. Say `--full` for the write-up."* If the save returned no id, say the save failed. If nothing colleague-relevant was found, say `0 org-store items proposed` rather than omitting the clause. If a failure receipt turns up after quick was chosen, **stop and escalate**: *"This has a failure worth recording — switch to full, or confirm quick?"* Never downgrade silently.
+**The short path is not silent, and it never claims an unverified write.** State what is skipped and quote the identifier you got back: *"Short retrospective — lesson `lsn_…` saved. Say `--full` for the write-up."* If the save returned no id, say the save failed. If a correction or failure receipt turns up after the short path was chosen, **stop and escalate**: *"This has a failure worth recording — switch to full, or confirm short?"* Never downgrade silently.
 
 ## Resolve the org store first
 
-The org-wide layer is whichever knowledge store this home is configured with, because the same skill runs on machines with different MCP servers installed.
+The org store is whichever knowledge store this home is configured with, because the same skill runs on machines with different MCP servers installed; this skill only recalls from it.
 Before Step 1, run `bin/fm-knowledge-store.sh read` from the Firstmate code root (three directories above this skill, the directory that contains `.agents/`), with `FM_HOME` as the session has it.
 It prints `name=`, `backend=` and `search=`; that script and `docs/configuration.md` "Knowledge store naming" own the setting, its default, and the refusals.
-Everywhere below, "the org store" means the store it names: call it by `name` in chat and in the report, and take its recall and write verbs from `reference.md` for that `backend`.
-`backend=other` is a store with no write contract known here: recall through the `search=` instructions and leave every org-store write pending, saying why.
-If the command is missing or refuses, the org store is unreachable - apply the unreachable-layer rule in Step 5 and quote the refusal.
+Everywhere below, "the org store" means the store it names: call it by `name` in chat and in the report, and take its recall verbs from `reference.md` for that `backend`; for `backend=other`, recall through the `search=` instructions.
+If the command is missing or refuses, the org store is unreachable - skip its recall, say so in the report and quote the refusal.
 Never call another backend's tools to compensate; they are not installed where they were not configured.
 
 ## Step 1 — Pre-flight recall (before drafting anything)
@@ -73,8 +57,8 @@ Query what is already known first, so learnings *reinforce* rather than duplicat
 - `memory_recall(query, format: 'compact')` — past session observations on the same files/concepts.
 - `memory_lesson_recall(query, minConfidence: 0.1)` — lessons already learned. A hit means **re-save the identical content** (duplicates auto-strengthen confidence) rather than writing a near-duplicate variant.
 - `memory_patterns(project)` — recurring cross-session patterns; this is what turns "it happened" into "it keeps happening".
-- The org store's recall verb for its `backend` (`reference.md`). Company conventions here supersede in-repo docs, so a hit often means "follow the existing convention", not "add a new `CLAUDE.md` rule". After a good hit, call the store's related-items verb 2 or 3 times (on the hit and its best neighbours) before concluding: a neighbour that is superseded, contradicted or stale is a correction to draft in Step 5, and one that already covers a learning means link to it instead of adding a duplicate.
-- **The most recent prior report** for the target repo (path in Step 6) — the newest dated report only, not the whole directory. If there is none, say "no prior report" rather than implying a continuity that does not exist. **Carry forward its pending org-store writes:** take every item in its section 4 marked pending, plus any unchecked Next Step that names an org-store write, and check each against the store itself (search by title). Written since -> drop it; recorded as declined -> drop it; anything else is re-proposed in this run's Step 5 batch, marked carried-forward from that report. A pending item stays in section 4 of every report until it is written or declined, so the newest report alone is enough and nothing silently dies.
+- The org store's recall verb for its `backend` (`reference.md`). Company conventions here supersede in-repo docs, so a hit often means "follow the existing convention", not "add a new `CLAUDE.md` rule". A hit that already covers a learning means cite it instead of re-recording it.
+- **The most recent prior report** for the target repo (path in Step 6) — the newest dated report only. If there is none, say "no prior report". Carry forward its unchecked Next Steps and its pending `CLAUDE.md`/feedback drafts that are still unwritten.
 
 Record whether recall changed anything; the kill criterion below measures it.
 
@@ -138,17 +122,22 @@ Fits nowhere -> session trivia. Leave it in the report only.
 This audit and any pruning go through the same show-diff-then-wait gate as every other `CLAUDE.md` edit in Step 5, and are left pending on the unattended path.
 Classification, no-ops audit and information-access ideas adapted from Matt Pocock's `/retro`.
 
-**Axis B — persistent memory**, routed by **blast radius**. Ask "who needs to know this?" before "which tool saves this?":
+**Axis B — persistent memory**, routed by **blast radius**:
 
 | Layer | Scope | Route here when |
 |---|---|---|
 | harness auto-memory | this workstation, this project | it must load into context at every session start |
 | agentmemory | this workstation, cross-project | it is true of *how you work here* — local env, tooling, personal workflow |
-| the org store | the whole company, every repo and machine | a colleague on a different machine would need it |
 
-The failure is asymmetric and silent both ways. agentmemory writes **never reach a teammate or your other machine** — a colleague-relevant learning filed only there is lost to the org, which is NPC Mode one level up. Org-store writes reach **everyone** — workstation noise (local ports, Docker state, `$HOME` paths, machine-only env vars) is unfalsifiable for anyone else and pollutes org search. A learning with both a general rule and a local detail gets split: rule to the org store, detail to agentmemory, cross-referenced in the report.
+Org-store publication is not a route: the daily memory-board pass moves agentmemory's consolidated memories there, so agentmemory always keeps the raw record (lesson save, with concepts and files) and is the source the board reads.
+Route a **captain correction** by what it corrects:
 
-**Firstmate-home override for harness auto-memory.** When the repo this session modified (Step 6) is a firstmate home — `$FM_HOME` if set, else the Firstmate code root, call it `home_root`, and it qualifies only if `home_root/.agents/skills/stow/SKILL.md` exists — a "harness auto-memory" finding does not go to the generic `~/.claude/projects/<slug>/memory/` path. It goes to that home's own `stow`-tiered memory instead, so the next `/stow` pass finds it already shaped rather than unmarked and paying a grace cycle. Mechanics in `reference.md`; tier semantics and marker spellings stay owned by the `stow` skill and are never restated here. This override applies only to the destination and stamping of a harness-auto-memory finding — agentmemory and org-store routing for the same session are unaffected.
+- How firstmate itself behaves -> the always-loaded memory (harness auto-memory, or `data/captain.md` in a firstmate home), show-first gate unchanged, because agentmemory and the org store are searched, not loaded every session.
+- The domain, or how workers must do things on a project (customer rules, procedures) -> the org store via the board, so workers and the chatbot follow it too; note it in the report's "For the memory board" line.
+
+Note in the report any other knowledge you saw that the board should pick up (a stale or contradicted org item, a convention worth promoting) and stop there.
+
+**Firstmate-home override for harness auto-memory.** When the repo this session modified (Step 6) is a firstmate home — `$FM_HOME` if set, else the Firstmate code root, call it `home_root`, and it qualifies only if `home_root/.agents/skills/stow/SKILL.md` exists — a "harness auto-memory" finding does not go to the generic `~/.claude/projects/<slug>/memory/` path. It goes to that home's own `stow`-tiered memory instead, so the next `/stow` pass finds it already shaped rather than unmarked and paying a grace cycle. Mechanics in `reference.md`; tier semantics and marker spellings stay owned by the `stow` skill and are never restated here. This override applies only to the destination and stamping of a harness-auto-memory finding.
 
 ## Step 5 — Execute the writes
 
@@ -156,26 +145,23 @@ The failure is asymmetric and silent both ways. agentmemory writes **never reach
 
 **Axis A artifacts are code changes** and follow the same discipline as any other edit. `CLAUDE.md`: show the diff, wait for an answer, then apply — amend an existing rule rather than appending a near-duplicate, link to the org store if it already documents the convention, and never write a rule into a repo this session did not touch. For `.claude/skills/`, `docs/`, `llm/kb/` and ADRs, each has its own contribution convention — see `reference.md`; hand ADRs to `adr-draft`.
 
-**Draft org-store items by default.** The org store is where a colleague's session finds what this one learned, so a retrospective that proposes nothing there has to say why. Draft one item for every colleague-relevant learning: a session case record whenever anything non-trivial happened, patterns and gotchas, runbook or service-card deltas, and a correction for every stale or wrong item found during Step 1 recall. Give each draft its tags and its links (`supersedes` for a correction or replacement, `relates_to` for neighbours); search first so an existing item is updated or linked rather than forked. Add the Step 1 carried-forward items, then present everything as **one batched list** and ask once. On approval write all of them, using the verbs in `reference.md`; a draft the human strikes is recorded as declined.
-
 **The approval gates. These are this skill's safety boundary; everything else in Step 5 is mechanics.**
 
 - **Show before writing** any `feedback` or `user` memory file — those change how future sessions behave, and a wrong one bends your working style invisibly for months. Inside a firstmate home this maps to `data/captain.md`: same gate, same reason. Never write `data/captain-shared.md` from this skill — it is primary-owned; route a shared-preference finding to the primary the way `stow` does.
 - **Show a diff before any overwrite** of an existing memory file, whatever its type.
-- **Ask before any org-store write, once, for the whole batch.** Local files and agentmemory are note-taking; the org store is publication to the whole company. With no human reachable, nothing is written: each draft goes verbatim into section 4 as pending.
 - `project` and `reference` creations proceed automatically and are reported after.
 
-**Three judgment calls, and they are the only judgment here.** *Blast radius* picks the layer via the Step 4 table — wrong is silent in both directions. *Confidence* on a lesson: **0.5** single observation, **0.7** reproduced twice or user-confirmed, **0.8+** only with a failing-to-passing test; do not inflate, because confidence decays unused and an over-confident wrong lesson outranks a correct cautious one. *Sensitivity* before any org-store write: no employee or HR data, no named B2C/parker personal data, no raw plates — use the `plateId`; revenue and B2B operator information are fine, and raw log output belongs in the local report.
+**Two judgment calls.** *Blast radius* picks the layer via the Step 4 table. *Confidence* on a lesson: **0.5** single observation, **0.7** reproduced twice or user-confirmed, **0.8+** only with a failing-to-passing test; do not inflate, because confidence decays unused and an over-confident wrong lesson outranks a correct cautious one.
 
-**Three traps that have actually bitten.** Never call `submit_session_intel` — despite the name it is plugin telemetry, not a retrospective sink. Never put an agentmemory id in an org-store body — that layer is machine-local and decaying, so it is a dead link for every colleague. Never describe a pointer into agentmemory as permanent retention.
+**Trap that has bitten.** Never call `submit_session_intel` — despite the name it is plugin telemetry, not a retrospective sink.
 
 Signatures, required fields, paths and frontmatter live in `reference.md`, deliberately not here.
 
-If a layer is unreachable, **still write the report**, mark the layer, and list the intended writes verbatim as pending. Losing the report because a sink was offline is the worst outcome; silently dropping the writes is the second worst.
+If a layer is unreachable, **still write the report**, mark the layer, and list the intended writes verbatim as pending.
 
 ## Step 6 — Write the report
 
-**The report is the one unconditional output of this skill.** It is written on every path — full, quick, and runs aborted part-way through an approval prompt. A run that wrote nothing durable still writes a report saying exactly that, with the intended writes listed verbatim as pending. There is no path through this skill that leaves no trace.
+**The report is the one unconditional output of this skill.** It is written on every path — full, short, and runs aborted part-way through an approval prompt. A run that wrote nothing durable still writes a report saying exactly that, with the intended writes listed verbatim as pending. There is no path through this skill that leaves no trace.
 
 Path: `<repo>/.claude/skills/retrospective/reports/YYYY-MM-DD-brief-description-SESSION_ID.md`
 
@@ -189,7 +175,7 @@ Use the template below.
 
 ## Step 7 — Close the loop
 
-In chat: the report path, Axis A artifacts changed, Axis B writes with identifiers, org-store items still pending and who must approve them, and the Next Steps.
+In chat: the report path, Axis A artifacts changed, Axis B writes with identifiers, drafts still pending and who must approve them, and the Next Steps.
 
 ## Report template
 
@@ -224,7 +210,7 @@ In chat: the report path, Axis A artifacts changed, Axis B writes with identifie
 
 **Axis A** — CLAUDE.md: [rule, or No + why] · Skills: [paths] · Docs: [paths] · ADRs: [path or "offered, declined"]
 
-**Axis B** — Harness auto-memory: [files + shown-first confirmations, or none] · agentmemory: [ids with confidence] · Org store ([name]): [one line per item - identifier, "declined", or "pending: <title> (draft verbatim below; carried forward from <report> if so)"; "unreachable" when the store was] · Promotion candidates: [local learnings that belong in the org store later, or none]
+**Axis B** — Harness auto-memory: [files + shown-first confirmations, or none] · agentmemory: [ids with confidence] · Pending drafts: [verbatim, approver named, or none] · For the memory board: [knowledge seen that the board should pick up, or none]
 
 ## 5. Recall Effectiveness (kill-criterion ledger)
 - **Did Step 1 change the output?** [yes — how | no]
@@ -237,9 +223,9 @@ In chat: the report path, Axis A artifacts changed, Axis B writes with identifie
 
 - **Never** commit or push unless asked. Writing the report and updating memory is the deliverable; version control is the user's call.
 - The Step 5 approval gates are absolute; nothing here relaxes them.
-- Do not fabricate error logs, test results, commit ranges, memory writes, or an identifier the org-store write did not return. If the build was never run, write "not run" — an invented green checkmark poisons every future session that reads the report.
+- Do not fabricate error logs, test results, commit ranges, memory writes, or an identifier a write did not return. If the build was never run, write "not run" — an invented green checkmark poisons every future session that reads the report.
 - Keep it specific: lessons are recalled out of context months later.
-- The sensitivity gate applies to committed reports too, not only at the org-store boundary.
+- Keep committed reports free of employee or HR data, named personal data and raw plates (use the `plateId`); raw log output stays in the local report.
 
 ### Anti-rationalization
 
@@ -247,8 +233,7 @@ In chat: the report path, Axis A artifacts changed, Axis B writes with identifie
 |---|---|
 | "Nothing really failed — this was straightforward." | Check the transcript for retried commands, corrected assumptions, and user corrections. A session containing a user correction is a high-value retrospective, not a quiet one. |
 | "This lesson is obviously right — 0.9." | Confidence decays when unused and strengthens on reinforcement. An inflated wrong lesson outranks a correct cautious one. 0.5 unless reproduced or confirmed. |
-| "A colleague wouldn't need this, agentmemory is enough." | Ask the Step 4 question honestly: would someone on another machine hit this? Propose it; the batch approval, not your guess, decides. |
-| "Quick path is fine, it was a small session." | Small sessions containing a correction are exactly the ones worth recording. State what you are skipping and let the user override. |
+| "Short path is fine, it was a small session." | A session with a correction or failure receipt takes the full path by rule. Check the transcript before choosing short. |
 | "This is a `project` fact, not `feedback` — no need to show it." | If the content tells a future session how to behave — "always", "prefer", "never", "ask before" — it is `feedback` whatever the frontmatter says, and it gets shown first. Type is decided by what the text does, not by which label avoids the prompt. |
 
 ## Kill criterion (registered 2026-08-19; redesigned 2026-09-03 — do not silently drop)

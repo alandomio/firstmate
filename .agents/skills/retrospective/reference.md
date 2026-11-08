@@ -66,44 +66,20 @@ registered under; if none exists, **omit it** rather than invent one. Detail, on
 
 ## Org knowledge store
 
-Company-wide, cross-repo, cross-machine, human-readable — the only layer a colleague can read.
+Company-wide, cross-repo, cross-machine, human-readable — the only layer a colleague can read. This skill only recalls from it; the daily memory-board pass owns every write.
 Which store that is comes from `bin/fm-knowledge-store.sh read` (`SKILL.md`, "Resolve the org store first"); use only the section below that matches its `backend`.
-Search before writing in every backend: the convention is to link, not fork.
 
 ### `backend=rag` — the RAG (`rag_qdrant_server`)
 
 - Recall: `query_rag_hybrid(query_text, user_roles)`, falling back to `query_rag` with the same arguments.
   Pass `user_roles` even when empty.
-- Write: `ingest_document(chunk_text, metadata_json, user_roles)`.
-  `metadata_json` is a JSON string and must carry `document_type`, one of `guida` | `policy` | `info` | `ticket`; any other value is rejected.
-  A retrospective learning is normally `info`, and a stable convention a colleague must follow is `guida`.
-  Also set `file_path` (a stable logical path such as `retrospective/<repo>/<slug>`), a `slug`, `tags`, and `document_date` (today), so the item is findable and linkable later.
-  `user_roles` sets who can read it; keep it internal (for example `admin,dev`), never public.
-- The identifier to record in the report is the `slug` the call accepted, or whatever id it returned; no id back means the write is not claimed.
-- Keep `chunk_text` focused, key information first; point at the canonical file.
-- No update, link or related-items verb is known for this backend: skip the related-recall step, and draft a correction as a new item that names the stale `slug`.
 
 ### `backend=pp-brain` — PP Brain
 
 - Recall: `search_knowledge(query, prompt)`, with **both** fields populated.
-- `add_knowledge(title, summary, body, tags, links)` — title >= 5 chars, summary >= 20 (aim ~500,
-  key information **first**, because it is sentence-truncated server-side), body >= 50. Tags are
-  namespaced: `type:pattern`, `domain:payment`. Default `sync: true` returns
-  `{ok, id, slug, permalink}` for the report.
-- Link it — `links: [{targetSlug, linkType}]` on create, or `link_knowledge(sourceSlug, targetSlug, linkType)`
-  afterwards. An unlinked Brain item is nearly invisible. A correction or replacement carries a
-  `supersedes` link to the item it replaces.
-- Session case record: title `CASE: YYYY-MM-DD — <subject>`, tags `type:case` and `date:YYYY-MM-DD`
-  plus the usual `domain:` / `service:` tags.
-- Correction: `update_knowledge(slug, updates, changeReason)` with only the changed fields; pass
-  `structuredSummary` with a changed `body`. Show the before/after in the batch list; changed text is
-  re-screened by the sensitivity gate.
-- Related recall: `get_related_knowledge(slug)` on a good hit and its best neighbours;
-  `get_knowledge(slug)` before citing or correcting one.
-- Very large payloads have failed JSON validation; keep the body focused and point at the canonical file.
-- A 422 is the sensitivity gate. What it refuses is in `SKILL.md`.
+- `get_related_knowledge(slug)` on a good hit and its best neighbours; `get_knowledge(slug)` before citing one.
 
 ### `backend=other`
 
 Recall through the `search=` instructions the command printed.
-No write contract is known here, so every org-store write stays pending in the report, naming the store.
+

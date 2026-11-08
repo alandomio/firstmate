@@ -190,7 +190,7 @@ Claude and grok use the slash form shown here; codex uses the same names with `$
 | `/bearings`        | Generate a concise four-section chat digest from bounded fleet state, including registered remote-home ledgers and measured follow-up for owned contributions; use `/bearings file` to also replace today's dated report in `data/`, and add `include PRs` for live GitHub enrichment |
 | `/updatefirstmate` | Guardedly update the running firstmate and its secondmates - fast-forward, or reconcile a redundant post-squash-merge divergence - then persist and restart every live mate successfully left on the target commit - including already-current homes - with an honest re-read nudge only when restart cannot be proven |
 | `/stow`            | Sweep the session for uncaptured durable knowledge, persist the open work records this session knows are unfiled or now wrong, curate tiered startup memory with decay and cold archival, enforce each home's budget or surface the required decision, cascade to registered second mates, and report what is safe to reset |
-| `/retrospective`   | Analyze the active session, route durable learnings to CLAUDE.md/AGENTS.md, agentmemory, and the org-wide knowledge store this home is configured with (the RAG or PP Brain) by blast radius, and write a dated report; see [`.agents/skills/retrospective/SKILL.md`](.agents/skills/retrospective/SKILL.md) |
+| `/retrospective`   | Analyze the active session for failure receipts, captain corrections and repeated work, route them to CLAUDE.md/AGENTS.md proposals, scripts, and memory, and write a dated report; org-store writes belong to the daily memory-board pass; see [`.agents/skills/retrospective/SKILL.md`](.agents/skills/retrospective/SKILL.md) |
 
 Bearings invocation examples:
 
