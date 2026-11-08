@@ -82,4 +82,3 @@ Which store that is comes from `bin/fm-knowledge-store.sh read` (`SKILL.md`, "Re
 ### `backend=other`
 
 Recall through the `search=` instructions the command printed.
-
