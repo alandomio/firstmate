@@ -34,12 +34,16 @@ If you cannot tell which case you are in, assume the second.
 
 Run the free part of Step 2 FIRST — `git status --short`, `git diff --stat`, `git log --oneline <base>..HEAD`, and a transcript scan for errors and corrections — then decide.
 
-Take the **full** path only if the session shows at least one **captain correction** or one **failure receipt** (a command that errored, an assumption corrected).
-Otherwise take the **short** path: Step 1 recall, one `memory_lesson_save`, a **short dated report** (sections 1, 3 if any, and 5 only), and a short chat summary. No `CLAUDE.md` proposal, no ADR.
+**Triage is deterministic**, decided from that evidence, and its bar depends on who invoked the run.
+
+- **A human is present**: take the **full** path if ANY of these is observably true: a captain correction or failure receipt exists (a command that errored, an assumption corrected); a decision was made that a future session would need explained; the diff touches >=3 files, or the branch carries >=1 commit.
+- **No human reachable** (the compaction hook and every other unattended run): take the **full** path only if the session shows at least one **captain correction** or one **failure receipt**.
+
+Otherwise take the **short** path: Step 1 recall, one `memory_lesson_save`, a **short dated report** (sections 1, 4 and 5 only; section 4 records the lesson id and carries forward the prior report's pending drafts), and a short chat summary. No `CLAUDE.md` proposal, no ADR.
 
 **Flags override the detector**: `/retrospective --full` or `/retrospective --quick` (the short path).
 
-**The short path is not silent, and it never claims an unverified write.** State what is skipped and quote the identifier you got back: *"Short retrospective — lesson `lsn_…` saved. Say `--full` for the write-up."* If the save returned no id, say the save failed. If a correction or failure receipt turns up after the short path was chosen, **stop and escalate**: *"This has a failure worth recording — switch to full, or confirm short?"* Never downgrade silently.
+**The short path is not silent, and it never claims an unverified write.** State what is skipped and quote the identifier you got back: *"Short retrospective — lesson `lsn_…` saved. Say `--full` for the write-up."* If the save returned no id, say the save failed. If a correction or failure receipt turns up after the short path was chosen, **stop and escalate**: *"This has a failure worth recording — switch to full, or confirm short?"* With no human reachable, do not ask: switch to full, leaving its gated writes pending. Never downgrade silently.
 
 ## Resolve the org store first
 
@@ -133,7 +137,7 @@ Org-store publication is not a route: the daily memory-board pass moves agentmem
 Route a **captain correction** by what it corrects:
 
 - How firstmate itself behaves -> the always-loaded memory (harness auto-memory, or `data/captain.md` in a firstmate home), show-first gate unchanged, because agentmemory and the org store are searched, not loaded every session.
-- The domain, or how workers must do things on a project (customer rules, procedures) -> the org store via the board, so workers and the chatbot follow it too; note it in the report's "For the memory board" line.
+- The domain, or how workers must do things on a project (customer rules, procedures) -> the org store via the board, so workers and the chatbot follow it too: save it to agentmemory as a lesson or memory, which is what the board reads, then note it and its identifier in the report's "For the memory board" line.
 
 Note in the report any other knowledge you saw that the board should pick up (a stale or contradicted org item, a convention worth promoting) and stop there.
 

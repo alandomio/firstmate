@@ -15,7 +15,7 @@
 # (rag_qdrant_server) or `pp-brain`.  Without line 3 the backend is derived
 # from the MCP server line 2 names - `rag_qdrant_server` is `rag`,
 # `pp-brain` or `search_knowledge` is `pp-brain` - and anything else is
-# `other`, a store whose write contract is not known here.
+# `other`, a store recalled only through its line-2 search instructions.
 # A NONEXISTENT file resolves to the historical upstream default, the RAG.
 # A PRESENT file (including a 0-byte one) lacking line 1 or line 2, or carrying
 # an unknown line-3 key, is refused rather than silently defaulted, since a
