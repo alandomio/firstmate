@@ -1,0 +1,34 @@
+$ FM_HOME=<h1> bin/fm-knowledge-store.sh read   # Step 'Resolve the org store first' of /retrospective
+name=the RAG
+backend=rag
+search=`query_rag_hybrid` or `query_rag` on the `rag_qdrant_server` MCP server, with `query_text` set and `user_roles` passed, empty if you have none
+
+$ FM_HOME=<h2> bin/fm-knowledge-store.sh read   # Step 'Resolve the org store first' of /retrospective
+name=PP Brain
+backend=pp-brain
+search=search_knowledge on pp-brain
+
+$ FM_HOME=<h3> bin/fm-knowledge-store.sh read   # Step 'Resolve the org store first' of /retrospective
+name=Wiki
+backend=other
+search=wiki_search tool
+
+=== Step 0 triage + short path as delivered (SKILL.md) ===
+## Step 0 — Cheap evidence scan, then triage
+
+Run the free part of Step 2 FIRST — `git status --short`, `git diff --stat`, `git log --oneline <base>..HEAD`, and a transcript scan for errors and corrections — then decide.
+
+**Triage is deterministic**, decided from that evidence, and its bar depends on who invoked the run.
+
+- **A human is present**: take the **full** path if ANY of these is observably true: a captain correction or failure receipt exists (a command that errored, an assumption corrected); a decision was made that a future session would need explained; the diff touches >=3 files, or the branch carries >=1 commit.
+- **No human reachable** (the compaction hook and every other unattended run): take the **full** path only if the session shows at least one **captain correction** or one **failure receipt**.
+
+Otherwise take the **short** path: Step 1 recall, one `memory_lesson_save`, a **short dated report** (sections 1, 4 and 5 only; section 4 records the lesson id and carries forward the prior report's pending drafts), and a short chat summary. No `CLAUDE.md` proposal, no ADR.
+
+**Flags override the detector**: `/retrospective --full` or `/retrospective --quick` (the short path).
+
+**The short path is not silent, and it never claims an unverified write.** State what is skipped and quote the identifier you got back: *"Short retrospective — lesson `lsn_…` saved. Say `--full` for the write-up."* If the save returned no id, say the save failed. If a correction or failure receipt turns up after the short path was chosen, **stop and escalate**: *"This has a failure worth recording — switch to full, or confirm short?"* With no human reachable, do not ask: switch to full, leaving its gated writes pending. Never downgrade silently.
+
+## Resolve the org store first
+=== org-store drafting references remaining in skill/reference (expect none that write) ===
+.agents/skills/retrospective/SKILL.md:13:Durable knowledge reaches the org store through the daily memory-board pass, so this skill never drafts, batches or writes org-store items; it only notes in its report any knowledge it saw that the board should pick up.
