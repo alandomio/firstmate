@@ -715,10 +715,10 @@ There is no shared learnings file by captain decision.
 
 ## Knowledge store naming (config/knowledge-store)
 
-`bin/fm-brief.sh`'s Grounding section tells every generated ship and scout worker to search a knowledge store before its first substantive action and before working around any gotcha, and the internal [`/retrospective` skill](../.agents/skills/retrospective/SKILL.md) recalls from and, with approval, writes to the same store as its org-wide layer.
+`bin/fm-brief.sh`'s Grounding section tells every generated ship and scout worker to search a knowledge store before its first substantive action and before working around any gotcha, and the internal [`/retrospective` skill](../.agents/skills/retrospective/SKILL.md) recalls from the same store as its org-wide layer.
 The optional local, gitignored `config/knowledge-store` names that store for a home whose installed MCP servers do not match the upstream default.
 Line 1 is the store's name as it should read in worker-facing text (e.g. `PP Brain`); line 2 is the search-instructions clause inserted in parentheses right after the name (e.g. the exact MCP tool, its arguments, and any follow-up contract).
-Optional line 3 is the backend key, `rag` or `pp-brain`, which tells `/retrospective` which write tools the store has; without it the backend is derived from the MCP server line 2 names (`rag_qdrant_server` is `rag`, `pp-brain` or `search_knowledge` is `pp-brain`), and any other store is `other`, recalled from but never written by the skill.
+Optional line 3 is the backend key, `rag` or `pp-brain`, which tells `/retrospective` which recall tools the store has; without it the backend is derived from the MCP server line 2 names (`rag_qdrant_server` is `rag`, `pp-brain` or `search_knowledge` is `pp-brain`), and any other store is `other`, recalled from by the skill.
 Either of the first two lines present but blank, the file present but empty, or an unknown line-3 key is refused rather than silently falling back.
 Absent resolves to the RAG: briefs keep this script's historical wording naming the RAG's `query_rag_hybrid`/`query_rag` tool on the `rag_qdrant_server` MCP server, and `/retrospective` uses the `rag` backend.
 `bin/fm-knowledge-store.sh read` prints the resolved `name`, `backend`, and `search` values; `bin/fm-knowledge-store-lib.sh` is the one reader both consumers share.
