@@ -1,0 +1,5 @@
+== new tests against BASE 51cce15 ==
+not ok - an unconfirmed record must cache the status scan signature
+== new tests against FIX d124872 ==
+ok - an unconfirmed escalated record caches the scan signature and still resolves
+ok - the resolve scan prefilter keeps the per-line predicate's verdict

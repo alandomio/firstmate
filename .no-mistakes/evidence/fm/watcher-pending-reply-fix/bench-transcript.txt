@@ -1,0 +1,12 @@
+== BASE 51cce15 (43 escalated unconfirmed records, 3 polls) ==
+records=43 escalated=43 unconfirmed=43 status_lines=343
+poll 1: 61.03s
+poll 2: 86.69s
+poll 3: 61.90s
+after correlated reply lands: last record resolved, phase=resolved (7.27s)
+== FIX d124872 (same scenario) ==
+records=43 escalated=43 unconfirmed=43 status_lines=343
+poll 1: 9.98s
+poll 2: 7.45s
+poll 3: 7.58s
+after correlated reply lands: last record resolved, phase=resolved (4.63s)
