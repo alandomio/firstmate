@@ -15,9 +15,10 @@ The failure repeated across harnesses and homes, and the workaround (remember to
 
 `bin/fm-control-lib.sh` is the single executable owner of three capability tables, which have no side effects, so they can be read as a contract:
 
-- The **verb allowlist**: `interrupt`, `exit`, `relaunch`.
+- The **verb allowlist**: `interrupt`, `exit`, `relaunch`, `prompt`, `answer`.
   There is no arbitrary-text and no generic raw-key entry point.
   A caller either names an allowlisted verb or is refused.
+  `answer` sends one option digit, and only to the exact prompt a person was shown.
 - **Per-harness mechanics**: the key that cancels a running turn, how many times it must be delivered, whether the composer needs clearing afterwards, the command that exits the agent, and which task kinds the adapter is verified to run.
   These were previously carried only in the [`harness-adapters`](../.agents/skills/harness-adapters/SKILL.md) skill's tool references, which now point here.
   `bin/fm-send.sh`'s `--key` path reads the composer-clear table from this owner too, rather than keeping a second copy of it.
@@ -34,6 +35,8 @@ A recorded `harness=` is not always an exact adapter name: a task launched from 
 | --- | --- | --- |
 | `interrupt` | Deliver the harness's verified interrupt sequence while leaving the agent running. | Delivery succeeds while the endpoint still exists and the agent is still alive where the backend can classify that; cancellation is confirmed only from an adapter-owned acknowledgement and otherwise reports `cancel=unconfirmed`. |
 | `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success. An endpoint reading `missing` goes through the same [absence proof](#reclaiming-a-task-whose-endpoint-is-gone) the reclaim uses before anything is claimed about it, and only Herdr can supply one: proven gone reports `endpoint-gone` (the agent went with it, and the endpoint this verb normally preserves did not survive), a pane that turns out to be there and idle is the ordinary `already-stopped`, one whose agent is back takes the ordinary interrupt-then-exit path. A tmux `missing` always refuses rather than claim a stop it cannot see. |
+| `prompt` | Read-only: print the confirmation prompt the agent is showing as JSON - its text, its numbered options with the one under the cursor, and its sha. | Exit 0 with the JSON while a prompt of the harness's verified shape is showing; exit 1, sending nothing, when none is. |
+| `answer <option> --expect-prompt-sha <sha>` | Choose one numbered option of the prompt whose sha `prompt` printed and a person saw. | The same prompt left the screen and the agent is still running, or stopped when the chosen option ends the session. Otherwise the answer fails as `answer=unconfirmed`. |
 | `relaunch` | Replace the running agent with a new one in the same worktree - and the same endpoint whenever that endpoint still exists - on the exact recorded adapter or an explicitly chosen harness, model, and effort. | The new agent is alive on the endpoint the task's record now names, and that record names the harness that is actually running. |
 
 An exit that delivers lifecycle input but cannot prove the agent stopped fails with `exit=unconfirmed`, reports the observed agent state and any interrupt cancellation claim, and never claims that nothing changed.
@@ -54,6 +57,16 @@ The clear is refused before anything is sent when the recorded backend cannot de
 `exit` also refuses, naming the dialog as `blocked on a prompt`, when the screen shows a recognised dialog that a further Enter would answer, whether the dialog was open before the exit command was typed or the submitting Enter opened it; it sends no Escape and chooses no option, so closing the dialog is left to the operator.
 A stopped agent whose pane still shows the dialog text is not refused.
 [`fm_composer_blocking_dialog`](../bin/fm-composer-lib.sh) owns the recognised set, which today is only Claude's background-task exit picker; [its verification record](verification/runtime-backends.md#claude-background-task-exit-picker) lists the dialogs that are not covered.
+
+`answer` exists so a person can unblock a worker that waits on a confirmation prompt, without giving the control plane a raw-key path.
+It re-reads the screen just before it sends anything and refuses, sending nothing, when no prompt is showing, the prompt's sha differs from the one the caller passes, or the option is not one the prompt shows.
+The sha covers the harness, the prompt text, and the option labels, but not the cursor position, so a moved selection does not invalidate it and a changed command or label does.
+It then sends only the option's digit - plus Enter only where the adapter needs one, and Claude does not - and never free text.
+Each delivered answer is logged as a `note:` line in the task's status file, appended as this home's own bookkeeping so it does not wake firstmate.
+Prompt detection is per harness ([`fm_control_prompt_shape`](../bin/fm-control-lib.sh)); today only Claude's numbered menus are verified, and every other harness refuses both verbs.
+A Claude prompt is recognised only when every structural signal is present: the `Esc to cancel` footer as the last row, one block of options numbered from 1 with exactly one `❯` cursor, and the dialog's top `─` edge on screen.
+Unnumbered menus, such as Claude's folder-trust and external-imports dialogs, are not answerable this way, and their guidance in the [`harness-adapters`](../.agents/skills/harness-adapters/SKILL.md) Claude reference still holds.
+A digit sent in the short gap between the re-read and the key, after the prompt closed on its own, would land in the composer as text; the postcondition read reports what the screen shows next.
 
 **Teardown and discard are not verbs and will not become verbs.**
 `exit` stops an agent and preserves everything else.
@@ -194,6 +207,7 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 
 ## Verification
 
-- `tests/fm-control.test.sh` - the adapter contract for its verified-harness lane (adapters outside the lane pin their control mechanics in their own harness suites), the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
+- `tests/fm-control.test.sh` - the adapter contract for its verified-harness lane (adapters outside the lane pin their control mechanics in their own harness suites), the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, marker non-regression, and the `prompt` and `answer` refusals against live-captured Claude screens, all against a stubbed session provider.
+- `tests/fm-control-answer-live-e2e.test.sh` - opt-in (`FM_CONTROL_ANSWER_LIVE=1`, it spends model tokens): real Claude Code in an isolated Herdr lab raises two permission prompts, `answer` approves the first, refuses a stale sha on the second, and declines it.
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, rollback after a failed launch, and the endpoint-absence proof both verbs share - the Herdr reclaim of a destroyed endpoint, and tmux refusing one it cannot prove absent.
 - `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.

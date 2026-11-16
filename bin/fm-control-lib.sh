@@ -21,7 +21,9 @@
 #
 #   1. Verb allowlist. There is no arbitrary-text and no generic raw-key entry
 #      point on the control plane; a caller either names an allowlisted verb or
-#      is refused.
+#      is refused. `answer` is the one verb that delivers an option key, and
+#      only after the prompt-identity check below proves the screen still shows
+#      the exact prompt the caller presented to a person.
 #   2. Per-harness control mechanics: which key interrupts a running turn, how
 #      many times it must be sent, whether the composer needs clearing after
 #      that key, which adapter-owned cancellation acknowledgement is observable,
@@ -50,12 +52,14 @@ fm_control_verbs() {
 interrupt
 exit
 relaunch
+prompt
+answer
 EOF
 }
 
 fm_control_verb_allowed() {  # <verb>
   case "${1-}" in
-    interrupt|exit|relaunch) return 0 ;;
+    interrupt|exit|relaunch|prompt|answer) return 0 ;;
   esac
   return 1
 }
@@ -270,6 +274,134 @@ fm_control_exit_command() {  # <harness>
   esac
 }
 
+# --- prompt identity (the `prompt` and `answer` verbs) ----------------------
+#
+# A worker can stop on a confirmation prompt that only a person should answer.
+# `answer` delivers one option key, and only when the screen still shows the
+# exact prompt the caller presented: the caller passes the sha that `prompt`
+# printed, and `answer` re-reads the screen and refuses on any difference. A
+# false positive here would send a key into an unrelated screen, so detection
+# requires every structural signal at once and refuses on any doubt.
+
+# Which prompt shape a harness renders, or nothing when no shape is verified
+# for it (the verbs then refuse). claude: a numbered select menu, verified
+# live on Claude Code 2.1.318 for the Bash permission prompt ("Do you want to
+# proceed?") and an "Enter to confirm" menu.
+fm_control_prompt_shape() {  # <harness>
+  case "${1-}" in
+    claude) printf 'numbered-menu' ;;
+    codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|muse|rovo|agy|devin|commandcode|polytoken) ;;
+    *) return 1 ;;
+  esac
+}
+
+# Whether the option digit must be followed by Enter. Claude's menus act on
+# the digit alone, with nothing left in the composer (verified live, 2.1.318),
+# so a following Enter would submit an empty line or answer the next prompt.
+fm_control_answer_needs_enter() {  # <harness>
+  case "${1-}" in
+    claude) return 1 ;;
+  esac
+  return 0
+}
+
+# fm_control_prompt_parse <harness> <screen>: the prompt showing on <screen>,
+# as `P<TAB>row` lines for the prompt text and `O<TAB><n><TAB><selected
+# 0|1><TAB><label>` lines for the options. Returns 1 when no prompt of the
+# harness's verified shape is showing.
+#
+# numbered-menu, read bottom-up from the last non-blank row:
+#   - that row is the footer and contains "Esc to cancel";
+#   - the rows just above it form one block of options "N. label", numbered
+#     1..N with N >= 2, exactly one marked with the "❯" cursor; a row under
+#     an option indented to its label column (5+ spaces) continues the label;
+#   - the prompt text runs from the nearest full-width "─" rule above the
+#     options (the dialog's top edge) down to the first option, blank rows
+#     dropped. A dialog whose top edge is not on screen is refused, because
+#     its text would change as it scrolls.
+# Box borders ("│", "╭─╮") from older Claude releases are stripped first.
+fm_control_prompt_parse() {  # <harness> <screen>
+  local shape
+  shape=$(fm_control_prompt_shape "${1-}") || return 1
+  [ "$shape" = numbered-menu ] || return 1
+  printf '%s\n' "${2-}" | LC_ALL=C awk '
+    function trim(s) { sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+    {
+      row = $0
+      gsub(/\033\[[0-9;?]*[A-Za-z]/, "", row)
+      sub(/[ \t\r]+$/, "", row)
+      sub(/^[ ]*\342\224\202[ ]?/, "", row)      # leading box edge
+      sub(/[ ]*\342\224\202$/, "", row)          # trailing box edge
+      if (row ~ /^[ ]*\342\225\260(\342\224\200)+\342\225\257$/) row = ""  # bottom box edge
+      n++; r[n] = row                            # left indent kept
+    }
+    function is_rule(s,   t) {
+      t = s
+      sub(/^\342\225\255/, "", t); sub(/\342\225\256$/, "", t)
+      return t != "" && t ~ /^(\342\224\200)+$/
+    }
+    END {
+      f = n
+      while (f > 0 && trim(r[f]) == "") f--
+      if (f < 1 || index(r[f], "Esc to cancel") == 0) exit 1
+      e = f - 1
+      while (e > 0 && trim(r[e]) == "") e--
+      if (e < 1) exit 1
+      s = e
+      while (s > 1 && trim(r[s - 1]) != "") s--
+      first = 0
+      for (i = s; i <= e; i++) {
+        t = trim(r[i])
+        if (t ~ /^(\342\235\257[ ]+)?1\.[ ]/) { first = i; break }
+      }
+      if (!first) exit 1
+      count = 0; selected = 0
+      for (i = first; i <= e; i++) {
+        t = trim(r[i]); sel = 0
+        if (t ~ /^\342\235\257[ ]+/) { sel = 1; sub(/^\342\235\257[ ]+/, "", t) }
+        if (t ~ /^[0-9]+\.[ ]/) {
+          num = t; sub(/\..*/, "", num)
+          if (num + 0 != count + 1) exit 1
+          count++; selected += sel
+          lab = t; sub(/^[0-9]+\.[ ]+/, "", lab)
+          label[count] = trim(lab); mark[count] = sel
+        } else if (count > 0 && sel == 0 && r[i] ~ /^[ ]{5,}/) {
+          label[count] = label[count] " " t
+        } else {
+          exit 1
+        }
+      }
+      if (count < 2 || selected != 1) exit 1
+      top = 0
+      for (i = first - 1; i >= 1; i--) if (is_rule(trim(r[i]))) { top = i; break }
+      if (!top) exit 1
+      for (i = top + 1; i < first; i++) {
+        t = trim(r[i])
+        if (t == "" || t ~ /^(\342\225\214)+$/) continue
+        printf "P\t%s\n", t
+      }
+      for (i = 1; i <= count; i++) printf "O\t%d\t%d\t%s\n", i, mark[i], label[i]
+    }
+  '
+}
+
+# fm_control_prompt_sha <harness> <parsed-record>: the identity of a parsed
+# prompt - its harness, text, and numbered labels, never the cursor position,
+# so moving the selection does not change it. Prints 64 hex digits.
+fm_control_prompt_sha() {  # <harness> <parsed-record>
+  local canonical
+  canonical=$(printf 'harness=%s\n' "${1-}"
+    printf '%s\n' "${2-}" | LC_ALL=C awk -F '\t' '
+      $1 == "P" { print "text=" $2 }
+      $1 == "O" { print "option=" $2 ". " $4 }
+    ')
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$canonical" | shasum -a 256 | awk '{print $1}'
+  else
+    printf '%s' "$canonical" | sha256sum | awk '{print $1}'
+  fi
+}
+
 # The launch argument that makes a RELAUNCH of <harness> RESUME an exact agent
 # session instead of starting a fresh one, printed only when <registered-agent>
 # is the label that session reference belongs to; nothing otherwise.
@@ -316,6 +448,9 @@ fm_control_backend_supports_key() {  # <backend> <key>
   case "$backend" in
     tmux|herdr|zellij|cmux)
       case "$key" in Escape|Enter|C-c|C-u) return 0 ;; esac
+      # A single option digit, delivered only by `answer`. tmux and Herdr
+      # pass it through as the literal key (verified live on both).
+      case "$backend:$key" in tmux:[1-9]|herdr:[1-9]) return 0 ;; esac
       ;;
     orca)
       case "$key" in Enter|C-c) return 0 ;; esac
