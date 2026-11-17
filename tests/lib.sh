@@ -103,6 +103,13 @@ pass() {
 # Harness argument assertions reuse the emitted prefix rather than duplicating
 # its per-spawn env-file path. The dispatch suite executes it separately to prove
 # credential preservation, hooks-path selection and invalid-count refusal.
+# The light claude worker context profile bin/fm-spawn.sh applies to a claude
+# ship or scout launch by default (bin/fm-claude-context-lib.sh owns it): the
+# `--tools=` flag and the deniedMcpServers settings key, as they appear on the
+# launch line. Tests assert the launch line verbatim, so they share these.
+FM_TEST_CLAUDE_TOOLS_FLAG='--tools=Bash,Read,Edit,Write,Grep,Glob,Skill,ToolSearch,Agent,Monitor,TodoWrite,WebFetch,WebSearch '
+FM_TEST_CLAUDE_DENY_JSON=',"deniedMcpServers":[{"serverName":"claude.ai Gmail"},{"serverName":"claude.ai Google Drive"},{"serverName":"claude.ai Google Calendar"},{"serverName":"claude.ai Google Sheets"},{"serverName":"claude.ai Notion"},{"serverName":"claude.ai Trello"},{"serverName":"claude.ai Claude Docs"},{"serverName":"claude.ai Context7"},{"serverName":"homeassistant"}]'
+
 fm_test_launch_git_prefix() {  # <launch>
   local launch=$1 helper tail end=' || return 1 2>/dev/null || exit 1; '
   case "$launch" in

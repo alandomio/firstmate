@@ -1541,7 +1541,7 @@ test_claude_forwards_firstmate_config_dir_when_set() {
   status=$?
   expect_code 0 "$status" "claude spawn with CLAUDE_CONFIG_DIR set should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "CLAUDE_CONFIG_DIR='$CASE_DIR/claude-work' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions $(claude_worker_add_dirs "$HOME_DIR" "$id")--settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}'" \
+  assert_contains "$launch" "CLAUDE_CONFIG_DIR='$CASE_DIR/claude-work' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions $(claude_worker_add_dirs "$HOME_DIR" "$id")--settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}$FM_TEST_CLAUDE_DENY_JSON}' $FM_TEST_CLAUDE_TOOLS_FLAG" \
     "claude launch did not forward firstmate's CLAUDE_CONFIG_DIR to the crewmate pane"
   pass "claude forwards firstmate's CLAUDE_CONFIG_DIR so the crewmate uses the same credential store"
 }
@@ -2158,7 +2158,7 @@ claude_expected_launch() {  # <launch> <home> <id> <permission-flag>
   [ "$(printf '%s' "$doorbell" | "$ROOT/bin/fm-operational-input.sh" doorbell-kind)" = launch-brief ] \
     || doorbell="not a launch-brief doorbell"
   quoted="'$(printf '%s' "$doorbell" | sed "s/'/'\\\\''/g")'"
-  printf '%s' "export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$2" "$3")$(fm_test_launch_git_prefix "$1")env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude $4 $(claude_worker_add_dirs "$2" "$3")--settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}' $CLAUDE_CONTROL_CHANNEL_FLAG $quoted"
+  printf '%s' "export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$2" "$3")$(fm_test_launch_git_prefix "$1")env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude $4 $(claude_worker_add_dirs "$2" "$3")--settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}$FM_TEST_CLAUDE_DENY_JSON}' $FM_TEST_CLAUDE_TOOLS_FLAG$CLAUDE_CONTROL_CHANNEL_FLAG $quoted"
 }
 
 test_claude_permission_mode_bypass_matches_absent_launch() {
@@ -2285,6 +2285,133 @@ test_non_claude_harness_ignores_claude_permission_mode() {
   pass "config/claude-permission-mode changes claude launches only"
 }
 
+# config/claude-worker-context (bin/fm-claude-context-lib.sh): the default
+# light profile hides unused built-in tools and unused MCP servers on a claude
+# ship or scout launch; `full` restores the unrestricted launch.
+test_claude_worker_context_light_is_the_default_and_reaches_scouts() {
+  local rec id out status launch
+  id=ctx-scout-z30
+  rec=$(make_spawn_case ctx-scout claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout)
+  status=$?
+  expect_code 0 "$status" "claude scout spawn with no claude-worker-context should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "$FM_TEST_CLAUDE_TOOLS_FLAG--append-system-prompt" "scout launch did not carry the default --tools list"
+  assert_contains "$launch" '"deniedMcpServers":[{"serverName":"claude.ai Gmail"}' "scout launch did not deny the unused connectors"
+  assert_contains "$launch" '{"serverName":"homeassistant"}]' "scout launch did not deny homeassistant"
+  assert_not_contains "$launch" "Atlassian" "the Jira connector must stay reachable"
+  assert_not_contains "$launch" "rag_qdrant_server" "Portolano must stay reachable"
+  assert_not_contains "$launch" "agentmemory" "Diario di bordo must stay reachable"
+  pass "the light claude worker context is the default and reaches scout launches"
+}
+
+test_claude_worker_context_full_restores_the_unrestricted_launch() {
+  local rec id out status launch
+  id=ctx-full-z31
+  rec=$(make_spawn_case ctx-full claude "$id")
+  read_case_record "$rec"
+  printf ' full\n' > "$HOME_DIR/config/claude-worker-context"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "claude spawn with claude-worker-context=full should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_not_contains "$launch" "--tools" "the full profile must not restrict built-in tools"
+  assert_not_contains "$launch" "deniedMcpServers" "the full profile must not deny MCP servers"
+  assert_contains "$launch" "\"sessionUrl\":false}}' $CLAUDE_CONTROL_CHANNEL_FLAG" "the full profile must keep the pre-profile launch shape"
+  pass "config/claude-worker-context=full launches exactly as before the light profile"
+}
+
+test_claude_worker_context_list_files_replace_the_defaults() {
+  local rec id out status launch
+  id=ctx-lists-z32
+  rec=$(make_spawn_case ctx-lists claude "$id")
+  read_case_record "$rec"
+  printf '# only what this home needs\nBash\n  ToolSearch  \n\nRead\n' > "$HOME_DIR/config/claude-worker-tools"
+  printf 'claude.ai Notion\n# a comment\nhomeassistant\n' > "$HOME_DIR/config/claude-worker-mcp-deny"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "claude spawn with custom context lists should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "--tools=Bash,ToolSearch,Read --append-system-prompt" "the tools file did not replace the default list"
+  assert_contains "$launch" '"deniedMcpServers":[{"serverName":"claude.ai Notion"},{"serverName":"homeassistant"}]}' "the deny file did not replace the default list"
+  assert_not_contains "$launch" "claude.ai Gmail" "a deny file must replace the default names, not extend them"
+
+  id=ctx-empty-deny-z33
+  rec=$(make_spawn_case ctx-empty-deny claude "$id")
+  read_case_record "$rec"
+  : > "$HOME_DIR/config/claude-worker-mcp-deny"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "claude spawn with an empty deny file should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_not_contains "$launch" "deniedMcpServers" "an empty deny file must deny nothing"
+  assert_contains "$launch" "--tools=Bash,Read,Edit" "an empty deny file must not touch the tools default"
+  pass "config/claude-worker-tools and claude-worker-mcp-deny replace the profile defaults"
+}
+
+test_claude_worker_context_invalid_files_refuse_before_endpoint_or_metadata() {
+  local rec id out status
+  id=ctx-bad-mode-z34
+  rec=$(make_spawn_case ctx-bad-mode claude "$id")
+  read_case_record "$rec"
+  printf 'lighter\n' > "$HOME_DIR/config/claude-worker-context"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "an unrecognized claude-worker-context token must refuse the spawn"
+  assert_contains "$out" "config/claude-worker-context holds 'lighter'" "refusal must name the file and the offending token"
+  assert_contains "$out" "light" "refusal must list light as an accepted value"
+  assert_contains "$out" "full" "refusal must list full as an accepted value"
+  [ ! -s "$LAUNCH_LOG" ] || fail "an invalid context mode must launch nothing (got: $(cat "$LAUNCH_LOG"))"
+  assert_absent "$HOME_DIR/state/$id.meta" "refusal must happen before meta is written"
+
+  id=ctx-bad-tool-z35
+  rec=$(make_spawn_case ctx-bad-tool claude "$id")
+  read_case_record "$rec"
+  rm -f "$HOME_DIR/config/claude-worker-context"
+  printf 'Bash,Read\n' > "$HOME_DIR/config/claude-worker-tools"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "a malformed claude-worker-tools entry must refuse the spawn"
+  assert_contains "$out" "config/claude-worker-tools has a malformed entry 'Bash,Read'" "refusal must name the file and the entry"
+  assert_absent "$HOME_DIR/state/$id.meta" "a malformed tools file must refuse before meta is written"
+
+  id=ctx-bad-deny-z36
+  rec=$(make_spawn_case ctx-bad-deny claude "$id")
+  read_case_record "$rec"
+  : > "$HOME_DIR/config/claude-worker-tools"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "an empty claude-worker-tools file must refuse the spawn"
+  assert_contains "$out" "config/claude-worker-tools lists no tools" "refusal must say the list is empty"
+  rm -f "$HOME_DIR/config/claude-worker-tools"
+  printf "it's\n" > "$HOME_DIR/config/claude-worker-mcp-deny"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "a deny entry with a quote must refuse the spawn"
+  assert_contains "$out" "config/claude-worker-mcp-deny has a malformed entry" "refusal must name the deny file"
+  pass "invalid claude worker context files refuse before any endpoint or metadata"
+}
+
+test_non_claude_harness_ignores_claude_worker_context() {
+  local rec id out status launch
+  id=ctx-codex-z37
+  rec=$(make_spawn_case ctx-codex codex "$id")
+  read_case_record "$rec"
+  printf 'lighter\n' > "$HOME_DIR/config/claude-worker-context"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex)
+  status=$?
+  expect_code 0 "$status" "a codex spawn must not read claude-worker-context"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_not_contains "$launch" "--tools" "the claude tool restriction must not leak into a codex launch"
+  assert_not_contains "$launch" "deniedMcpServers" "the claude deny list must not leak into a codex launch"
+  pass "config/claude-worker-context changes claude ship and scout launches only"
+}
+
 test_launch_preserves_inherited_git_config
 test_worker_launch_delivers_role_scope
 test_no_profile_keeps_claude_profile_defaults
@@ -2348,6 +2475,11 @@ test_claude_permission_mode_auto_reaches_scout_launch
 test_claude_worker_launch_covers_task_channel_dirs
 test_claude_permission_mode_invalid_refuses_before_endpoint_or_metadata
 test_non_claude_harness_ignores_claude_permission_mode
+test_claude_worker_context_light_is_the_default_and_reaches_scouts
+test_claude_worker_context_full_restores_the_unrestricted_launch
+test_claude_worker_context_list_files_replace_the_defaults
+test_claude_worker_context_invalid_files_refuse_before_endpoint_or_metadata
+test_non_claude_harness_ignores_claude_worker_context
 test_non_claude_harness_ignores_config_dir
 test_claude_task_launch_carries_control_channel_authority
 test_claude_secondmate_launch_omits_task_control_channel_authority

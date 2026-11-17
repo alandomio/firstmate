@@ -9,7 +9,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | --- | --- |
 | Firstmate's code, private files, or project location | [FM_HOME](#fm_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--fm_backend) and [harness support](#harness-support) |
-| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), and its [Orca environment source](#orca-environment-source-configlaunch-env-tmux-session) |
+| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [Claude worker context](#claude-worker-context-configclaude-worker-context-configclaude-worker-tools-configclaude-worker-mcp-deny), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), and its [Orca environment source](#orca-environment-source-configlaunch-env-tmux-session) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) |
@@ -1014,6 +1014,34 @@ The diagnostic names the accepted values; Firstmate never falls back to a permis
 The file is a captain-wide safety preference, so it is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract; a secondmate's own Claude crewmates then launch on the same posture.
 
 The [Claude adapter reference](../.agents/skills/harness-adapters/references/harness/claude.md) records the permission-mode observations and the distinct startup dialogs.
+
+## Claude worker context (config/claude-worker-context, config/claude-worker-tools, config/claude-worker-mcp-deny)
+
+A Claude ship or scout worker starts with every built-in tool definition and every connected MCP server's tool names already in its context, and re-reads them on each model call.
+By default Firstmate therefore launches those workers with a lighter profile: `--tools=<names>` hides built-in tools a worker does not use, and a `deniedMcpServers` key in the launch's inline `--settings` JSON hides the MCP servers and claude.ai connectors a worker does not use.
+Servers that are not named stay reachable, so Portolano (`rag_qdrant_server`), Diario di bordo (`agentmemory`), the Atlassian/Jira connector, and a project's own servers such as `goplanner` and `mcp_server_mysql` are untouched.
+User settings, user skills, plugins, and hooks are not restricted, because `--setting-sources` would also drop `~/.claude/skills` and the user-scope `agentmemory` server.
+It never edits `~/.claude.json` or `~/.claude/settings.json`, and it does not apply to a Claude secondmate or to the captain's interactive sessions.
+
+All three files are optional, local, and gitignored.
+They are read on every spawn and relaunch, so a change reaches the next worker without a restart.
+They are not in the inherited configuration set; create them in each home that wants a non-default profile.
+
+| File | Content | Absent |
+| --- | --- | --- |
+| `config/claude-worker-context` | One token, whitespace-trimmed: `light` or `full`. | `light`. |
+| `config/claude-worker-tools` | One built-in tool name per line, replacing the default list. Use only `A-Z`, `a-z`, `0-9`, `_`, `.`, `-`. Keep `ToolSearch`: without it Claude loads every MCP tool definition up front. | `Bash,Read,Edit,Write,Grep,Glob,Skill,ToolSearch,Agent,Monitor,TodoWrite,WebFetch,WebSearch`. |
+| `config/claude-worker-mcp-deny` | One MCP server name per line, exactly as Claude lists it (for example `claude.ai Gmail`), replacing the default list. An empty file denies nothing. | `claude.ai Gmail`, `claude.ai Google Drive`, `claude.ai Google Calendar`, `claude.ai Google Sheets`, `claude.ai Notion`, `claude.ai Trello`, `claude.ai Claude Docs`, `claude.ai Context7`, `homeassistant`. |
+
+`full` restores the unrestricted launch, and the two list files are then ignored.
+Blank lines and lines beginning with `#` are allowed in the list files; a trailing comment on an entry line is not.
+A tool name Claude does not know is ignored by Claude, and a denied server that is not configured is harmless, so the defaults are safe on a machine that has none of them.
+Any other mode token, an unreadable file, an entry with a disallowed character, or an empty tools file refuses the spawn before any endpoint, worktree, or record exists and names the file.
+A harness other than Claude never reads these files.
+
+A measured example, one `claude -p` run on Haiku with the connectors loaded, same prompt, input plus cache tokens of the last model call: the default launch is 64,951 tokens and the light profile is 50,642, about 14k (22%) fewer on every call of the session.
+Verification: `bash tests/fm-spawn-dispatch-profile.test.sh`.
+[`bin/fm-claude-context-lib.sh`](../bin/fm-claude-context-lib.sh) owns parsing and the defaults; [`bin/fm-spawn.sh`](../bin/fm-spawn.sh)'s header owns the launch-flag mechanics.
 
 ## Worker tool exclusions (config/crew-exclude-tools)
 
