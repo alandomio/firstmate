@@ -1030,7 +1030,7 @@ They are not in the inherited configuration set; create them in each home that w
 | File | Content | Absent |
 | --- | --- | --- |
 | `config/claude-worker-context` | One token, whitespace-trimmed: `light` or `full`. | `light`. |
-| `config/claude-worker-tools` | One built-in tool name per line, replacing the default list. Use only `A-Z`, `a-z`, `0-9`, `_`, `.`, `-`. Keep `ToolSearch`: without it Claude loads every MCP tool definition up front. | `Bash,Read,Edit,Write,Grep,Glob,Skill,ToolSearch,Agent,Monitor,TodoWrite,WebFetch,WebSearch`. |
+| `config/claude-worker-tools` | One built-in tool name per line, replacing the default list. Use only `A-Z`, `a-z`, `0-9`, `_`, `.`, `-`. Keep `ToolSearch`: without it Claude loads every MCP tool definition up front. | `Bash,Read,Edit,Write,Grep,Glob,Skill,ToolSearch,Agent,Monitor,TodoWrite,WebFetch,WebSearch,BashOutput,KillShell,TaskOutput,TaskStop,NotebookEdit,TaskCreate,TaskGet,TaskList,TaskUpdate`. |
 | `config/claude-worker-mcp-deny` | One MCP server name per line, exactly as Claude lists it (for example `claude.ai Gmail`), replacing the default list. An empty file denies nothing. | `claude.ai Gmail`, `claude.ai Google Drive`, `claude.ai Google Calendar`, `claude.ai Google Sheets`, `claude.ai Notion`, `claude.ai Trello`, `claude.ai Claude Docs`, `claude.ai Context7`, `homeassistant`. |
 
 `full` restores the unrestricted launch, and the two list files are then ignored.
@@ -1039,7 +1039,7 @@ A tool name Claude does not know is ignored by Claude, and a denied server that 
 Any other mode token, an unreadable file, an entry with a disallowed character, or an empty tools file refuses the spawn before any endpoint, worktree, or record exists and names the file.
 A harness other than Claude never reads these files.
 
-A measured example, one `claude -p` run on Haiku with the connectors loaded, same prompt, input plus cache tokens of the last model call: the default launch is 64,951 tokens and the light profile is 50,642, about 14k (22%) fewer on every call of the session.
+A measured example, one `claude -p` run on Haiku with the connectors loaded, same prompt, input plus cache tokens of the last model call: the default launch is 64,951 tokens; the MCP deny list alone saves about 10.6k (54,362), the tools list alone about 3.2k (61,766, measured with the earlier shorter list), and the light profile with both is 50,642, about 14.3k (22%) fewer on every call of the session.
 Verification: `bash tests/fm-spawn-dispatch-profile.test.sh`.
 [`bin/fm-claude-context-lib.sh`](../bin/fm-claude-context-lib.sh) owns parsing and the defaults; [`bin/fm-spawn.sh`](../bin/fm-spawn.sh)'s header owns the launch-flag mechanics.
 

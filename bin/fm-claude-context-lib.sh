@@ -15,7 +15,7 @@
 # ~/.claude/skills and the user-scope agentmemory server.
 
 # shellcheck disable=SC2034  # the three results below are read by bin/fm-spawn.sh
-FM_CLAUDE_CTX_DEFAULT_TOOLS='Bash,Read,Edit,Write,Grep,Glob,Skill,ToolSearch,Agent,Monitor,TodoWrite,WebFetch,WebSearch'
+FM_CLAUDE_CTX_DEFAULT_TOOLS='Bash,Read,Edit,Write,Grep,Glob,Skill,ToolSearch,Agent,Monitor,TodoWrite,WebFetch,WebSearch,BashOutput,KillShell,TaskOutput,TaskStop,NotebookEdit,TaskCreate,TaskGet,TaskList,TaskUpdate'
 FM_CLAUDE_CTX_DEFAULT_DENY='claude.ai Gmail
 claude.ai Google Drive
 claude.ai Google Calendar
