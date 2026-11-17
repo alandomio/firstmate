@@ -1,0 +1,2 @@
+Warning: claude.ai MCP servers blocked by enterprise policy: claude.ai Claude Docs, claude.ai Google Sheets, claude.ai Context7, claude.ai Notion, claude.ai Trello, claude.ai Google Calendar, claude.ai Gmail, claude.ai Google Drive
+SessionEnd hook [node "${CLAUDE_PLUGIN_ROOT}/scripts/session-end.mjs"] failed: Hook cancelled
