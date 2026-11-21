@@ -2027,6 +2027,81 @@ test_escalated_undelivered_correlation_stays_retryable() {
   pass "an escalated correlation stays retryable only while undelivered"
 }
 
+# An escalated record whose delivery was never confirmed still caches the
+# status file's scan signature, so the watcher poll stops rereading the whole
+# log for it, and the correlated line still resolves it when it arrives.
+test_unconfirmed_escalated_record_skips_unchanged_status() {
+  local home state corr rec marker scans_file
+  home=$(setup_parent unconfirmed-scan-cache)
+  state="$home/state"
+  export FM_PENDING_REPLY_NOW=9800
+  corr=$(fm_pending_reply_create "$home" "$state" "hibit" "wake after lost transport")
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  marker=$(fm_pending_reply_delivery_confirmation_path "$state" "$corr")
+  fm_pending_reply_prepare_delivery "$state" "$corr" || fail "prepare delivery failed"
+  fm_pending_reply_mark_delivery_unknown "$state" "$corr" || fail "mark delivery unknown failed"
+  fm_pending_reply_maybe_escalate "$state" "$corr" || fail "delivery-unknown escalation should fire"
+  [ "$(phase_of "$state" "$corr")" = escalated ] || fail "phase should be escalated"
+  [ -z "$(fm_pending_reply_get "$rec" delivered_epoch)" ] || fail "setup: delivery must stay unconfirmed"
+  [ -f "$marker" ] || fail "setup: the unconfirmed record should carry its delivery marker"
+  printf 'working [corr=%sx]: a longer token is not this one\n' "$corr" >> "$state/hibit.status"
+
+  # Count the status-file scans by wrapping the production scanner. The caller
+  # runs it in a command substitution, so the count lives in a file.
+  scans_file="$home/scans"
+  : > "$scans_file"
+  eval "_real_$(declare -f fm_pending_reply_find_resolve_line)"
+  fm_pending_reply_find_resolve_line() { printf 'x' >> "$scans_file"; _real_fm_pending_reply_find_resolve_line "$@"; }
+
+  if fm_pending_reply_try_resolve "$state" "$corr"; then
+    fail "nothing should resolve before the correlated line lands"
+  fi
+  [ "$(wc -c < "$scans_file")" -eq 1 ] || fail "the first poll should scan the status file once"
+  [ -n "$(fm_pending_reply_get "$rec" parent_status_scan_signature)" ] \
+    || fail "an unconfirmed record must cache the status scan signature"
+  if fm_pending_reply_try_resolve "$state" "$corr"; then
+    fail "nothing should resolve while the status file is unchanged"
+  fi
+  [ "$(wc -c < "$scans_file")" -eq 1 ] || fail "an unchanged status file must not be rescanned"
+
+  # The correlated report lands: the changed signature triggers a fresh scan
+  # and the record resolves exactly as a confirmed one would.
+  export FM_PENDING_REPLY_NOW=9801
+  printf 'done [corr=%s]: routed work picked up\n' "$corr" >> "$state/hibit.status"
+  fm_pending_reply_try_resolve "$state" "$corr" || fail "correlated report should resolve the record"
+  [ "$(wc -c < "$scans_file")" -eq 2 ] || fail "a changed status file should be scanned again"
+  [ "$(phase_of "$state" "$corr")" = resolved ] || fail "phase should be resolved"
+  [ ! -e "$marker" ] || fail "resolving should drop the attempted marker"
+  unset -f fm_pending_reply_find_resolve_line _real_fm_pending_reply_find_resolve_line
+  . "$ROOT/bin/fm-pending-reply-lib.sh"
+  unset FM_PENDING_REPLY_NOW
+  pass "an unconfirmed escalated record caches the scan signature and still resolves"
+}
+
+# The prefilter keeps only token-bearing lines and never changes which line wins.
+test_resolve_scan_prefilter_matches_full_scan() {
+  local dir status line
+  dir="$TMP_ROOT/resolve-prefilter"
+  mkdir -p "$dir"
+  status="$dir/hibit.status"
+  {
+    printf 'working: no token here\n'
+    printf 'working [corr=abcd0123abcd0123x]: longer word, not this token\n'
+    printf 'pending-reply-missed [corr=abcd0123abcd0123]: own escalation\n'
+    printf 'DONE [CORR=ABCD0123ABCD0123]: upper case is not the token\n'
+    printf 'done [corr=abcd0123abcd0123]: first real reply\n'
+    printf 'done [corr=abcd0123abcd0123]: second real reply\n'
+  } > "$status"
+  line=$(fm_pending_reply_find_resolve_line "$status" abcd0123abcd0123)
+  [ "$line" = 'done [corr=abcd0123abcd0123]: first real reply' ] \
+    || fail "the first resolving line should win, got '$line'"
+  line=$(fm_pending_reply_find_resolve_line "$status" 0000000000000000)
+  [ -z "$line" ] || fail "an absent token must resolve nothing, got '$line'"
+  line=$(fm_pending_reply_find_resolve_line "$dir/missing.status" abcd0123abcd0123)
+  [ -z "$line" ] || fail "a missing status file must resolve nothing, got '$line'"
+  pass "the resolve scan prefilter keeps the per-line predicate's verdict"
+}
+
 test_same_kind_escalation_reopens_after_operator_close() {
   (
     local dir fb log home state corr status blocked open
@@ -2150,6 +2225,8 @@ test_mechanical_helper_writes_parent_channel
 test_remote_parent_replies_is_not_wrong_home
 test_local_parent_replies_is_wrong_home_evidence
 test_escalated_undelivered_correlation_stays_retryable
+test_unconfirmed_escalated_record_skips_unchanged_status
+test_resolve_scan_prefilter_matches_full_scan
 test_same_kind_escalation_reopens_after_operator_close
 
 printf 'ok - all pending-reply tests passed\n'

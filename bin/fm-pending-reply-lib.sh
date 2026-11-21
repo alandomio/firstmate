@@ -596,16 +596,34 @@ fm_pending_reply_line_resolves() {  # <line> <corr_id>
 }
 
 # Scan a status file for a correlated resolve. Prints the matching line or empty.
+# One fixed-string grep keeps only the lines that carry the correlation token,
+# so the per-line predicate (which forks) runs on a handful of candidates rather
+# than on every line of a long-lived log: a parent status log of a few thousand
+# lines otherwise costs seconds per record on every watcher poll. The filter is
+# a superset of the predicate - a resolving line always contains the literal
+# token, -i covers a caller running with nocasematch, and -a keeps a stray NUL
+# from turning the output into a "binary file matches" notice - and the
+# predicate below still decides, in file order, exactly as before.
 fm_pending_reply_find_resolve_line() {  # <status-file> <corr_id>
-  local status_file=$1 corr=$2 line
+  local status_file=$1 corr=$2 line candidates rc=0
   [ -f "$status_file" ] || return 0
+  [ -n "$corr" ] || return 0
+  candidates=$(LC_ALL=C grep -a -i -F -- "$(fm_pending_reply_corr_token "$corr")" "$status_file" 2>/dev/null) || rc=$?
+  # 1 is "no line carries the token": nothing can resolve. Any other failure
+  # falls back to the unfiltered scan rather than reading as "no reply".
+  [ "$rc" -ne 1 ] || return 0
+  if [ "$rc" -ne 0 ]; then
+    candidates=$(cat "$status_file" 2>/dev/null) || return 0
+  fi
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
     if fm_pending_reply_line_resolves "$line" "$corr"; then
       printf '%s' "$line"
       return 0
     fi
-  done < "$status_file"
+  done <<EOF
+$candidates
+EOF
   return 0
 }
 
@@ -671,7 +689,6 @@ fm_pending_reply_try_resolve() {  # <state-dir> <corr_id> [status-file-override]
 _fm_pending_reply_try_resolve_locked() {  # <state-dir> <corr_id> [status-file-override]
   local state=$1 corr=$2 status_override=${3-}
   local rec phase delivered marker delivery_entry delivery_state status_file signature previous line via now
-  local unconfirmed=0
   rec=$(fm_pending_reply_path "$state" "$corr")
   [ -f "$rec" ] || return 1
   phase=$(fm_pending_reply_get "$rec" phase)
@@ -686,7 +703,6 @@ _fm_pending_reply_try_resolve_locked() {  # <state-dir> <corr_id> [status-file-o
     delivery_entry=$(cat "$marker" 2>/dev/null || true)
     delivery_state=${delivery_entry%%=*}
     case "$delivery_state" in attempted|confirmed) ;; *) return 1 ;; esac
-    unconfirmed=1
   fi
   status_file=$(fm_pending_reply_get "$rec" parent_status)
   # Only the asked task's own status log answers its request: another mate's
@@ -695,14 +711,18 @@ _fm_pending_reply_try_resolve_locked() {  # <state-dir> <corr_id> [status-file-o
     [ "$status_override" -ef "$status_file" ] || return 1
     status_file=$status_override
   fi
-  if [ -z "$status_override" ] && [ "$unconfirmed" = 0 ]; then
+  # The scan depends only on the status file and the correlation token, never on
+  # whether delivery is confirmed, so an unconfirmed record caches its signature
+  # too: otherwise an escalated record whose delivery was never confirmed rereads
+  # the whole log on every watcher poll, forever.
+  if [ -z "$status_override" ]; then
     signature=$(fm_pending_reply_file_signature "$status_file")
     previous=$(fm_pending_reply_get "$rec" parent_status_scan_signature)
     [ "$signature" != "$previous" ] || return 1
   fi
   line=$(fm_pending_reply_find_resolve_line "$status_file" "$corr")
   if [ -z "$line" ]; then
-    if [ -z "$status_override" ] && [ "$unconfirmed" = 0 ]; then
+    if [ -z "$status_override" ]; then
       fm_pending_reply_set "$rec" parent_status_scan_signature "$signature" || return 1
     fi
     return 1
