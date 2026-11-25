@@ -1,0 +1,69 @@
+$ fm-promise.sh add rilascio --due 16:00 --text "rilascio app al cliente"
+Registrato: rilascio app al cliente entro oggi 16:00 (promessa rilascio)
+cloud.log: arm 
+$ fm-promise.sh add report --due "domani 10:00" --text "report settimanale"
+Registrato: report settimanale entro domani 10:00 (promessa report)
+cloud.log (second add must not re-arm): arm 
+$ fm-promise.sh block rilascio --decision "MR 99: A o B"
+BLOCCA SCADENZA 16:00 - MR 99: A o B (impegno: rilascio app al cliente)
+$ fm-promise.sh blocking
+BLOCCA SCADENZA 16:00 - MR 99: A o B (impegno: rilascio app al cliente)
+$ fm-promise.sh list --json (removed)
+fm-promise: unknown option: --json
+exit=2
+$ fm-promise.sh list
+report [open] entro domani 10:00 report settimanale
+rilascio [open] entro oggi 16:00 rilascio app al cliente - BLOCCATA da decisione: MR 99: A o B
+$ alerts at 14:05
+alerts sent: 1
+$ alerts at 15:35
+alerts sent: 1
+$ alerts at 16:05
+alerts sent: 1
+$ alerts at 16:10
+alerts sent: 0
+=== telegram outbox ===
+Scade tra 1h55 (16:00): rilascio app al cliente
+BLOCCA SCADENZA 16:00: serve la tua decisione - MR 99: A o B
+(promessa rilascio; una risposta qui è informazione, non un'autorizzazione)
+----
+Scade tra 25 min (16:00): rilascio app al cliente
+BLOCCA SCADENZA 16:00: serve la tua decisione - MR 99: A o B
+(promessa rilascio; una risposta qui è informazione, non un'autorizzazione)
+----
+SCADUTO alle 16:00: rilascio app al cliente
+BLOCCA SCADENZA 16:00: serve la tua decisione - MR 99: A o B
+(promessa rilascio; una risposta qui è informazione, non un'autorizzazione)
+----
+$ fm-promise.sh digest
+BLOCCA SCADENZA 16:00 - MR 99: A o B (impegno: rilascio app al cliente)
+impegni di oggi:
+rilascio [open] entro oggi 16:00 rilascio app al cliente - BLOCCATA da decisione: MR 99: A o B
+$ fm-sentinel.sh power-off suspend
+exit=0
+$ fm-sentinel.sh power-off shutdown (reboot)
+exit=0
+=== telegram outbox ===
+Portatile spento con 2 impegni aperti: rilascio app al cliente (entro oggi 16:00); report settimanale (entro domani 10:00)
+----
+$ unblock + done rilascio
+promise rilascio unblocked
+promise rilascio closed
+cloud.log: arm 
+$ done report (last one)
+promise report closed
+cloud.log: arm disarm 
+$ offline-notice with nothing open
+exit=0 outbox=[]
+=== registro.log ===
+1795608000	add	rilascio	due=1795618800 rilascio app al cliente
+1795608000	cloud-arm	-	
+1795608000	add	report	due=1795683600 report settimanale
+1795608000	block	rilascio	MR 99: A o B
+1795611900	alert-2h	rilascio	sent
+1795617300	alert-30m	rilascio	sent
+1795619100	alert-overdue	rilascio	sent
+1795613561	unblock	rilascio	
+1795613561	done	rilascio	
+1795613561	done	report	
+1795613561	cloud-disarm	-	

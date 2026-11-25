@@ -1,0 +1,27 @@
+ok - add records a dated promise and echoes it back
+ok - add refuses duplicates, bad ids, and missing or unreadable due times
+ok - block ties a captain decision to the promise and prints the banner
+ok - alerts fire once each at 2h, 30m, and overdue
+ok - a late registration gets only the most urgent stage
+ok - a failed delivery retries on the next run
+ok - digest leads with blocking decisions and lists today's promises
+ok - unblock clears the banner and done archives the promise
+ok - legacy condition promises stay readable and keep working
+ok - the nessuna scadenza override is recorded in the log
+ok - time expressions match deadlines and skip everyday mentions
+ok - Stop blocks an unregistered captain deadline until a promise is added
+ok - the none override counts only after the message
+ok - Stop blocks at most twice per message and logs the give-up once
+ok - the hook is inert outside a primary home
+ok - the prompt hook surfaces blocking decisions and the registration hint
+ok - a dead watcher opens an episode, requests recovery, and alerts the captain
+ok - repeat ticks stay quiet inside the retry and realert windows
+ok - a fresh beacon closes the episode with one recovery message
+ok - with no live session the sentinel alerts instead of typing anywhere
+ok - the morning digest reports supervision and today's promises
+ok - systemd units run tick every 5 minutes and the digest at 08:30
+ok - the first open dated promise arms the cloud check and the last one closed disarms it
+ok - a failed or unconfigured arm or disarm is retried by the next sync
+ok - shutdown and suspend send the open-commitments notice, reboots and manual stops do not
+ok - system units notify before suspend and at shutdown as the home owner
+exit=0
