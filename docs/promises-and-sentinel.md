@@ -49,6 +49,7 @@ When supervision is needed and that verdict fails, the sentinel opens a down epi
   The input tells the session to drain its wakes and end the turn, which re-arms the watcher through the harness's own path; the sentinel never starts or kills a watcher itself.
 - It alerts the captain on Telegram, once per episode and again every hour while it lasts, saying what it tried.
   When no live session holds the home, the alert says the session must be reopened.
+  While a turn is running nothing is typed, and the alert waits until supervision has been down for 10 minutes.
 
 A fresh beacon closes the episode with one "ripristinata" message.
 The sentinel counts 240 seconds of beacon silence as down, so with the timer every five minutes recovery is requested at most nine minutes after the last sign of life, leaving a minute for the session's turn to re-arm.

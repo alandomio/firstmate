@@ -19,7 +19,7 @@
 #   fm-promise.sh add <id> --due <when> --text <what> [--ref <source>]
 #                 [--every <minutes> --cond <shell>]
 #   fm-promise.sh add <id> <every-minutes> <cond-shell> <message>   (legacy form)
-#   fm-promise.sh list [--open] [--today] [--json]
+#   fm-promise.sh list [--open] [--today]
 #   fm-promise.sh done <id>               close and archive (kept or withdrawn)
 #   fm-promise.sh block <id> --decision <text> [--task <backlog-id>]
 #   fm-promise.sh unblock <id>            the captain answered the decision
@@ -301,18 +301,16 @@ status_of() {  # <id>
 }
 
 cmd_list() {
-  local only_open=0 today=0 json=0 id due st text block n day first=1
+  local only_open=0 today=0 id due st text block n day
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --open) only_open=1 ;;
       --today) today=1 ;;
-      --json) json=1 ;;
       *) die "unknown option: $1" 2 ;;
     esac
     shift
   done
   n=$(now); day=$(day_of "$n")
-  [ "$json" = 1 ] && printf '['
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     st=$(status_of "$id")
@@ -324,16 +322,8 @@ cmd_list() {
     fi
     text=$(head -n 1 "$D/$id.msg")
     block=$(sed -n 's/^decision=//p' "$D/$id.block" 2>/dev/null | head -n 1)
-    if [ "$json" = 1 ]; then
-      [ "$first" = 1 ] || printf ','
-      first=0
-      printf '%s' "$(jq -cn --arg id "$id" --arg st "$st" --arg due "$due" --arg text "$text" --arg block "$block" \
-        '{id:$id,status:$st,due:(if $due=="" then null else ($due|tonumber) end),text:$text,blocked_by:(if $block=="" then null else $block end)}')"
-    else
-      printf '%s [%s]%s %s%s\n' "$id" "$st" "${due:+ entro $(when_label "$due")}" "$text" "${block:+ - BLOCCATA da decisione: $block}"
-    fi
+    printf '%s [%s]%s %s%s\n' "$id" "$st" "${due:+ entro $(when_label "$due")}" "$text" "${block:+ - BLOCCATA da decisione: $block}"
   done < <(open_ids)
-  [ "$json" = 1 ] && printf ']\n'
   return 0
 }
 
