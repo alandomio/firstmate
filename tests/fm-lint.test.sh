@@ -165,6 +165,20 @@ test_help_reports_the_complete_interface() {
   pass "fm-lint.sh --help reports the complete executable interface"
 }
 
+# Bash renders EPOCHREALTIME with the locale decimal separator, so an Italian
+# LC_NUMERIC yields "seconds,micros"; the timer must read both separators.
+test_now_ms_accepts_either_decimal_separator() {
+  local fn sep got
+  fn=$(sed -n '/^fm_lint_now_ms() {$/,/^}$/p' "$LINT")
+  [ -n "$fn" ] || fail "fm_lint_now_ms not found in fm-lint.sh"
+  for sep in '.' ','; do
+    got=$(unset EPOCHREALTIME; EPOCHREALTIME="1795614936${sep}078605"; eval "$fn"; fm_lint_now_ms) \
+      || fail "fm_lint_now_ms failed with separator '$sep'"
+    [ "$got" = 1795614936078 ] || fail "fm_lint_now_ms with separator '$sep' gave '$got'"
+  done
+  pass "fm_lint_now_ms reads EPOCHREALTIME with either decimal separator"
+}
+
 test_list_files_reports_the_shell_inventory() {
   local listed expected
   # CI=true forces the full canonical set regardless of the ambient branch or
@@ -2027,6 +2041,7 @@ SH
 }
 
 test_help_reports_the_complete_interface
+test_now_ms_accepts_either_decimal_separator
 test_list_files_reports_the_shell_inventory
 test_canonical_partitions_preserve_full_lint
 test_fast_mode_disables_extended_analysis
