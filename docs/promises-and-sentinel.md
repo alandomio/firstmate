@@ -51,7 +51,7 @@ When supervision is needed and that verdict fails, the sentinel opens a down epi
   When no live session holds the home, the alert says the session must be reopened.
 
 A fresh beacon closes the episode with one "ripristinata" message.
-Because the verdict uses the standard 300-second grace and the timer runs every five minutes, recovery is requested within ten minutes of the last sign of life.
+The sentinel counts 240 seconds of beacon silence as down, so with the timer every five minutes recovery is requested at most nine minutes after the last sign of life, leaving a minute for the session's turn to re-arm.
 
 Every morning at 08:30 the sentinel sends `Sorveglianza attiva, impegni di oggi: ...`, or a warning when supervision is down.
 A missing morning message means the sentinel, the timer, the laptop, or the Telegram channel is broken.
