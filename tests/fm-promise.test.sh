@@ -199,7 +199,7 @@ grep -q "^: Firstmate operational input waiting: read '$H3/state/operational-inb
   || fail "recovery must type a record-backed doorbell, got: $(cat "$SUB" 2>/dev/null)"
 rec=$(sed -n "s/^: Firstmate operational input waiting: read '\\([^']*\\)'.*/\\1/p" "$SUB" | head -n 1)
 grep -q 'Run bin/fm-wake-drain.sh' "$rec" || fail "the record must tell the session to drain and end the turn"
-grep -q '^Sorveglianza firstmate ferma da 20 min (stale-beacon). Azione: recovery requested in the session.$' "$SENT" \
+grep -q '^Sorveglianza firstmate ferma da 2[01] min (stale-beacon). Azione: recovery requested in the session.$' "$SENT" \
   || fail "the captain must be alerted, got: $(cat "$SENT")"
 pass "a dead watcher opens an episode, requests recovery, and alerts the captain"
 
@@ -235,3 +235,61 @@ pass "the morning digest reports supervision and today's promises"
 units=$("$S" systemd-units)
 case "$units" in *' tick'*'OnUnitActiveSec=5min'*' digest'*'OnCalendar=*-*-* 08:30:00'*) ;; *) fail "systemd units must carry both timers" ;; esac
 pass "systemd units run tick every 5 minutes and the digest at 08:30"
+
+# --- cloud arming and the offline notice ------------------------------------
+
+H5=$(new_home cloud)
+export FM_HOME=$H5
+CALLS="$TMP_ROOT/cloud-calls.txt"
+: > "$CALLS"
+printf '# arm the cloud check\necho arm >> %s\n' "'$CALLS'" > "$H5/config/sentinel-arm"
+printf 'echo disarm >> %s\n' "'$CALLS'" > "$H5/config/sentinel-disarm"
+FM_PROMISE_NOW=$(at 9:00) "$P" add uno --due 16:00 --text 'primo impegno' >/dev/null
+FM_PROMISE_NOW=$(at 9:00) "$P" add due --due 18:00 --text 'secondo impegno' >/dev/null
+FM_PROMISE_NOW=$(at 9:00) "$P" add legacy 15 'false' 'condizione senza scadenza' >/dev/null
+[ "$(cat "$CALLS")" = arm ] || fail "only the first dated promise must arm, got: $(cat "$CALLS")"
+FM_PROMISE_NOW=$(at 9:00) "$P" "done" uno >/dev/null
+[ "$(cat "$CALLS")" = arm ] || fail "closing one of two dated promises must not disarm"
+FM_PROMISE_NOW=$(at 9:00) "$P" "done" due >/dev/null
+[ "$(printf 'arm\ndisarm')" = "$(cat "$CALLS")" ] || fail "closing the last dated promise must disarm, got: $(cat "$CALLS")"
+grep -q $'\tcloud-arm\t' "$H5/data/promesse/registro.log" || fail "arming must be logged"
+grep -q $'\tcloud-disarm\t' "$H5/data/promesse/registro.log" || fail "disarming must be logged"
+pass "the first open dated promise arms the cloud check and the last one closed disarms it"
+
+: > "$CALLS"
+printf 'exit 3\n' > "$H5/config/sentinel-arm"
+FM_PROMISE_NOW=$(at 9:00) "$P" add tre --due 18:00 --text 'terzo impegno' >/dev/null 2>&1 \
+  || fail "a failed arm must not fail the registration"
+[ "$(cat "$H5/data/promesse/.cloud-state")" = disarmed ] || fail "a failed arm must not record armed"
+printf 'echo arm >> %s\n' "'$CALLS'" > "$H5/config/sentinel-arm"
+"$P" cloud || fail "cloud sync must succeed once the command works"
+"$P" cloud
+[ "$(cat "$CALLS")" = arm ] || fail "cloud sync must retry once and then stay quiet, got: $(cat "$CALLS")"
+rm -f "$H5/config/sentinel-disarm"
+FM_PROMISE_NOW=$(at 9:00) "$P" "done" tre >/dev/null
+[ "$(cat "$H5/data/promesse/.cloud-state")" = armed ] || fail "with no disarm command nothing must run or be recorded"
+pass "a failed or unconfigured arm or disarm is retried by the next sync"
+
+: > "$SENT"
+FM_SENTINEL_SYSTEM_STATE=stopping FM_SENTINEL_REBOOTING=0 "$S" power-off shutdown
+[ ! -s "$SENT" ] || fail "with no dated promise open the shutdown notice must stay silent"
+FM_PROMISE_NOW=$(at 9:00) "$P" add quattro --due 12:00 --text 'mail a Sologas' >/dev/null
+FM_PROMISE_NOW=$(at 9:00) "$P" add cinque --due 17:00 --text 'rilascio dev' >/dev/null
+FM_PROMISE_NOW=$(at 9:00) FM_SENTINEL_SYSTEM_STATE=stopping FM_SENTINEL_REBOOTING=0 "$S" power-off shutdown
+grep -qx 'Portatile spento con 2 impegni aperti: mail a Sologas (entro oggi 12:00); rilascio dev (entro oggi 17:00)' "$SENT" \
+  || fail "shutdown notice text, got: $(cat "$SENT")"
+: > "$SENT"
+FM_PROMISE_NOW=$(at 9:00) "$S" power-off suspend
+grep -q '^Portatile spento con 2 impegni aperti' "$SENT" || fail "suspend must send the notice too"
+: > "$SENT"
+FM_SENTINEL_SYSTEM_STATE=running "$S" power-off shutdown
+FM_SENTINEL_SYSTEM_STATE=stopping FM_SENTINEL_REBOOTING=1 "$S" power-off shutdown
+[ ! -s "$SENT" ] || fail "a reboot or a hand-stopped unit must not send the notice"
+pass "shutdown and suspend send the open-commitments notice, reboots and manual stops do not"
+
+units=$("$S" systemd-units --system --user alan)
+case "$units" in *'Before=sleep.target'*'power-off suspend'*'WantedBy=sleep.target'*'After=network-online.target'*'ExecStop='*'power-off shutdown'*) ;;
+  *) fail "system units must hook suspend and shutdown, got: $units" ;; esac
+case "$units" in *'User=alan'*) ;; *) fail "system units must run as the home owner" ;; esac
+"$S" systemd-units --system --user root >/dev/null 2>&1 && fail "system units must refuse to run as root"
+pass "system units notify before suspend and at shutdown as the home owner"

@@ -6,7 +6,9 @@
 # session notices, and on 24/11/2026 it stayed down about five hours. This
 # script runs from a systemd user timer every five minutes instead:
 #
-#   tick     1. sends due deadline alerts (bin/fm-promise.sh alerts);
+#   tick     1. sends due deadline alerts (bin/fm-promise.sh alerts) and
+#               re-syncs the cloud check's armed state (bin/fm-promise.sh
+#               cloud), so a failed arm or disarm is retried;
 #            2. touches state/.sentinel-beat and runs the optional cloud
 #               heartbeat command in config/sentinel-heartbeat (one shell line,
 #               bounded to 20 s), so an outside dead-man's switch can tell the
@@ -23,9 +25,19 @@
 #            own supervision process group on purpose, `report` prints the
 #            timeline the next ticks produced.
 #   status   timers, the last log lines, and the current verdict.
-#   systemd-units [--dir <path>]   print or write the user units.
+#   power-off <shutdown|suspend>   the captain's notice that the laptop is
+#            going away with dated commitments open (bin/fm-promise.sh
+#            offline-notice); run by the system units below. A "shutdown" that
+#            is a reboot, or that runs while the system is not stopping (the
+#            unit being stopped by hand), sends nothing.
+#   systemd-units [--system [--user <name>]] [--dir <path>]   print or write
+#            the user units, or with --system the two root-owned units that
+#            run power-off before suspend and at shutdown.
 #   install | uninstall            write and enable, or disable and remove,
 #            the units in ~/.config/systemd/user (systemctl --user).
+#   install-power | uninstall-power   the same for the system units in
+#            /etc/systemd/system; needs root (sudo), the units run as the
+#            invoking user (SUDO_USER).
 #
 # Recovery uses the session's own path, never a second watcher: the supervision
 # instructions' repair line for a Claude primary is Stop-owned recovery, so the
@@ -59,6 +71,8 @@
 #   FM_SENTINEL_REALERT_SECS   repeat alert interval while down (3600)
 #   FM_SENTINEL_BUSY_SECS      running-turn tolerance (3600)
 #   FM_SENTINEL_GRACE          beacon silence that counts as down (240)
+#   FM_SENTINEL_SYSTEM_STATE   `systemctl is-system-running` override (tests)
+#   FM_SENTINEL_REBOOTING      1 or 0 overrides the reboot-job check (tests)
 #   FM_PROMISE_SEND            alert delivery seam, see bin/fm-promise.sh
 set -u
 
@@ -214,6 +228,7 @@ cmd_tick() {
   [ -d "$STATE" ] || die "state directory missing: $STATE"
   load_libs
   "$PROMISE" alerts >/dev/null 2>>"$SLOG" || slog alerts-failed "bin/fm-promise.sh alerts"
+  "$PROMISE" cloud >/dev/null 2>>"$SLOG" || slog cloud-sync-failed "bin/fm-promise.sh cloud"
   heartbeat
   n=$(now)
   fm_supervision_status "$STATE" "$GRACE"
@@ -331,6 +346,32 @@ cmd_drill() {
   esac
 }
 
+cmd_power_off() {
+  local event=${1-} st
+  case "$event" in
+    suspend) ;;
+    shutdown)
+      st=${FM_SENTINEL_SYSTEM_STATE:-$(systemctl is-system-running 2>/dev/null || true)}
+      if [ "$st" != stopping ]; then
+        slog power-off-skipped "shutdown unit stopped while system is $st"
+        return 0
+      fi
+      if [ "${FM_SENTINEL_REBOOTING:-}" = 1 ] || { [ -z "${FM_SENTINEL_REBOOTING:-}" ] \
+        && systemctl list-jobs --no-legend 2>/dev/null | grep -q 'reboot\.target'; }; then
+        slog power-off-skipped reboot
+        return 0
+      fi
+      ;;
+    *) die "usage: power-off shutdown|suspend" 2 ;;
+  esac
+  if timeout 25 "$PROMISE" offline-notice 2>>"$SLOG"; then
+    slog power-off "$event"
+  else
+    slog notify-failed "power-off $event"
+  fi
+  return 0
+}
+
 # --- systemd ----------------------------------------------------------------
 unit_name() {
   printf 'fm-sentinel-%s' "$(printf '%s' "$(cd "$FM_HOME" && pwd -P)" | cksum | cut -d' ' -f1)"
@@ -345,10 +386,12 @@ systemd_quoted() {  # <value>
 }
 
 cmd_systemd_units() {
-  local dir='' name home script h p s
+  local dir='' system=0 user='' name home script h p s
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --dir) dir=${2-}; shift ;;
+      --system) system=1 ;;
+      --user) user=${2-}; shift ;;
       *) die "unknown option: $1" 2 ;;
     esac
     shift
@@ -357,6 +400,10 @@ cmd_systemd_units() {
   script="$SCRIPT_DIR/fm-sentinel.sh"
   name=$(unit_name)
   h=$(systemd_quoted "$home"); p=$(systemd_quoted "$PATH"); s=$(systemd_quoted "$script")
+  if [ "$system" = 1 ]; then
+    system_units "$dir" "${user:-${SUDO_USER:-$(id -un)}}" "$name" "$h" "$p" "$s"
+    return
+  fi
   local tick_service tick_timer digest_service digest_timer
   tick_service="[Unit]
 Description=Firstmate sentinel for $h
@@ -408,6 +455,77 @@ WantedBy=timers.target"
   printf 'wrote: %s/%s{,-digest}.{service,timer}\n' "$dir" "$name"
 }
 
+# Root-owned units: suspend runs power-off before sleep.target; shutdown is an
+# active no-op whose stop (at poweroff, while the network is still up because
+# it is ordered after network-online.target) runs power-off.
+system_units() {  # <dir> <user> <name> <home> <path> <script>
+  local dir=$1 user=$2 name=$3 h=$4 p=$5 s=$6 suspend_service shutdown_service
+  [[ $user =~ ^[a-z_][a-z0-9_.-]*$ ]] || die "invalid user name: $user" 2
+  [ "$user" != root ] || die "power-off units must run as the home's owner, not root (use sudo from that user, or --user)" 2
+  suspend_service="[Unit]
+Description=Firstmate offline notice before suspend for $h
+Before=sleep.target
+
+[Service]
+Type=oneshot
+User=$user
+Environment=\"FM_HOME=$h\"
+Environment=\"PATH=$p\"
+ExecStart=\"$s\" power-off suspend
+TimeoutStartSec=30
+
+[Install]
+WantedBy=sleep.target"
+  shutdown_service="[Unit]
+Description=Firstmate offline notice at shutdown for $h
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=$user
+Environment=\"FM_HOME=$h\"
+Environment=\"PATH=$p\"
+ExecStart=/bin/true
+ExecStop=\"$s\" power-off shutdown
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target"
+  if [ -z "$dir" ]; then
+    printf '# %s-suspend.service\n%s\n\n# %s-shutdown.service\n%s\n' \
+      "$name" "$suspend_service" "$name" "$shutdown_service"
+    return 0
+  fi
+  mkdir -p "$dir" || die "cannot create $dir"
+  printf '%s\n' "$suspend_service" > "$dir/$name-suspend.service"
+  printf '%s\n' "$shutdown_service" > "$dir/$name-shutdown.service"
+  printf 'wrote: %s/%s-{suspend,shutdown}.service\n' "$dir" "$name"
+}
+
+cmd_install_power() {
+  local dir=/etc/systemd/system name
+  [ "$(id -u)" = 0 ] || die "install-power needs root: sudo $SCRIPT_DIR/fm-sentinel.sh install-power" 2
+  [ -n "${SUDO_USER:-}" ] || die "run it with sudo from the home owner's account" 2
+  name=$(unit_name)
+  cmd_systemd_units --system --user "$SUDO_USER" --dir "$dir"
+  systemctl daemon-reload
+  systemctl enable "$name-suspend.service"
+  systemctl enable --now "$name-shutdown.service"
+  printf 'installed: %s-suspend.service and %s-shutdown.service\n' "$name" "$name"
+}
+
+cmd_uninstall_power() {
+  local dir=/etc/systemd/system name
+  [ "$(id -u)" = 0 ] || die "uninstall-power needs root: sudo $SCRIPT_DIR/fm-sentinel.sh uninstall-power" 2
+  name=$(unit_name)
+  systemctl disable --now "$name-suspend.service" "$name-shutdown.service" 2>/dev/null || true
+  rm -f "$dir/$name-suspend.service" "$dir/$name-shutdown.service"
+  systemctl daemon-reload
+  printf 'removed: %s power units\n' "$name"
+}
+
 cmd_install() {
   local dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user" name
   name=$(unit_name)
@@ -415,6 +533,7 @@ cmd_install() {
   systemctl --user daemon-reload
   systemctl --user enable --now "$name.timer" "$name-digest.timer"
   printf 'installed: %s.timer and %s-digest.timer\n' "$name" "$name"
+  printf 'for the shutdown and suspend notice also run: sudo %s/fm-sentinel.sh install-power\n' "$SCRIPT_DIR"
 }
 
 cmd_uninstall() {
@@ -453,6 +572,9 @@ case "$cmd" in
   status) cmd_status ;;
   systemd-units) cmd_systemd_units "$@" ;;
   install) cmd_install ;;
+  install-power) cmd_install_power ;;
+  uninstall-power) cmd_uninstall_power ;;
+  power-off) cmd_power_off "$@" ;;
   uninstall) cmd_uninstall ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;

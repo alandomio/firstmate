@@ -7,7 +7,7 @@ Read it when installing the sentinel on a host, when a deadline alert or the mor
 | --- | --- | --- |
 | Promises | `bin/fm-promise.sh` | Dated commitments, deadline alerts, decisions that block a deadline, the morning digest text |
 | Turn-end check | `bin/fm-promise-turnend.sh` | Blocks a Claude primary's turn end while a captain deadline is unregistered, and surfaces blocking decisions every turn |
-| Sentinel | `bin/fm-sentinel.sh` | Runs every five minutes outside any agent session: deadline alerts, supervision liveness, recovery, captain alerts, the 08:30 digest |
+| Sentinel | `bin/fm-sentinel.sh` | Runs every five minutes outside any agent session: deadline alerts, supervision liveness, recovery, captain alerts, the 08:30 digest, the shutdown and suspend notice |
 
 Each script's header owns its exact commands, flags, file formats, and environment knobs.
 
@@ -57,15 +57,21 @@ Every morning at 08:30 the sentinel sends `Sorveglianza attiva, impegni di oggi:
 A missing morning message means the sentinel, the timer, the laptop, or the Telegram channel is broken.
 The timer is persistent, so a laptop asleep at 08:30 sends the message when it wakes.
 
+When the laptop shuts down or suspends normally while a dated promise is open, the captain gets one immediate message, `Portatile spento con N impegni aperti: ...`, listing each commitment with its deadline.
+A reboot sends nothing.
+A sudden power or network loss cannot send it; that is the cloud check's job.
+
 ### Install
 
 ```sh
-bin/fm-sentinel.sh install     # writes and enables the two user timers for this home
-bin/fm-sentinel.sh status      # timers, current verdict, last log lines
-bin/fm-sentinel.sh uninstall
+bin/fm-sentinel.sh install               # writes and enables the two user timers for this home
+sudo bin/fm-sentinel.sh install-power    # the shutdown and suspend notice units, run as you
+bin/fm-sentinel.sh status                # timers, current verdict, last log lines
+bin/fm-sentinel.sh uninstall             # and: sudo bin/fm-sentinel.sh uninstall-power
 ```
 
 The units are named after a checksum of the home path, so several homes on one host do not collide.
+The notice units are system units because a user timer cannot run before suspend; they still run the script as the home's owner.
 Actions are logged to `state/sentinel.log`.
 
 ### Drill
@@ -83,5 +89,11 @@ Pass means the report shows a recovery request within ten minutes, a Telegram al
 ## Cloud dead-man's switch
 
 The laptop cannot report its own power loss, sleep, or network loss, so an outside check must notice the heartbeat stopping.
-The sentinel runs the one shell line in the optional, gitignored `config/sentinel-heartbeat` on every run, bounded to 20 seconds; [`docs/configuration.md`](configuration.md#sentinel-heartbeat-configsentinel-heartbeat) owns the file.
+The sentinel runs the one shell line in the optional, gitignored `config/sentinel-heartbeat` on every run, bounded to 20 seconds; [`docs/configuration.md`](configuration.md#sentinel-heartbeat-and-cloud-arming-configsentinel-heartbeat-configsentinel-arm-configsentinel-disarm) owns the file.
 The receiving side is a deployment choice outside this repository; it must alert the captain on Telegram when no heartbeat arrives for about fifteen minutes.
+
+The laptop is often off on purpose, so the outside check should alert only while there is something to miss.
+`bin/fm-promise.sh` arms it, by running the one line in the optional, gitignored `config/sentinel-arm`, when the first dated promise opens, and disarms it with `config/sentinel-disarm` when the last one closes.
+Every sentinel run re-applies a failed or pending change, and each change is logged in `data/promesse/registro.log`.
+The heartbeat keeps running while disarmed, so arming finds a fresh signal.
+Neither file may contain a secret; [`docs/configuration.md`](configuration.md#sentinel-heartbeat-and-cloud-arming-configsentinel-heartbeat-configsentinel-arm-configsentinel-disarm) owns them.

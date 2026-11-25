@@ -29,6 +29,8 @@
 #   fm-promise.sh digest                  print the 08:30 morning digest text
 #   fm-promise.sh tick <id>               the registered watcher check body
 #   fm-promise.sh notify                  send stdin to the captain's alert chat
+#   fm-promise.sh cloud                   arm or disarm the cloud check to match
+#   fm-promise.sh offline-notice [--dry-run]   "Portatile spento con N impegni aperti"
 #
 # <when> accepts "YYYY-MM-DD HH:MM", "YYYY-MM-DDTHH:MM", "HH:MM" (today),
 # "domani HH:MM", "+<N>m", "+<N>h", or "@<epoch>". Times are local.
@@ -47,6 +49,20 @@
 # not two. Telegram delivery goes through bin/fm-telegram.sh send; the target
 # chat is FM_PROMISE_CHAT, else the configured owner's private chat when it is
 # in allowed_chats. A Telegram reply is information only, never authorization.
+#
+# Cloud arming: the outside dead-man's switch should alert only while a dated
+# commitment is open, because the laptop is often off on purpose. When the
+# first open dated promise is registered, `add` runs the one shell line in the
+# optional, gitignored config/sentinel-arm; when the last one is closed, `done`
+# runs config/sentinel-disarm. `cloud` reconciles the same way and is run by the
+# sentinel every few minutes, so a failed or skipped call is retried. Both are
+# bounded to 30 s; the state last applied is in data/promesse/.cloud-state and
+# each change is logged as cloud-arm or cloud-disarm. A missing file means that
+# direction is not configured and nothing runs.
+#
+# `offline-notice` sends "Portatile spento con N impegni aperti: ..." when at
+# least one dated promise is open, and nothing otherwise; the sentinel's
+# shutdown and suspend units call it (bin/fm-sentinel.sh power-off).
 #
 # Environment:
 #   FM_HOME                operational home (default: this checkout)
@@ -171,6 +187,64 @@ EOF
     || printf 'fm-promise: warning: watcher check for %s not registered\n' "$id" >&2
 }
 
+# Open promises that have a due time (the ones that arm the cloud check),
+# earliest deadline first.
+dated_open_ids() {
+  local id due
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    [ -e "$D/$id.kept" ] && continue
+    due=$(meta_get "$id" due)
+    [ -n "$due" ] && printf '%s %s\n' "$due" "$id"
+  done < <(open_ids) | sort -n | cut -d' ' -f2
+}
+
+# First non-comment, non-blank line of config/<name>, or nothing.
+config_line() {  # <name>
+  local f="$FM_HOME/config/$1"
+  [ -f "$f" ] || return 0
+  grep -v '^[[:space:]]*#' "$f" | sed '/^[[:space:]]*$/d' | head -n 1
+}
+
+# Arm the cloud check while a dated promise is open, disarm it otherwise.
+# Returns 1 only when the configured command failed (retried next run).
+cmd_cloud() {
+  local want cur cmd
+  if [ -n "$(dated_open_ids)" ]; then want=armed; else want=disarmed; fi
+  cur=$(cat "$D/.cloud-state" 2>/dev/null || true)
+  [ "$cur" = "$want" ] && return 0
+  if [ "$want" = armed ]; then cmd=$(config_line sentinel-arm); else cmd=$(config_line sentinel-disarm); fi
+  [ -n "$cmd" ] || return 0
+  if timeout 30 sh -c "$cmd" >/dev/null 2>&1; then
+    mkdir -p "$D"
+    printf '%s\n' "$want" > "$D/.cloud-state"
+    log_event "cloud-${want%ed}" - ""
+    return 0
+  fi
+  printf 'fm-promise: cloud %s command failed; retrying next run\n' "${want%ed}" >&2
+  return 1
+}
+
+cmd_offline_notice() {
+  local dry=0 ids id due n=0 items='' text
+  [ "${1-}" = --dry-run ] && dry=1
+  ids=$(dated_open_ids)
+  [ -n "$ids" ] || return 0
+  while IFS= read -r id; do
+    due=$(meta_get "$id" due)
+    text=$(head -n 1 "$D/$id.msg")
+    n=$((n + 1))
+    items="${items:+$items; }$text (entro $(when_label "$due"))"
+  done <<< "$ids"
+  if [ "$n" -eq 1 ]; then
+    text="Portatile spento con 1 impegno aperto: $items"
+  else
+    text="Portatile spento con $n impegni aperti: $items"
+  fi
+  if [ "$dry" = 1 ]; then printf '%s\n' "$text"; return 0; fi
+  printf '%s\n' "$text" | send_alert
+}
+
 cmd_add() {
   local id=${1-} due='' text='' ref='' every='' cond='' due_e
   shift || true
@@ -211,6 +285,7 @@ cmd_add() {
   [ -n "$cond" ] && printf '%s\n' "$cond" > "$D/$id.cond"
   log_event add "$id" "${due_e:+due=$due_e }$text"
   write_check "$id"
+  [ -n "$due_e" ] && { cmd_cloud || true; }
   if [ -n "$due_e" ]; then
     printf 'Registrato: %s entro %s (promessa %s)\n' "$text" "$(when_label "$due_e")" "$id"
   else
@@ -273,6 +348,7 @@ cmd_done() {
   mkdir -p "$D/archivio"
   mv "$D/$id".* "$D/archivio/" 2>/dev/null
   log_event "done" "$id" ""
+  cmd_cloud || true
   printf 'promise %s closed\n' "$id"
 }
 
@@ -448,6 +524,8 @@ case "$cmd" in
   digest) cmd_digest ;;
   tick) cmd_tick "$@" ;;
   notify) send_alert ;;
+  cloud) cmd_cloud ;;
+  offline-notice) cmd_offline_notice "$@" ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;
 esac
