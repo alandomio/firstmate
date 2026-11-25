@@ -180,6 +180,9 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-mail.sh`             | General-purpose mail plane: read unseen IMAP mail, send one SMTP message, or surface new mail as a `check` wake via `poll` (configuration in the home's gitignored `.env`) |
 | `fm-mail.py`             | The IMAP/SMTP engine behind `fm-mail.sh` |
 | `fm-mail-check.sh`       | Standing received-mail poll: `arm` registers a watcher check that runs `fm-mail.sh poll` on the watcher cadence (new mail still wakes via the poll; the check's own line also wakes unless the poll is a proven no-op), `disarm` removes it |
+| `fm-promise.sh`          | Durable dated promises: register, list, close, deadline alerts, blocking decisions, morning digest |
+| `fm-promise-turnend.sh`  | Claude hook that blocks a turn end while a captain deadline is unregistered and surfaces blocking decisions |
+| `fm-sentinel.sh`         | Session-independent supervision watchdog timer: liveness, recovery request, captain alerts, 08:30 digest, drill |
 | `fm-telegram.sh`         | Opt-in Telegram channel commands: status, setup discovery, arm or retire the inbound poll, send to an allowlisted chat, list records |
 | `fm-telegram-lib.sh`     | Shared Telegram opt-in, private token, config, Bot API call, and record-naming rules |
 | `fm-voice-relay.py`      | Hold the spoken conversation on this host, answer from the records, and hand real work to `fm-inbox.sh` ([voice-relay.md](voice-relay.md)) |

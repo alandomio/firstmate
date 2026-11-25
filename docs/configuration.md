@@ -2298,6 +2298,13 @@ A declared `paused:` or `captain-held:` recheck is not this rule's business: tho
 Safety valve: `state/.presented-absorbed-since-<key>` tracks how long the rule has continuously absorbed that window; once that reaches `FM_PAUSE_REMIND_SECS` (default one day) the wake surfaces for real, the marker resets, and the next absorb window starts.
 Same digest contract as the other absorbers, tagged `source: "rule"`.
 
+## Sentinel heartbeat (config/sentinel-heartbeat)
+
+`bin/fm-sentinel.sh` runs on every timer tick the first non-blank, non-comment line of this optional, gitignored file through `sh -c`, bounded to 20 seconds, so an outside dead-man's switch can see the host is alive ([`docs/promises-and-sentinel.md`](promises-and-sentinel.md#cloud-dead-mans-switch)).
+Absent means no outbound heartbeat; a failing command is logged to `state/sentinel.log` and never stops the tick.
+The file is local to this home and is not inherited by secondmate homes.
+Promise alerts and sentinel alerts go to the configured owner's private Telegram chat when `config/telegram.json` lists it in `allowed_chats`; `FM_PROMISE_CHAT` overrides the chat.
+
 ## Live fleet board (config/live-board)
 
 The `/bearings lavish` fleet board can keep itself current between firstmate's own rebuilds, with no model call.

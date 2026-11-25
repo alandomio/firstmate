@@ -78,6 +78,7 @@ A terse, cryptic, or truncated reason is a defect to repair: expand it from the 
 1. Read the complete investigation result and complete the visual review before declaring either complete.
 2. Inventory only genuine unresolved choices that require the captain, and find the task each one gates.
 3. Hold that task - or create one captain-held task for the review's open questions - with a reason written as the decision card above.
+   When the choice blocks a registered promise with a deadline, also run `bin/fm-promise.sh block <promise> --decision <card title> --task <task>`, and `unblock` it when the answer lands.
 4. Run `complete` with the full captain-held inventory for that review pass.
 5. Relay the choices to the captain as decision cards from Bearings' Captain's Call section under `AGENTS.md` section 9; do not use the word hold in captain chat.
 6. Close each call only through `answer` (or a channel that feeds `answers`), close a board-requested moot call through evidence-backed `reconcile close`, record a still-active reconciliation through `reconcile note`, use `--until` when the captain defers it, or confirm a channel already closed it.
