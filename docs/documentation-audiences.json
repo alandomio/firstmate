@@ -685,6 +685,10 @@
       "audience": "operator-example"
     },
     {
+      "path": "docs/promises-and-sentinel.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/telegram.md",
       "audience": "operator-current"
     },

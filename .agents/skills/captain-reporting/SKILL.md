@@ -37,6 +37,13 @@ Private evidence reports may retain exact identifiers, paths, status lines, vali
 The final-message rule is a visibility recap: it may list all outstanding decisions and their URLs, but it does not override, replace, or combine any separate per-decision ask messages required by a harness's no-batching rule.
 Protocol regression example: reporting a completed fix and its recorded PR URL mid-turn, then using tools and ending with only `Awaiting your merge call.`, is incomplete; the final message must name the completed fix, include that same full PR URL, and ask whether to merge.
 
+## Deadlines
+
+When the turn's context carries `BLOCCA SCADENZA hh:mm` lines, the reply opens with them, unchanged, until the captain answers; never decide in the captain's place.
+When the captain states a deadline, register it with `bin/fm-promise.sh add` in the same turn and repeat its `Registrato: ... entro ...` line in the reply.
+A deadline found in client mail, meeting notes, or a Jira due date is proposed to the captain and registered only after the captain agrees.
+[`docs/promises-and-sentinel.md`](../../../docs/promises-and-sentinel.md) owns the mechanism.
+
 ## Choosing the surface
 
 Use plain chat for a yes-or-no decision and `lavish-axi` only when several options or a structured report benefit from a visual surface.
