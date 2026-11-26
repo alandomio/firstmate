@@ -1,0 +1,34 @@
+== FIXED watcher pid 2790072, two remote mates on hung host lab-host (ssh never answers), FM_POLL=2, FM_REMOTE_PROBE_TIMEOUT=3
+t+5s beacon_age=1s watcher_alive=yes ssh_probes=1
+t+10s beacon_age=3s watcher_alive=yes ssh_probes=2
+t+15s beacon_age=2s watcher_alive=yes ssh_probes=3
+t+20s beacon_age=1s watcher_alive=yes ssh_probes=4
+t+25s beacon_age=1s watcher_alive=yes ssh_probes=5
+t+30s beacon_age=0s watcher_alive=yes ssh_probes=6
+drive:19: no matches found: /tmp/fm-lab.09uhXM/state/.secondmate-relaunch-*
+relaunch ledger: none
+ssh probe log:
+21:23:08 -o ForwardAgent=no -o ClearAllForwardings=yes -o SendEnv=-* -o ServerAliveInterval=15 -o ServerAliveC
+21:23:14 -o ForwardAgent=no -o ClearAllForwardings=yes -o SendEnv=-* -o ServerAliveInterval=15 -o ServerAliveC
+21:23:20 -o ForwardAgent=no -o ClearAllForwardings=yes -o SendEnv=-* -o ServerAliveInterval=15 -o ServerAliveC
+21:23:26 -o ForwardAgent=no -o ClearAllForwardings=yes -o SendEnv=-* -o ServerAliveInterval=15 -o ServerAliveC
+21:23:31 -o ForwardAgent=no -o ClearAllForwardings=yes -o SendEnv=-* -o ServerAliveInterval=15 -o ServerAliveC
+21:23:37 -o ForwardAgent=no -o ClearAllForwardings=yes -o SendEnv=-* -o ServerAliveInterval=15 -o ServerAliveC
+
+== BASE-7ecbf0b watcher pid 2830397, two remote mates on hung host lab-host (ssh never answers), FM_POLL=2, FM_REMOTE_PROBE_TIMEOUT=3
+drive:18: no such file or directory: /tmp/fm-lab.CzNkIV/ssh.log
+t+5s beacon_age=3s watcher_alive=yes ssh_probes=0
+drive:18: no such file or directory: /tmp/fm-lab.CzNkIV/ssh.log
+t+10s beacon_age=3s watcher_alive=yes ssh_probes=0
+drive:18: no such file or directory: /tmp/fm-lab.CzNkIV/ssh.log
+t+15s beacon_age=3s watcher_alive=yes ssh_probes=0
+drive:18: no such file or directory: /tmp/fm-lab.CzNkIV/ssh.log
+t+20s beacon_age=1s watcher_alive=yes ssh_probes=0
+drive:18: no such file or directory: /tmp/fm-lab.CzNkIV/ssh.log
+t+25s beacon_age=1s watcher_alive=yes ssh_probes=0
+drive:18: no such file or directory: /tmp/fm-lab.CzNkIV/ssh.log
+t+30s beacon_age=1s watcher_alive=yes ssh_probes=0
+drive:19: no matches found: /tmp/fm-lab.CzNkIV/state/.secondmate-relaunch-*
+relaunch ledger: none
+ssh probe log:
+[31m[bat error][0m: '/tmp/fm-lab.CzNkIV/ssh.log': No such file or directory (os error 2)

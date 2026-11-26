@@ -1,0 +1,9 @@
+== FIXED sentinel, watcher killed, recorded poll 300, beacon aged 420s (past 300+60)
+tick rc=0
+watcher-poll recorded: 300
+alerts:
+Sorveglianza firstmate ferma da 7 min (stale-beacon). Azione: recovery requested in the session.
+sentinel.log:
+1795724020 down reason=stale-beacon beacon_age=420 harness=claude
+1795724020 recovery-requested recovery requested in the session
+1795724020 alerted Sorveglianza firstmate ferma da 7 min (stale-beacon). Azione: recovery requested in the session.

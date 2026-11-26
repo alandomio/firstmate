@@ -1,0 +1,22 @@
+== FIXED sentinel (52a737b), live watcher FM_POLL=300, beacon aged 300s, timer-style env without FM_POLL
+[fixed] tick rc=0
+[fixed] beacon age: 300s; watcher alive: yes
+[fixed] telegram alerts sent:
+[fixed] recovery typed:
+[fixed] episode: none
+[fixed] sentinel.log:
+
+== BASE sentinel (7ecbf0b), same live state
+[base] tick rc=0
+[base] beacon age: 300s; watcher alive: yes
+[base] telegram alerts sent:
+Sorveglianza firstmate ferma da 5 min (stale-beacon). Azione: recovery requested in the session.
+[base] recovery typed:
+: Firstmate operational input waiting: read '/tmp/fm-lab.e8kgOL/state/operational-inbox/1795724011-505b0afcf4b58ee9.msg' and handle its contents as Firstmate operational input.
+[base] episode: start=1795723711
+tried=1795724011
+alerted=1795724011
+[base] sentinel.log:
+1795724011 down reason=stale-beacon beacon_age=300 harness=claude
+1795724011 recovery-requested recovery requested in the session
+1795724011 alerted Sorveglianza firstmate ferma da 5 min (stale-beacon). Azione: recovery requested in the session.
