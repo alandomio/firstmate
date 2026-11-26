@@ -752,6 +752,7 @@ EOF
   cat > "$fakebin/ssh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FM_FAKE_SSH_LOG:?}"
+[ -z "${FM_FAKE_REMOTE_HANG:-}" ] || sleep "$FM_FAKE_REMOTE_HANG"
 [ -z "${FM_FAKE_REMOTE_REPLY:-}" ] || printf '%s\n' "$FM_FAKE_REMOTE_REPLY"
 exit "${FM_FAKE_REMOTE_RC:-0}"
 SH
@@ -820,6 +821,22 @@ test_remote_poll_probe_unreachable_preserves_route() {
   pass "poll probe: unreachable or inconclusive remote reads preserve the route"
 }
 
+# A remote host that accepts the connection but never answers (seen on a
+# remote secondmate whose control script hung for minutes) must not hold the
+# watcher's poll loop: the probe gives up at FM_REMOTE_PROBE_TIMEOUT and reads
+# unknown, so the watcher keeps touching its liveness beacon.
+test_remote_poll_probe_hung_host_is_bounded() {
+  local w out start elapsed
+  w=$(make_remote_probe_world probe-hung)
+  start=$(date +%s)
+  out=$(probe_remote "$w" poll FM_FAKE_REMOTE_HANG=30 FM_FAKE_REMOTE_REPLY=dead FM_REMOTE_PROBE_TIMEOUT=2)
+  elapsed=$(( $(date +%s) - start ))
+  [ "$out" = 'skipped|unknown|0|||remote endpoint probe timed out on lab-host; route preserved' ] \
+    || fail "a hung remote probe must read unknown and preserve the route, got: $out"
+  [ "$elapsed" -lt 15 ] || fail "a hung remote probe held the poll for ${elapsed}s past its 2s bound"
+  pass "poll probe: a hung remote host is bounded and never reads as death"
+}
+
 test_tmux_agent_state_classifies
 test_tmux_agent_state_rejects_malformed_targets_before_probe
 test_herdr_agent_state_preserves_husk_classifier
@@ -842,5 +859,6 @@ test_relaunch_waits_for_other_mates_relaunch_lock
 test_sweep_refuses_relaunch_on_ledger_errors
 test_remote_poll_probe_maps_states
 test_remote_poll_probe_unreachable_preserves_route
+test_remote_poll_probe_hung_host_is_bounded
 
 echo "# all fm-secondmate-liveness tests passed"

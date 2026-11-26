@@ -291,7 +291,9 @@ LOG_VERB=$(status_line_verb "$LOG_LINE")
 # down or dead mate; only the remote host's own dead/missing verdict may say
 # the endpoint is actually gone.
 if [ -n "$REMOTE_HOST" ]; then
-  if ! REMOTE_STATE=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-on.sh" "$ID" \
+  # Bounded (fm_remote_probe_timeout): the watcher loop reaches this read, and a
+  # hung host past the bound is unknown-remote like any other unreachable host.
+  if ! REMOTE_STATE=$(FM_HOME="$FM_HOME" fm_run_timed "$(fm_remote_probe_timeout)" "$SCRIPT_DIR/fm-on.sh" "$ID" \
     fm-remote-secondmate-control.sh state "$ID" < /dev/null 2>/dev/null); then
     REMOTE_STATE=
   fi

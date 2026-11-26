@@ -61,6 +61,14 @@
 #   fm_timed_out <status>
 #       0 iff <status> is how fm_run_timed or fm_exec_timed reports the bound.
 #
+#   fm_remote_probe_timeout
+#       Prints the bound, in seconds, for one read-only remote secondmate probe
+#       made from the watcher's poll loop (FM_REMOTE_PROBE_TIMEOUT, default 30).
+#       The watcher touches its liveness beacon once per loop, so an unbounded
+#       probe of a hung remote host stalls supervision past the guard and
+#       sentinel grace while the watcher process is still alive. A probe that
+#       hits the bound reads as unknown, never as proof of death.
+#
 # A non-positive bound is not a bound: `timeout 0` and the perl fallback's
 # `alarm 0` both disable the deadline, so callers must reject 0 before calling.
 #
@@ -190,6 +198,13 @@ fm_run_timed() {  # <seconds> <command...>
       ;;
     bash) fm_run_bash_timeout "$seconds" "$@" ;;
     *) return 124 ;;
+  esac
+}
+
+fm_remote_probe_timeout() {
+  case "${FM_REMOTE_PROBE_TIMEOUT:-}" in
+    ''|*[!0-9]*|0) printf '30\n' ;;
+    *) printf '%s\n' "$FM_REMOTE_PROBE_TIMEOUT" ;;
   esac
 }
 

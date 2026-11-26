@@ -1685,6 +1685,45 @@ test_mirrored_remote_reply_never_triggers_a_repost() {
   pass "a mirrored correlated remote reply resolves without any repost"
 }
 
+# A remote mate whose host accepts the connection but never answers must not
+# hold the watcher loop that runs this tick: the observe probe gives up at
+# FM_REMOTE_PROBE_TIMEOUT and the turn stays unobserved (unknown).
+test_hung_remote_observe_is_bounded() {
+  local home state corr rec fb start elapsed
+  home=$(setup_parent remote-hung-observe)
+  state="$home/state"
+  mkdir -p "$home/data"
+  fb=$(fm_fakebin "$home")
+  cat > "$fb/ssh" <<'SH'
+#!/usr/bin/env bash
+sleep 30
+printf 'idle\n'
+SH
+  chmod +x "$fb/ssh"
+  printf -- '- ios - Remote mate (host: remote-mac; root: /remote/root; home: /remote/ios-home; scope: ios; projects: alpha; added 2026-01-01)\n' \
+    > "$home/data/secondmates.md"
+  fm_write_meta "$state/ios.meta" \
+    "window=fm-remote:w1:p1" "harness=claude" "kind=secondmate" "mode=secondmate" \
+    "remote_host=remote-mac" "remote_root=/remote/root" "remote_backend=herdr" \
+    "home=/remote/ios-home"
+  (
+    # These fixture overrides are intentionally scoped to the isolated subshell.
+    # shellcheck disable=SC2030,SC2031
+    export FM_HOME="$home" FM_DATA_OVERRIDE="$home/data" FM_SSH_BIN="$fb/ssh" \
+      FM_REMOTE_PROBE_TIMEOUT=2 FM_PENDING_REPLY_NOW=7000
+    corr=$(fm_pending_reply_create "$home" "$state" "ios" "status of the iOS build")
+    fm_pending_reply_mark_delivered "$state" "$corr"
+    start=$(date +%s)
+    fm_pending_reply_tick "$state" || fail "tick should succeed past a hung remote observe"
+    elapsed=$(( $(date +%s) - start ))
+    [ "$elapsed" -lt 15 ] || fail "a hung remote observe held the tick for ${elapsed}s past its 2s bound"
+    rec=$(fm_pending_reply_path "$state" "$corr")
+    [ -z "$(fm_pending_reply_get "$rec" request_turn_completed_epoch)" ] \
+      || fail "a timed-out remote observe must not read as a completed turn"
+  ) || exit 1
+  pass "a hung remote observe is bounded and reads as unknown"
+}
+
 test_same_basename_self_home_corr_resolves_on_tick() {
   local home state sm_home corr rec parent_status hook_log fb out
   home=$(setup_parent same-basename-repair)
@@ -1697,6 +1736,7 @@ test_same_basename_self_home_corr_resolves_on_tick() {
   recovery_hook() { printf 'recovered\n' >> "$hook_log"; }
   export -f recovery_hook
   export FM_PENDING_REPLY_SEND_HOOK=recovery_hook
+  # shellcheck disable=SC2031 # The earlier subshell override is deliberately scoped.
   export FM_PENDING_REPLY_NOW=11000
 
   corr=$(fm_pending_reply_create "$home" "$state" mate "status of the audit")
@@ -2218,6 +2258,7 @@ test_tick_end_to_end_missed_then_escalate
 test_failed_send_discards_undelivered_expectation
 test_remote_repost_waits_for_the_reply_channel
 test_mirrored_remote_reply_never_triggers_a_repost
+test_hung_remote_observe_is_bounded
 test_same_basename_self_home_corr_resolves_on_tick
 test_same_basename_reply_resolves_after_recovery_failure
 test_child_status_wrong_home_is_not_copied
