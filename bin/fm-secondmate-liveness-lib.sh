@@ -162,7 +162,7 @@ fm_secondmate_liveness_probe() {  # <meta> <id> <full|poll>
     # The poll tick runs inside the watcher loop, so its probe is bounded
     # (fm_remote_probe_timeout): a hung remote host must not stall the beacon.
     probe_bound=()
-    [ "$mode" = poll ] && probe_bound=(fm_run_timed "$(fm_remote_probe_timeout)")
+    [ "$mode" = poll ] && probe_bound=(fm_remote_probe "$remote_host")
     if out=$(${probe_bound[@]+"${probe_bound[@]}"} "$FM_SM_LIVE_LIB_DIR/fm-on.sh" "$id" fm-remote-secondmate-control.sh state "$id" < /dev/null 2>/dev/null); then
       remote_rc=0
     else

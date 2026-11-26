@@ -293,7 +293,7 @@ LOG_VERB=$(status_line_verb "$LOG_LINE")
 if [ -n "$REMOTE_HOST" ]; then
   # Bounded (fm_remote_probe_timeout): the watcher loop reaches this read, and a
   # hung host past the bound is unknown-remote like any other unreachable host.
-  if ! REMOTE_STATE=$(FM_HOME="$FM_HOME" fm_run_timed "$(fm_remote_probe_timeout)" "$SCRIPT_DIR/fm-on.sh" "$ID" \
+  if ! REMOTE_STATE=$(FM_HOME="$FM_HOME" fm_remote_probe "$REMOTE_HOST" "$SCRIPT_DIR/fm-on.sh" "$ID" \
     fm-remote-secondmate-control.sh state "$ID" < /dev/null 2>/dev/null); then
     REMOTE_STATE=
   fi

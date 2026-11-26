@@ -69,6 +69,13 @@
 #       sentinel grace while the watcher process is still alive. A probe that
 #       hits the bound reads as unknown, never as proof of death.
 #
+#   fm_remote_probe <host> <command> [args...]
+#       Runs one read-only remote probe of <host> under fm_remote_probe_timeout.
+#       When FM_REMOTE_PROBE_BREAKER names a directory (the watcher sets it and
+#       empties it every loop), a probe that hits the bound marks <host> there
+#       and every later probe of that host returns 124 at once, so one hung
+#       host costs the loop at most one bound however many mates it serves.
+#
 # A non-positive bound is not a bound: `timeout 0` and the perl fallback's
 # `alarm 0` both disable the deadline, so callers must reject 0 before calling.
 #
@@ -206,6 +213,20 @@ fm_remote_probe_timeout() {
     ''|*[!0-9]*|0) printf '30\n' ;;
     *) printf '%s\n' "$FM_REMOTE_PROBE_TIMEOUT" ;;
   esac
+}
+
+fm_remote_probe() {  # <host> <command...>
+  local mark='' rc=0
+  if [ -n "${FM_REMOTE_PROBE_BREAKER:-}" ]; then
+    mark="$FM_REMOTE_PROBE_BREAKER/$(printf '%s' "$1" | tr -c 'A-Za-z0-9._@-' '_')"
+    [ ! -e "$mark" ] || return 124
+  fi
+  shift
+  fm_run_timed "$(fm_remote_probe_timeout)" "$@" || rc=$?
+  if [ -n "$mark" ] && fm_timed_out "$rc"; then
+    mkdir -p "$FM_REMOTE_PROBE_BREAKER" 2>/dev/null && : > "$mark" 2>/dev/null
+  fi
+  return "$rc"
 }
 
 fm_timed_out() {  # <status>
