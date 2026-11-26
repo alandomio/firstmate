@@ -61,6 +61,21 @@
 #   fm_timed_out <status>
 #       0 iff <status> is how fm_run_timed or fm_exec_timed reports the bound.
 #
+#   fm_remote_probe_timeout
+#       Prints the bound, in seconds, for one read-only remote secondmate probe
+#       made from the watcher's poll loop (FM_REMOTE_PROBE_TIMEOUT, default 30).
+#       The watcher touches its liveness beacon once per loop, so an unbounded
+#       probe of a hung remote host stalls supervision past the guard and
+#       sentinel grace while the watcher process is still alive. A probe that
+#       hits the bound reads as unknown, never as proof of death.
+#
+#   fm_remote_probe <host> <command> [args...]
+#       Runs one read-only remote probe of <host> under fm_remote_probe_timeout.
+#       When FM_REMOTE_PROBE_BREAKER names a directory (the watcher sets it and
+#       empties it every loop), a probe that hits the bound marks <host> there
+#       and every later probe of that host returns 124 at once, so one hung
+#       host costs the loop at most one bound however many mates it serves.
+#
 # A non-positive bound is not a bound: `timeout 0` and the perl fallback's
 # `alarm 0` both disable the deadline, so callers must reject 0 before calling.
 #
@@ -191,6 +206,27 @@ fm_run_timed() {  # <seconds> <command...>
     bash) fm_run_bash_timeout "$seconds" "$@" ;;
     *) return 124 ;;
   esac
+}
+
+fm_remote_probe_timeout() {
+  case "${FM_REMOTE_PROBE_TIMEOUT:-}" in
+    ''|*[!0-9]*|0) printf '30\n' ;;
+    *) printf '%s\n' "$FM_REMOTE_PROBE_TIMEOUT" ;;
+  esac
+}
+
+fm_remote_probe() {  # <host> <command...>
+  local mark='' rc=0
+  if [ -n "${FM_REMOTE_PROBE_BREAKER:-}" ]; then
+    mark="$FM_REMOTE_PROBE_BREAKER/$(printf '%s' "$1" | tr -c 'A-Za-z0-9._@-' '_')"
+    [ ! -e "$mark" ] || return 124
+  fi
+  shift
+  fm_run_timed "$(fm_remote_probe_timeout)" "$@" || rc=$?
+  if [ -n "$mark" ] && fm_timed_out "$rc"; then
+    mkdir -p "$FM_REMOTE_PROBE_BREAKER" 2>/dev/null && : > "$mark" 2>/dev/null
+  fi
+  return "$rc"
 }
 
 fm_timed_out() {  # <status>

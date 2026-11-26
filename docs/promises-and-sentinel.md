@@ -52,7 +52,7 @@ When supervision is needed and that verdict fails, the sentinel opens a down epi
   While a turn is running nothing is typed, and the alert waits until supervision has been down for 10 minutes.
 
 A fresh beacon closes the episode with one "ripristinata" message.
-The sentinel counts 240 seconds of beacon silence as down, so with the timer every five minutes recovery is requested at most nine minutes after the last sign of life, leaving a minute for the session's turn to re-arm.
+The sentinel counts 240 seconds of beacon silence as down, so with the timer every five minutes recovery is requested at most nine minutes after the last sign of life, leaving a minute for the session's turn to re-arm. A watcher touches its beacon once per `FM_POLL` cycle and records that poll in `state/.watcher-poll` when it starts, so with a recorded poll longer than 180 seconds the grace becomes that poll + 60 and an idle, armed watcher is never counted as down.
 
 Every morning at 08:30 the sentinel sends `Sorveglianza attiva, impegni di oggi: ...`, or a warning when supervision is down.
 A missing morning message means the sentinel, the timer, the laptop, or the Telegram channel is broken.

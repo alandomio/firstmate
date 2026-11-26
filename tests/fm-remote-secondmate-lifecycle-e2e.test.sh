@@ -245,6 +245,7 @@ case "${FM_FAKE_SSH_MODE:-normal}:$command_name:$command_rel" in
 esac
 case "${FM_FAKE_SSH_MODE:-normal}" in
   unreachable) exit 255 ;;
+  hang) sleep 60; exit 255 ;;
   ambiguous) "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"; exit 255 ;;
   # The remote retirement really runs, then reports what its forced secondmate
   # teardown reports for a lost child slot: tests/fm-teardown.test.sh owns that
@@ -1392,6 +1393,40 @@ assert_grep 'remote_host=remote-mac' "$WATCH_STATE_UNREACHABLE/ios.meta" \
 assert_grep '- ios ' "$PARENT/data/secondmates.md" \
   "an unreachable remote probe changed the registry route"
 pass "watch liveness: an unreachable remote secondmate is probed, preserved, and never failed over"
+
+# A remote host that accepts the connection but never answers must not stall
+# the watcher loop: the bounded probe (FM_REMOTE_PROBE_TIMEOUT) gives up, so the
+# liveness beacon the guard and the sentinel read keeps advancing while the
+# watcher waits idle between turns.
+WATCH_STATE_HUNG="$TMP_ROOT/watch-liveness-hung"
+mkdir -p "$WATCH_STATE_HUNG"
+cp "$WATCH_STATE/ios.meta" "$WATCH_STATE_HUNG/ios.meta"
+touch "$WATCH_STATE_HUNG/home-summary.json"
+ssh_before=$(cat "$SSH_COUNT" 2>/dev/null || printf '0')
+FM_FAKE_SSH_MODE=hang FM_STATE_OVERRIDE="$WATCH_STATE_HUNG" FM_REMOTE_PROBE_TIMEOUT=1 \
+  FM_SECONDMATE_LIVENESS_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
+  FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+  remote_env exec "$ROOT/bin/fm-watch.sh" \
+  > "$TMP_ROOT/watch-hung.out" 2> "$TMP_ROOT/watch-hung.err" &
+watch_pid=$!
+sleep 4
+beat_early=$(stat -c %Y "$WATCH_STATE_HUNG/.last-watcher-beat" 2>/dev/null || stat -f %m "$WATCH_STATE_HUNG/.last-watcher-beat" 2>/dev/null || printf 0)
+sleep 6
+beat_late=$(stat -c %Y "$WATCH_STATE_HUNG/.last-watcher-beat" 2>/dev/null || stat -f %m "$WATCH_STATE_HUNG/.last-watcher-beat" 2>/dev/null || printf 0)
+kill -0 "$watch_pid" 2>/dev/null \
+  || fail "the watcher exited against a hung remote secondmate: $(cat "$TMP_ROOT/watch-hung.out" "$TMP_ROOT/watch-hung.err")"
+kill "$watch_pid" 2>/dev/null || true
+wait "$watch_pid" 2>/dev/null || true
+watch_pid=''
+[ "$(cat "$SSH_COUNT" 2>/dev/null || printf '0')" -gt "$ssh_before" ] \
+  || fail "the hung remote endpoint was never probed"
+[ "$(cat "$WATCH_STATE_HUNG/.watcher-poll" 2>/dev/null)" = 1 ] \
+  || fail "the watcher did not record its FM_POLL for the sentinel"
+[ "$beat_early" -gt 0 ] && [ "$beat_late" -gt "$beat_early" ] \
+  || fail "a hung remote probe stalled the watcher beacon (early=$beat_early late=$beat_late)"
+assert_absent "$WATCH_STATE_HUNG/.secondmate-relaunch-ios" \
+  "a hung remote probe ledgered a relaunch attempt"
+pass "watch liveness: a hung remote secondmate cannot stall the watcher beacon"
 
 # --- a stale herdr client shadowing the one the server accepts --------------
 # The remote host's job PATH can resolve an older self-updated herdr ahead of

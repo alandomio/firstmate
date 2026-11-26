@@ -215,6 +215,23 @@ grep -q '^Sorveglianza firstmate ripristinata dopo' "$SENT" || fail "recovery mu
 [ ! -e "$H3/state/.sentinel-episode" ] || fail "recovery must close the episode"
 pass "a fresh beacon closes the episode with one recovery message"
 
+# The watcher touches its beacon once per FM_POLL cycle and records that poll
+# in state/.watcher-poll (bin/fm-watch.sh), so a beacon one 300 s poll old
+# belongs to an idle, armed watcher even for a timer tick whose unit
+# environment carries no FM_POLL; the same age under the default 15 s poll is
+# past the 240 s grace and is down.
+touch -d '-5 minutes' "$H3/state/.last-watcher-beat"
+printf '300\n' > "$H3/state/.watcher-poll"
+: > "$SENT"; : > "$SUB"
+env -u FM_POLL "$S" tick
+rm -f "$H3/state/.watcher-poll"
+[ ! -s "$SENT" ] || fail "an idle watcher on a 300 s poll must not be alerted as down, got: $(cat "$SENT")"
+[ ! -s "$SUB" ] || fail "an idle watcher on a 300 s poll must not get a recovery request"
+[ ! -e "$H3/state/.sentinel-episode" ] || fail "an idle watcher on a 300 s poll must not open an episode"
+"$S" tick
+grep -q '(stale-beacon)' "$SENT" || fail "a 300 s beacon under the default poll must still be down, got: $(cat "$SENT")"
+pass "the sentinel grace allows one full watcher poll before reporting stale-beacon"
+
 H4=$(new_home nosession)
 export FM_HOME=$H4
 touch "$H4/state/task-a.meta"

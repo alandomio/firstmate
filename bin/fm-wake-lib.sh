@@ -131,8 +131,9 @@ fm_path_age() {
   echo $(( now - m ))
 }
 
-# fm_poll_derived_grace [poll-seconds]
-# Default guard-grace derivation: max(300, poll + 60). A watcher touches its
+# fm_poll_derived_grace [poll-seconds] [floor-seconds]
+# Default guard-grace derivation: max(300, poll + 60). A caller with a tighter
+# floor of its own (the sentinel's 240 s) passes it as floor-seconds. A watcher touches its
 # liveness beacon once per poll cycle, so a fixed 300s grace stops correctly
 # bounding staleness once the poll cadence reaches or exceeds it; growing the
 # default with the cadence while keeping the historical 300s floor for the
@@ -143,10 +144,11 @@ fm_path_age() {
 # docs/turnend-guard.md "Guard grace and the poll cadence" is the single owner
 # of the rationale; every FM_GUARD_GRACE default should derive from this.
 fm_poll_derived_grace() {
-  local poll=${1:-${FM_POLL:-15}} margin=60 derived
+  local poll=${1:-${FM_POLL:-15}} floor=${2:-300} margin=60 derived
   case "$poll" in ''|*[!0-9]*) poll=15 ;; esac
+  case "$floor" in ''|*[!0-9]*) floor=300 ;; esac
   derived=$((poll + margin))
-  [ "$derived" -ge 300 ] || derived=300
+  [ "$derived" -ge "$floor" ] || derived=$floor
   printf '%s\n' "$derived"
 }
 
