@@ -54,7 +54,10 @@
 # silence, a minute under the guard's 300 s): with the timer every five
 # minutes, recovery is asked for at most nine minutes after the last sign of
 # life, leaving a minute for the session's own turn to re-arm inside the ten
-# the drill must prove (a 300 s grace measured 11 min in the first drill). A running turn is never
+# the drill must prove (a 300 s grace measured 11 min in the first drill). A
+# watcher touches its beacon once per FM_POLL cycle, so a poll past 180 s
+# raises the grace to FM_POLL + 60 (fm_poll_derived_grace) and an idle armed
+# watcher never reads as down. A running turn is never
 # typed into, but past FM_SENTINEL_BUSY_SECS (600) of down time it is alerted. The captain gets one Telegram
 # alert per episode, a repeat every FM_SENTINEL_REALERT_SECS (3600), and one
 # "ripristinata" message when it ends. Every action is logged to
@@ -70,7 +73,8 @@
 #   FM_SENTINEL_RETRY_SECS     minimum gap between recovery requests (600)
 #   FM_SENTINEL_REALERT_SECS   repeat alert interval while down (3600)
 #   FM_SENTINEL_BUSY_SECS      running-turn tolerance before alerting (600)
-#   FM_SENTINEL_GRACE          beacon silence that counts as down (240)
+#   FM_SENTINEL_GRACE          beacon silence that counts as down (240,
+#                              raised to FM_POLL + 60 for a longer poll)
 #   FM_SENTINEL_SYSTEM_STATE   `systemctl is-system-running` override (tests)
 #   FM_SENTINEL_REBOOTING      1 or 0 overrides the reboot-job check (tests)
 #   FM_PROMISE_SEND            alert delivery seam, see bin/fm-promise.sh
@@ -107,6 +111,7 @@ load_libs() {
   . "$SCRIPT_DIR/fm-supervisor-target-lib.sh"
   # shellcheck source=bin/fm-operational-input.sh
   . "$SCRIPT_DIR/fm-operational-input.sh"
+  GRACE=$(fm_poll_derived_grace "${FM_POLL:-15}" "$GRACE")
 }
 
 notify() {  # <text>
