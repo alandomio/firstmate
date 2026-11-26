@@ -1420,6 +1420,8 @@ wait "$watch_pid" 2>/dev/null || true
 watch_pid=''
 [ "$(cat "$SSH_COUNT" 2>/dev/null || printf '0')" -gt "$ssh_before" ] \
   || fail "the hung remote endpoint was never probed"
+[ "$(cat "$WATCH_STATE_HUNG/.watcher-poll" 2>/dev/null)" = 1 ] \
+  || fail "the watcher did not record its FM_POLL for the sentinel"
 [ "$beat_early" -gt 0 ] && [ "$beat_late" -gt "$beat_early" ] \
   || fail "a hung remote probe stalled the watcher beacon (early=$beat_early late=$beat_late)"
 assert_absent "$WATCH_STATE_HUNG/.secondmate-relaunch-ios" \
